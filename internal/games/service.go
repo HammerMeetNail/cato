@@ -39,7 +39,7 @@ func (s *Service) Search(ctx context.Context, query string) ([]GameResult, error
 	if err != nil {
 		return nil, err
 	}
-	if len(local) >= 3 || !s.shouldAskIGDB(query) {
+	if !s.shouldAskIGDB(query) {
 		return local, nil
 	}
 

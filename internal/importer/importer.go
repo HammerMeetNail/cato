@@ -15,6 +15,7 @@ type GameRow struct {
 	Slug                  string
 	SafeName              string
 	NormalizedName        string
+	LocalCoverPath        string
 	Summary               string
 	Storyline             string
 	CoverID               int64
@@ -120,6 +121,9 @@ func parseCopyRows(lines []string, startIdx int, colMap map[string]int) ([]GameR
 			name = row.SafeName
 		}
 		row.NormalizedName = normalizeName(name)
+		if row.CoverURL != "" {
+			row.LocalCoverPath = fmt.Sprintf("/covers/%d.jpg", row.ID)
+		}
 
 		rows = append(rows, row)
 	}
@@ -138,10 +142,10 @@ func getField(fields []string, colMap map[string]int, name string) string {
 func writeBatch(database *sql.DB, rows []GameRow) (int64, error) {
 	const upsertSQL = `INSERT INTO games (
   id, name, slug, safe_name, normalized_name, summary, storyline,
-  cover_id, cover_url, first_release_date, aggregated_rating,
+  cover_id, cover_url, local_cover_path, first_release_date, aggregated_rating,
   aggregated_rating_count, platforms_json, genres_json, trailer,
   igdb_url, source_updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
   name = excluded.name,
   slug = excluded.slug,
@@ -151,6 +155,7 @@ ON CONFLICT(id) DO UPDATE SET
   storyline = excluded.storyline,
   cover_id = excluded.cover_id,
   cover_url = excluded.cover_url,
+  local_cover_path = excluded.local_cover_path,
   first_release_date = excluded.first_release_date,
   aggregated_rating = excluded.aggregated_rating,
   aggregated_rating_count = excluded.aggregated_rating_count,
@@ -183,7 +188,7 @@ ON CONFLICT(id) DO UPDATE SET
 		for _, row := range batch {
 			_, err := stmt.Exec(
 				row.ID, row.Name, row.Slug, row.SafeName, row.NormalizedName,
-				row.Summary, row.Storyline, row.CoverID, row.CoverURL,
+				row.Summary, row.Storyline, row.CoverID, row.CoverURL, row.LocalCoverPath,
 				row.FirstReleaseDate, row.AggregatedRating, row.AggregatedRatingCount,
 				row.PlatformsJSON, row.GenresJSON, row.Trailer, row.IGDBURL,
 				row.SourceUpdatedAt,

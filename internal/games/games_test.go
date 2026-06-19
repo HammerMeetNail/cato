@@ -85,7 +85,7 @@ func TestSearchLocal(t *testing.T) {
 	})
 }
 
-func TestSearchDoesNotCallIGDBWhenLocalResultsAreEnough(t *testing.T) {
+func TestSearchCallsIGDBForNewQueryEvenWithLocalResults(t *testing.T) {
 	database, store := setupGameDB(t)
 	defer database.Close()
 
@@ -106,8 +106,8 @@ func TestSearchDoesNotCallIGDBWhenLocalResultsAreEnough(t *testing.T) {
 	if len(results) < 3 {
 		t.Fatalf("expected at least 3 results, got %d", len(results))
 	}
-	if igdb.searchCalls != 0 {
-		t.Errorf("expected no IGDB calls when local results >= 3, got %d", igdb.searchCalls)
+	if igdb.searchCalls != 1 {
+		t.Errorf("expected 1 IGDB call for new query, got %d", igdb.searchCalls)
 	}
 }
 
@@ -132,7 +132,7 @@ func TestSearchCallsIGDBWhenLocalResultsAreWeak(t *testing.T) {
 		t.Fatalf("search failed: %v", err)
 	}
 	if igdb.searchCalls != 1 {
-		t.Errorf("expected 1 IGDB call when local results < 3, got %d", igdb.searchCalls)
+		t.Errorf("expected 1 IGDB call, got %d", igdb.searchCalls)
 	}
 	_ = results
 }
@@ -172,6 +172,38 @@ func TestSearchIGDBFailureDoesNotBreakLocal(t *testing.T) {
 	if len(results) != 1 {
 		t.Errorf("expected 1 local result, got %d", len(results))
 	}
+}
+
+func TestSearchCachesIGDBAndSkipsOnRepeat(t *testing.T) {
+	database, store := setupGameDB(t)
+	defer database.Close()
+
+	igdb := &fakeIGDB{
+		searchFunc: func(ctx context.Context, query string, limit int) ([]Game, error) {
+			return []Game{
+				{ID: 200, Name: "Cached Result", Slug: "cached", NormalizedName: "cached result", SafeName: "Cached Result"},
+			}, nil
+		},
+	}
+	svc := NewService(store, igdb, database)
+
+	results, err := svc.Search(context.Background(), "cached result")
+	if err != nil {
+		t.Fatalf("first search failed: %v", err)
+	}
+	if igdb.searchCalls != 1 {
+		t.Errorf("first search: expected 1 IGDB call, got %d", igdb.searchCalls)
+	}
+	_ = results
+
+	results2, err2 := svc.Search(context.Background(), "cached result")
+	if err2 != nil {
+		t.Fatalf("second search failed: %v", err2)
+	}
+	if igdb.searchCalls != 1 {
+		t.Errorf("second search: expected still 1 IGDB call (cached), got %d", igdb.searchCalls)
+	}
+	_ = results2
 }
 
 func TestGetGameByID(t *testing.T) {

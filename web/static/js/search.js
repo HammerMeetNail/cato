@@ -1,4 +1,4 @@
-import { searchGames } from './api.js';
+import { searchGames, getCoverURL } from './api.js';
 
 let searchTimer = null;
 let activeController = null;
@@ -61,7 +61,7 @@ function scheduleSearch(query, resultsEl, onSelect) {
         renderResults([], resultsEl, onSelect);
       }
     }
-  }, 200);
+  }, 400);
 }
 
 function renderResults(results, resultsEl, onSelect) {
@@ -75,7 +75,7 @@ function renderResults(results, resultsEl, onSelect) {
       return `
         <div class="search-result-item${i === selectedIndex ? ' selected' : ''}"
              data-index="${i}" data-id="${g.id}">
-          <img src="${g.local_cover_path || g.cover_url || '/covers/placeholder.jpg'}"
+          <img src="${getCoverURL(g)}"
                alt="${g.name}" loading="lazy"
                onerror="this.src='/covers/placeholder.jpg'">
           <div class="info">

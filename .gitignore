@@ -6,7 +6,7 @@
 *.dylib
 *.test
 *.out
-cato
+/cato
 
 # OS
 .DS_Store
