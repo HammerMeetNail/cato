@@ -87,8 +87,9 @@ function renderResults(results, resultsEl, onSelect) {
 
     resultsEl.querySelectorAll('.search-result-item').forEach(item => {
       item.addEventListener('click', () => {
-        const id = parseInt(item.dataset.id);
+        const id = Number(item.dataset.id);
         const game = results.find(g => g.id === id);
+        if (!game) return;
         resultsEl.classList.remove('active');
         if (onSelect) onSelect(game);
       });
