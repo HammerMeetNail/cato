@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cato - Login</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <div class="login-page">
+    <div class="login-card">
+      <h1>Cato</h1>
+
+      <div class="error-msg" id="errorMsg"></div>
+
+      <form id="loginForm">
+        <div class="form-group">
+          <label for="email">Email</label>
+          <input type="email" id="email" required autocomplete="email">
+        </div>
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input type="password" id="password" required autocomplete="current-password" minlength="8">
+        </div>
+        <button type="submit" class="btn btn-primary" id="submitBtn">Login</button>
+      </form>
+
+      <div class="divider">or</div>
+
+      <button class="btn btn-google" id="googleBtn">Sign in with Google</button>
+
+      <div class="form-footer">
+        <span id="toggleText">Don't have an account?</span>
+        <a id="toggleLink">Sign up</a>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { checkAuth, login, signup } from '/js/api.js';
+
+    const form = document.getElementById('loginForm');
+    const errorMsg = document.getElementById('errorMsg');
+    const submitBtn = document.getElementById('submitBtn');
+    const toggleLink = document.getElementById('toggleLink');
+    const toggleText = document.getElementById('toggleText');
+    const googleBtn = document.getElementById('googleBtn');
+
+    let isSignup = false;
+
+    // Redirect if already logged in
+    const auth = await checkAuth();
+    if (auth.authenticated) {
+      window.location.href = '/';
+      throw new Error('Already authenticated');
+    }
+
+    toggleLink.addEventListener('click', () => {
+      isSignup = !isSignup;
+      submitBtn.textContent = isSignup ? 'Sign Up' : 'Login';
+      toggleText.textContent = isSignup ? 'Already have an account?' : "Don't have an account?";
+      toggleLink.textContent = isSignup ? 'Login' : 'Sign up';
+      hideError();
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      hideError();
+
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+
+      try {
+        if (isSignup) {
+          await signup(email, password);
+        } else {
+          await login(email, password);
+        }
+        window.location.href = '/';
+      } catch (err) {
+        showError(err.message || 'Authentication failed');
+      }
+    });
+
+    googleBtn.addEventListener('click', () => {
+      window.location.href = '/api/auth/google/start';
+    });
+
+    function showError(msg) {
+      errorMsg.textContent = msg;
+      errorMsg.classList.add('show');
+    }
+
+    function hideError() {
+      errorMsg.textContent = '';
+      errorMsg.classList.remove('show');
+    }
+  </script>
+</body>
+</html>

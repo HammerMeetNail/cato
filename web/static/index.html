@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cato - Game Library</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <h1>Cato</h1>
+      <nav>
+        <span id="userDisplay"></span>
+        <a href="/login" id="loginLink">Login</a>
+        <a href="#" id="logoutLink" style="display:none">Logout</a>
+      </nav>
+    </header>
+
+    <main class="container">
+      <div class="search-wrap">
+        <input type="text" id="searchInput" placeholder="Search games..." autocomplete="off">
+        <div class="search-results" id="searchResults"></div>
+      </div>
+
+      <div class="tabs" id="statusTabs">
+        <button class="tab active" data-status="">All</button>
+        <button class="tab" data-status="wishlist">Wishlist</button>
+        <button class="tab" data-status="backlog">Backlog</button>
+        <button class="tab" data-status="playing">Playing</button>
+        <button class="tab" data-status="completed">Completed</button>
+        <button class="tab" data-status="abandoned">Abandoned</button>
+      </div>
+
+      <div class="game-grid" id="gameGrid">
+        <div class="loading">Loading library...</div>
+      </div>
+    </main>
+  </div>
+
+  <script type="module">
+    import { checkAuth, logout } from '/js/api.js';
+    import { initSearch } from '/js/search.js';
+    import { loadLibrary, addGameToLibrary } from '/js/library.js';
+
+    const searchInput = document.getElementById('searchInput');
+    const searchResults = document.getElementById('searchResults');
+    const userDisplay = document.getElementById('userDisplay');
+    const loginLink = document.getElementById('loginLink');
+    const logoutLink = document.getElementById('logoutLink');
+    const statusTabs = document.getElementById('statusTabs');
+
+    // Auth check
+    const auth = await checkAuth();
+    if (!auth.authenticated) {
+      window.location.href = '/login';
+      throw new Error('Not authenticated');
+    }
+
+    userDisplay.textContent = auth.display_name || auth.email || '';
+    loginLink.style.display = 'none';
+    logoutLink.style.display = 'inline';
+
+    logoutLink.addEventListener('click', async (e) => {
+      e.preventDefault();
+      await logout();
+      window.location.href = '/login';
+    });
+
+    // Search
+    initSearch(searchInput, searchResults, (game) => {
+      addGameToLibrary(game);
+      searchInput.value = '';
+    });
+
+    // Status tabs
+    statusTabs.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        statusTabs.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        loadLibrary(tab.dataset.status || '');
+      });
+    });
+
+    // Initial load
+    loadLibrary('');
+  </script>
+</body>
+</html>
