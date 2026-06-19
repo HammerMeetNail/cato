@@ -128,6 +128,7 @@ function attachCardEvents(grid) {
 }
 
 export async function addGameToLibrary(game, status = 'backlog') {
+  if (!game || !game.id) return;
   try {
     await library.add(game.id, {
       status,
@@ -137,7 +138,7 @@ export async function addGameToLibrary(game, status = 'backlog') {
       notes: '',
     });
     const activeTab = document.querySelector('.tab.active');
-    loadLibrary(activeTab?.dataset?.status || '');
+    await loadLibrary(activeTab?.dataset?.status || '');
   } catch (err) {
     alert('Failed to add game: ' + err.message);
   }
