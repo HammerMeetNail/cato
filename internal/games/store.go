@@ -78,12 +78,16 @@ func (s *Store) GetByID(ctx context.Context, id int64) (*Game, error) {
 }
 
 func (s *Store) UpsertIGDBGame(ctx context.Context, g Game) error {
+	localCoverPath := ""
+	if g.CoverURL != "" {
+		localCoverPath = fmt.Sprintf("/covers/%d.jpg", g.ID)
+	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO games (
 		id, name, slug, safe_name, normalized_name, summary, storyline,
-		cover_id, cover_url, first_release_date, aggregated_rating,
+		cover_id, cover_url, local_cover_path, first_release_date, aggregated_rating,
 		aggregated_rating_count, platforms_json, genres_json, trailer,
 		igdb_url, source_updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		name = excluded.name,
 		slug = excluded.slug,
@@ -93,6 +97,7 @@ func (s *Store) UpsertIGDBGame(ctx context.Context, g Game) error {
 		storyline = excluded.storyline,
 		cover_id = excluded.cover_id,
 		cover_url = excluded.cover_url,
+		local_cover_path = excluded.local_cover_path,
 		first_release_date = excluded.first_release_date,
 		aggregated_rating = excluded.aggregated_rating,
 		aggregated_rating_count = excluded.aggregated_rating_count,
@@ -102,7 +107,7 @@ func (s *Store) UpsertIGDBGame(ctx context.Context, g Game) error {
 		igdb_url = excluded.igdb_url,
 		source_updated_at = excluded.source_updated_at`,
 		g.ID, g.Name, g.Slug, g.SafeName, g.NormalizedName,
-		g.Summary, g.Storyline, g.CoverID, g.CoverURL,
+		g.Summary, g.Storyline, g.CoverID, g.CoverURL, localCoverPath,
 		g.FirstReleaseDate, g.AggregatedRating, g.AggregatedRatingCount,
 		g.PlatformsJSON, g.GenresJSON, g.Trailer, g.IGDBURL, g.SourceUpdatedAt,
 	)

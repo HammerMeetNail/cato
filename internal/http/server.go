@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"cato/internal/config"
+	"cato/internal/covers"
 )
 
 type Server struct {
@@ -37,8 +38,7 @@ func (s *Server) routes() {
 	libraryHandler := NewLibraryHandler(s.db)
 	libraryHandler.Register(s.mux)
 
-	coverFS := http.FileServer(http.Dir(s.cfg.CoverDir))
-	s.mux.Handle("/covers/", http.StripPrefix("/covers/", coverFS))
+	s.mux.HandleFunc("/covers/", covers.ServeCover(s.db, s.cfg.CoverDir))
 
 	// Page routes
 	s.mux.HandleFunc("/login", s.servePage("login.html"))

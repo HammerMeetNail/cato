@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -123,4 +125,45 @@ func publicCoverPath(gameID int64) string {
 func CoverExists(coverDir string, gameID int64) bool {
 	_, err := os.Stat(CoverPath(coverDir, gameID))
 	return err == nil
+}
+
+func ServeCover(db *sql.DB, coverDir string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		filename := strings.TrimPrefix(r.URL.Path, "/covers/")
+		if filename == "" || filename == "placeholder.jpg" {
+			servePlaceholder(w)
+			return
+		}
+
+		diskPath := filepath.Join(coverDir, filename)
+		if _, err := os.Stat(diskPath); err == nil {
+			http.ServeFile(w, r, diskPath)
+			return
+		}
+
+		idStr := strings.TrimSuffix(filename, ".jpg")
+		gameID, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			servePlaceholder(w)
+			return
+		}
+
+		var coverURL string
+		err = db.QueryRow("SELECT cover_url FROM games WHERE id = ?", gameID).Scan(&coverURL)
+		if err != nil || coverURL == "" {
+			servePlaceholder(w)
+			return
+		}
+
+		http.Redirect(w, r, coverURL, http.StatusFound)
+	}
+}
+
+func servePlaceholder(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Write([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="264" height="374" viewBox="0 0 264 374">
+<rect width="264" height="374" fill="#16213e"/>
+<text x="132" y="187" font-family="sans-serif" font-size="16" fill="#999" text-anchor="middle" dominant-baseline="middle">No Cover</text>
+</svg>`))
 }
