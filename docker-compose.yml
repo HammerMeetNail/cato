@@ -1,0 +1,18 @@
+version: '3.4'
+services:
+  cato:
+    container_name: cato
+    build: .
+    ports:
+      - "7080:7080"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - CATO_LISTEN_ADDR=:7080
+      - IGDB_CLIENT_ID=${TWITCH_OAUTH_ID:-}
+      - IGDB_CLIENT_SECRET=${TWITCH_OAUTH_SECRET:-}
+      - TWITCH_OAUTH_ID=${TWITCH_OAUTH_ID:-}
+      - TWITCH_OAUTH_SECRET=${TWITCH_OAUTH_SECRET:-}
+      - GOOGLE_KEY=${GOOGLE_KEY:-}
+      - GOOGLE_SECRET=${GOOGLE_SECRET:-}
+    restart: unless-stopped
