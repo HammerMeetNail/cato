@@ -78,16 +78,12 @@ func (s *Store) GetByID(ctx context.Context, id int64) (*Game, error) {
 }
 
 func (s *Store) UpsertIGDBGame(ctx context.Context, g Game) error {
-	localCoverPath := ""
-	if g.CoverURL != "" {
-		localCoverPath = fmt.Sprintf("/covers/%d.jpg", g.ID)
-	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO games (
 		id, name, slug, safe_name, normalized_name, summary, storyline,
 		cover_id, cover_url, local_cover_path, first_release_date, aggregated_rating,
 		aggregated_rating_count, platforms_json, genres_json, trailer,
 		igdb_url, source_updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		name = excluded.name,
 		slug = excluded.slug,
@@ -97,7 +93,6 @@ func (s *Store) UpsertIGDBGame(ctx context.Context, g Game) error {
 		storyline = excluded.storyline,
 		cover_id = excluded.cover_id,
 		cover_url = excluded.cover_url,
-		local_cover_path = excluded.local_cover_path,
 		first_release_date = excluded.first_release_date,
 		aggregated_rating = excluded.aggregated_rating,
 		aggregated_rating_count = excluded.aggregated_rating_count,
@@ -107,7 +102,7 @@ func (s *Store) UpsertIGDBGame(ctx context.Context, g Game) error {
 		igdb_url = excluded.igdb_url,
 		source_updated_at = excluded.source_updated_at`,
 		g.ID, g.Name, g.Slug, g.SafeName, g.NormalizedName,
-		g.Summary, g.Storyline, g.CoverID, g.CoverURL, localCoverPath,
+		g.Summary, g.Storyline, g.CoverID, g.CoverURL,
 		g.FirstReleaseDate, g.AggregatedRating, g.AggregatedRatingCount,
 		g.PlatformsJSON, g.GenresJSON, g.Trailer, g.IGDBURL, g.SourceUpdatedAt,
 	)
@@ -140,11 +135,21 @@ func daysAgo(days int) int64 {
 	return time.Now().AddDate(0, 0, -days).Unix()
 }
 
-func (s *Store) EnsqueueCoverJob(ctx context.Context, gameID int64, sourceURL string) error {
+func (s *Store) EnqueueCoverJob(ctx context.Context, gameID int64, sourceURL string) error {
 	if sourceURL == "" {
 		return nil
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO cover_jobs (game_id, source_url)
 		VALUES (?, ?) ON CONFLICT(game_id) DO NOTHING`, gameID, sourceURL)
 	return err
+}
+
+func (s *Store) EnqueueMissingCoverJobs(ctx context.Context) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO cover_jobs (game_id, source_url)
+		SELECT id, cover_url FROM games
+		WHERE cover_url != '' AND id NOT IN (SELECT game_id FROM cover_jobs)`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }

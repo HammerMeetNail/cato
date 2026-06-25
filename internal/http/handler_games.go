@@ -25,6 +25,7 @@ func NewGameHandler(db *sql.DB, cfg *config.Config) *GameHandler {
 		igdbClient = &noopIGDBClient{}
 	}
 	svc := games.NewService(store, igdbClient, db)
+	svc.EnqueueMissingCovers()
 	if cfg.IGDBClientID != "" {
 		svc.StartStaleRefresh()
 	}

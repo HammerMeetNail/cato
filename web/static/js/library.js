@@ -25,8 +25,7 @@ function renderCards(grid, items) {
     <div class="game-card" data-game-id="${item.game_id}" data-status="${item.status}">
       <div class="game-card-inner">
         <div class="game-card-front">
-          <img src="${getCoverURL(item)}" alt="${item.game_name}" loading="lazy"
-               onerror="this.src='/covers/placeholder.jpg'">
+          <img src="${getCoverURL(item)}" alt="${item.game_name}" loading="lazy">
           <div class="card-title">${escapeHTML(item.game_name)}</div>
           ${item.rating > 0 ? `<div class="rating-display">${item.rating}</div>` : ''}
         </div>

@@ -53,7 +53,7 @@ func (s *Service) Search(ctx context.Context, query string) ([]GameResult, error
 			continue
 		}
 		if game.CoverURL != "" {
-			s.store.EnsqueueCoverJob(ctx, game.ID, game.CoverURL)
+			s.store.EnqueueCoverJob(ctx, game.ID, game.CoverURL)
 		}
 
 		cacheKey := "igdb:" + NormalizeName(game.Name)
@@ -83,6 +83,18 @@ func (s *Service) StartStaleRefresh() {
 			time.Sleep(interval)
 		}
 	}()
+}
+
+func (s *Service) EnqueueMissingCovers() {
+	ctx := context.Background()
+	count, err := s.store.EnqueueMissingCoverJobs(ctx)
+	if err != nil {
+		log.Printf("cover backfill: failed to enqueue missing cover jobs: %v", err)
+		return
+	}
+	if count > 0 {
+		log.Printf("cover backfill: enqueued %d cover download jobs", count)
+	}
 }
 
 func (s *Service) refreshStaleGames(maxPerDay int) {
@@ -119,7 +131,7 @@ func (s *Service) refreshStaleGames(maxPerDay int) {
 		}
 
 		if game.CoverURL != "" {
-			s.store.EnsqueueCoverJob(ctx, game.ID, game.CoverURL)
+			s.store.EnqueueCoverJob(ctx, game.ID, game.CoverURL)
 		}
 
 		refreshed++

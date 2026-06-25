@@ -1,23 +1,25 @@
 const BASE = '';
 
-async function request(method, path, body = null) {
-  const opts = {
+async function request(method, path, body = null, opts = {}) {
+  const fetchOpts = {
     method,
     credentials: 'include',
     headers: {},
   };
 
+  if (opts.signal) fetchOpts.signal = opts.signal;
+
   if (body) {
-    opts.headers['Content-Type'] = 'application/json';
-    opts.body = JSON.stringify(body);
+    fetchOpts.headers['Content-Type'] = 'application/json';
+    fetchOpts.body = JSON.stringify(body);
   }
 
   const csrf = getCSRF();
   if (csrf && method !== 'GET') {
-    opts.headers['X-CSRF-Token'] = csrf;
+    fetchOpts.headers['X-CSRF-Token'] = csrf;
   }
 
-  const res = await fetch(BASE + path, opts);
+  const res = await fetch(BASE + path, fetchOpts);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const err = new Error(data.message || `HTTP ${res.status}`);
@@ -44,7 +46,7 @@ function setCSRF(token) {
 }
 
 export const api = {
-  get(path) { return request('GET', path); },
+  get(path, opts) { return request('GET', path, null, opts); },
   post(path, body) { return request('POST', path, body); },
   del(path) { return request('DELETE', path); },
   setCSRF,
@@ -80,9 +82,9 @@ export async function logout() {
   api.setCSRF(null);
 }
 
-export async function searchGames(query) {
+export async function searchGames(query, signal) {
   if (!query || query.length < 2) return [];
-  return api.get(`/api/games/search?q=${encodeURIComponent(query)}`);
+  return api.get(`/api/games/search?q=${encodeURIComponent(query)}`, { signal });
 }
 
 export function getCoverURL(game) {

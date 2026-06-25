@@ -46,17 +46,18 @@ function scheduleSearch(query, resultsEl, onSelect) {
 
   searchTimer = setTimeout(async () => {
     if (activeController) activeController.abort();
-    activeController = new AbortController();
+    const controller = new AbortController();
+    activeController = controller;
 
     try {
-      const results = await searchGames(query);
-      if (activeController.signal === activeController.signal) {
+      const results = await searchGames(query, controller.signal);
+      if (controller === activeController) {
         currentResults = results;
         selectedIndex = -1;
         renderResults(results, resultsEl, onSelect);
       }
     } catch (err) {
-      if (err.name !== 'AbortError') {
+      if (err.name !== 'AbortError' && controller === activeController) {
         currentResults = [];
         renderResults([], resultsEl, onSelect);
       }
@@ -76,8 +77,7 @@ function renderResults(results, resultsEl, onSelect) {
         <div class="search-result-item${i === selectedIndex ? ' selected' : ''}"
              data-index="${i}" data-id="${g.id}">
           <img src="${getCoverURL(g)}"
-               alt="${g.name}" loading="lazy"
-               onerror="this.src='/covers/placeholder.jpg'">
+               alt="${g.name}" loading="lazy">
           <div class="info">
             <div class="name">${escapeHTML(g.name)}</div>
             <div class="year">${year}</div>
