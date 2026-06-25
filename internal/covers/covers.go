@@ -30,12 +30,36 @@ func NewWorker(db *sql.DB, coverDir string) *Worker {
 }
 
 func (w *Worker) Start() {
+	w.CleanStaleLocalPaths()
 	go func() {
 		for {
 			w.processNext()
 			time.Sleep(time.Second)
 		}
 	}()
+}
+
+func (w *Worker) CleanStaleLocalPaths() {
+	rows, err := w.db.Query("SELECT id FROM games WHERE local_cover_path != ''")
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	var cleaned int
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			continue
+		}
+		if _, err := os.Stat(CoverPath(w.coverDir, id)); err != nil {
+			w.db.Exec("UPDATE games SET local_cover_path = '' WHERE id = ?", id)
+			cleaned++
+		}
+	}
+	if cleaned > 0 {
+		fmt.Printf("covers: cleared %d stale local_cover_path values\n", cleaned)
+	}
 }
 
 func (w *Worker) processNext() {
@@ -137,6 +161,7 @@ func ServeCover(db *sql.DB, coverDir string) http.HandlerFunc {
 
 		diskPath := filepath.Join(coverDir, filename)
 		if _, err := os.Stat(diskPath); err == nil {
+			w.Header().Set("Cache-Control", "public, max-age=86400")
 			http.ServeFile(w, r, diskPath)
 			return
 		}
@@ -155,6 +180,7 @@ func ServeCover(db *sql.DB, coverDir string) http.HandlerFunc {
 			return
 		}
 
+		w.Header().Set("Cache-Control", "public, max-age=3600")
 		http.Redirect(w, r, coverURL, http.StatusFound)
 	}
 }

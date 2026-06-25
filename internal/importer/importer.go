@@ -121,9 +121,6 @@ func parseCopyRows(lines []string, startIdx int, colMap map[string]int) ([]GameR
 			name = row.SafeName
 		}
 		row.NormalizedName = normalizeName(name)
-		if row.CoverURL != "" {
-			row.LocalCoverPath = fmt.Sprintf("/covers/%d.jpg", row.ID)
-		}
 
 		rows = append(rows, row)
 	}
@@ -145,7 +142,7 @@ func writeBatch(database *sql.DB, rows []GameRow) (int64, error) {
   cover_id, cover_url, local_cover_path, first_release_date, aggregated_rating,
   aggregated_rating_count, platforms_json, genres_json, trailer,
   igdb_url, source_updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
   name = excluded.name,
   slug = excluded.slug,
@@ -155,7 +152,6 @@ ON CONFLICT(id) DO UPDATE SET
   storyline = excluded.storyline,
   cover_id = excluded.cover_id,
   cover_url = excluded.cover_url,
-  local_cover_path = excluded.local_cover_path,
   first_release_date = excluded.first_release_date,
   aggregated_rating = excluded.aggregated_rating,
   aggregated_rating_count = excluded.aggregated_rating_count,
@@ -188,7 +184,7 @@ ON CONFLICT(id) DO UPDATE SET
 		for _, row := range batch {
 			_, err := stmt.Exec(
 				row.ID, row.Name, row.Slug, row.SafeName, row.NormalizedName,
-				row.Summary, row.Storyline, row.CoverID, row.CoverURL, row.LocalCoverPath,
+				row.Summary, row.Storyline, row.CoverID, row.CoverURL,
 				row.FirstReleaseDate, row.AggregatedRating, row.AggregatedRatingCount,
 				row.PlatformsJSON, row.GenresJSON, row.Trailer, row.IGDBURL,
 				row.SourceUpdatedAt,
