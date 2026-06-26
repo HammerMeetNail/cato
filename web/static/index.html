@@ -40,9 +40,9 @@
   </div>
 
   <script type="module">
-    import { checkAuth, logout } from '/js/api.js';
+    import { checkAuth, logout, library } from '/js/api.js';
     import { initSearch } from '/js/search.js';
-    import { loadLibrary, addGameToLibrary } from '/js/library.js';
+    import { loadLibrary, addGameToLibrary, renderLibraryItems } from '/js/library.js';
 
     const searchInput = document.getElementById('searchInput');
     const searchResults = document.getElementById('searchResults');
@@ -51,8 +51,16 @@
     const logoutLink = document.getElementById('logoutLink');
     const statusTabs = document.getElementById('statusTabs');
 
-    // Auth check
-    const auth = await checkAuth();
+    // Fire auth check and library fetch simultaneously so neither waits for
+    // the other.  On a fresh page load this cuts the visible wait time from
+    // sum(auth + library) to roughly max(auth, library).
+    // library.list() will return a 401 for unauthenticated users; we catch
+    // that so it doesn't surface as an unhandled rejection.
+    const [auth, items] = await Promise.all([
+      checkAuth(),
+      library.list('').catch(() => null),
+    ]);
+
     if (!auth.authenticated) {
       window.location.href = '/login';
       throw new Error('Not authenticated');
@@ -83,8 +91,13 @@
       });
     });
 
-    // Initial load
-    loadLibrary('');
+    // Render with already-loaded data; fall back to a fresh fetch if the
+    // parallel request failed for a non-auth reason (e.g. transient error).
+    if (items !== null) {
+      renderLibraryItems(items);
+    } else {
+      loadLibrary('');
+    }
   </script>
 </body>
 </html>
