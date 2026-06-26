@@ -13,6 +13,24 @@ type Migration struct {
 
 var migrations = []Migration{
 	{
+		Version: 3,
+		// GetStaleGames used a correlated subquery in its ORDER BY which forced
+		// a full-table sort of the games table.  Adding an index on
+		// source_updated_at lets SQLite satisfy the WHERE + ORDER BY in one
+		// O(LIMIT) index scan with no sort step.
+		Up: `CREATE INDEX IF NOT EXISTS idx_games_source_updated
+		     ON games(source_updated_at);`,
+	},
+	{
+		Version: 2,
+		// cover_jobs had no index on next_attempt_at, causing the coordinator
+		// goroutine to do a full table scan (potentially 50k+ rows) on every
+		// poll iteration.  With SetMaxOpenConns(1) that single slow query
+		// blocked every concurrent HTTP handler waiting for the DB connection.
+		Up: `CREATE INDEX IF NOT EXISTS idx_cover_jobs_next_attempt
+		     ON cover_jobs(next_attempt_at, attempts);`,
+	},
+	{
 		Version: 1,
 		Up: `PRAGMA foreign_keys = ON;
 

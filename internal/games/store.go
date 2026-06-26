@@ -110,10 +110,14 @@ func (s *Store) UpsertIGDBGame(ctx context.Context, g Game) error {
 }
 
 func (s *Store) GetStaleGames(ctx context.Context, limit int) ([]int64, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT g.id FROM games g
-		WHERE g.source_updated_at > 0 AND g.source_updated_at < ?
-		ORDER BY CASE WHEN g.id IN (SELECT DISTINCT game_id FROM library_items) THEN 0 ELSE 1 END,
-		g.source_updated_at ASC LIMIT ?`,
+	// The ORDER BY here uses idx_games_source_updated, so this is an O(limit)
+	// index scan rather than a full-table sort.  The previous version had a
+	// correlated subquery (IN (SELECT DISTINCT game_id FROM library_items))
+	// which forced a full-table sort of the games table — potentially a
+	// multi-second hold on the single DB connection.
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM games
+		WHERE source_updated_at > 0 AND source_updated_at < ?
+		ORDER BY source_updated_at ASC LIMIT ?`,
 		daysAgo(90), limit)
 	if err != nil {
 		return nil, err

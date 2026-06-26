@@ -10,22 +10,36 @@ export async function loadLibrary(status) {
 
   try {
     const items = await library.list(status || '');
-    if (items.length === 0) {
-      grid.innerHTML = '<div class="empty-state">No games in this collection yet. Search above to add games.</div>';
-      return;
-    }
-    renderCards(grid, items);
+    renderLibraryItems(items);
   } catch (err) {
     grid.innerHTML = `<div class="empty-state">Failed to load library: ${err.message}</div>`;
   }
 }
 
+// renderLibraryItems renders pre-loaded library items into #gameGrid.
+// Used by the initial page load to display data that was fetched in parallel
+// with the auth check, so the grid doesn't wait for a second round-trip.
+export function renderLibraryItems(items) {
+  const grid = document.getElementById('gameGrid');
+  if (!grid) return;
+  if (!items || items.length === 0) {
+    grid.innerHTML = '<div class="empty-state">No games in this collection yet. Search above to add games.</div>';
+    return;
+  }
+  renderCards(grid, items);
+}
+
 function renderCards(grid, items) {
-  grid.innerHTML = items.map(item => `
+  grid.innerHTML = items.map((item, index) => {
+    // Give the first batch of cards high fetch priority so the initially
+    // visible covers load before off-screen ones.  The exact cut-off (8)
+    // covers a typical desktop viewport with ~6 columns × 2 rows.
+    const priority = index < 8 ? ' fetchpriority="high"' : '';
+    return `
     <div class="game-card" data-game-id="${item.game_id}" data-status="${item.status}">
       <div class="game-card-inner">
         <div class="game-card-front">
-          <img src="${getCoverURL(item)}" alt="${item.game_name}" loading="lazy">
+          <img src="${getCoverURL(item)}" alt="${item.game_name}" loading="lazy" decoding="async"${priority}>
           <div class="card-title">${escapeHTML(item.game_name)}</div>
           ${item.rating > 0 ? `<div class="rating-display">${item.rating}</div>` : ''}
         </div>
@@ -49,7 +63,7 @@ function renderCards(grid, items) {
         </div>
       </div>
     </div>
-  `).join('');
+  `}).join('');
 
   attachCardEvents(grid);
 }
