@@ -8,7 +8,9 @@ import (
 )
 
 func Open(path string) (*sql.DB, error) {
-	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_foreign_keys=on", path)
+	// _busy_timeout: if the single connection is held by a writer, let reads
+	// wait up to 5 s rather than failing immediately with SQLITE_BUSY.
+	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_foreign_keys=on&_busy_timeout=5000", path)
 
 	database, err := sql.Open("sqlite", dsn)
 	if err != nil {

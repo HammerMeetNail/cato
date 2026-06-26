@@ -93,6 +93,19 @@ export function getCoverURL(game) {
   return '/covers/placeholder.jpg';
 }
 
+// getCoverThumbnailURL returns a smaller image URL suitable for compact
+// display contexts like the search dropdown (48×64 px rendered size).
+// For remote IGDB URLs it substitutes the t_cover_big size (264×374 px)
+// with t_thumb (96×128 px), cutting transfer size ~8×. Locally cached
+// covers and placeholders are returned as-is.
+export function getCoverThumbnailURL(game) {
+  const url = getCoverURL(game);
+  if (url.startsWith('https://images.igdb.com/') && url.includes('/t_cover_big/')) {
+    return url.replace('/t_cover_big/', '/t_thumb/');
+  }
+  return url;
+}
+
 export const library = {
   list(status) {
     const qs = status ? `?status=${encodeURIComponent(status)}` : '';
