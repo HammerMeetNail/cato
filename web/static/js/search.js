@@ -1,4 +1,4 @@
-import { searchGames, getCoverURL } from './api.js';
+import { searchGames, getCoverThumbnailURL } from './api.js';
 
 let searchTimer = null;
 let activeController = null;
@@ -76,8 +76,8 @@ function renderResults(results, resultsEl, onSelect) {
       return `
         <div class="search-result-item${i === selectedIndex ? ' selected' : ''}"
              data-index="${i}" data-id="${g.id}">
-          <img src="${getCoverURL(g)}"
-               alt="${g.name}" loading="lazy">
+          <img src="${getCoverThumbnailURL(g)}"
+               alt="${g.name}" loading="lazy" decoding="async">
           <div class="info">
             <div class="name">${escapeHTML(g.name)}</div>
             <div class="year">${year}</div>
