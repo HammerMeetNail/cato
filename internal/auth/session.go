@@ -9,6 +9,14 @@ import (
 	"time"
 )
 
+// Querier is satisfied by both *sql.DB and *db.DB.
+// This allows auth functions to work with either type.
+type Querier interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
 type Session struct {
 	ID        string
 	UserID    string
@@ -16,7 +24,7 @@ type Session struct {
 	ExpiresAt time.Time
 }
 
-func CreateSession(db *sql.DB, userID string) (*Session, error) {
+func CreateSession(db Querier, userID string) (*Session, error) {
 	id := RandomToken(32)
 	csrf := RandomToken(32)
 	hashedID := hashToken(id)
@@ -39,7 +47,7 @@ func CreateSession(db *sql.DB, userID string) (*Session, error) {
 	}, nil
 }
 
-func GetSession(db *sql.DB, sessionID string) (*Session, error) {
+func GetSession(db Querier, sessionID string) (*Session, error) {
 	hashedID := hashToken(sessionID)
 
 	var s Session
@@ -70,13 +78,13 @@ func GetSession(db *sql.DB, sessionID string) (*Session, error) {
 	return &s, nil
 }
 
-func DeleteSession(db *sql.DB, sessionID string) error {
+func DeleteSession(db Querier, sessionID string) error {
 	hashedID := hashToken(sessionID)
 	_, err := db.Exec("DELETE FROM sessions WHERE id = ?", hashedID)
 	return err
 }
 
-func DeleteUserSessions(db *sql.DB, userID string) error {
+func DeleteUserSessions(db Querier, userID string) error {
 	_, err := db.Exec("DELETE FROM sessions WHERE user_id = ?", userID)
 	return err
 }

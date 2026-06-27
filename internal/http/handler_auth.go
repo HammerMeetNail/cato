@@ -10,20 +10,21 @@ import (
 
 	"cato/internal/auth"
 	"cato/internal/config"
+	"cato/internal/db"
 
 	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 )
 
 type AuthHandler struct {
-	db            *sql.DB
+	db            *db.DB
 	cfg           *config.Config
 	googleCfg     *oauth2.Config
 	loginLimiter  *auth.RateLimiter
 	signupLimiter *auth.RateLimiter
 }
 
-func NewAuthHandler(db *sql.DB, cfg *config.Config) *AuthHandler {
+func NewAuthHandler(db *db.DB, cfg *config.Config) *AuthHandler {
 	h := &AuthHandler{
 		db:            db,
 		cfg:           cfg,

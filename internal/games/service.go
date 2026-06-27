@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"log"
 	"time"
+
+	"cato/internal/db"
 )
 
 type IGDBClient interface {
@@ -16,11 +18,11 @@ type IGDBClient interface {
 type Service struct {
 	store       *Store
 	igdb        IGDBClient
-	db          *sql.DB
+	db          *db.DB
 	rateLimiter *IGDBRateLimiter
 }
 
-func NewService(store *Store, igdb IGDBClient, db *sql.DB) *Service {
+func NewService(store *Store, igdb IGDBClient, db *db.DB) *Service {
 	return &Service{
 		store:       store,
 		igdb:        igdb,
@@ -60,7 +62,7 @@ func (s *Service) Search(ctx context.Context, query string) ([]GameResult, error
 		s.cacheIGDBGame(ctx, cacheKey, game)
 	}
 
-	cacheSearchResults(ctx, s.db, query, remote)
+	cacheSearchResultsDB(ctx, s.db, query, remote)
 
 	return s.store.SearchLocal(ctx, query, 10)
 }
@@ -141,7 +143,7 @@ func (s *Service) refreshStaleGames(maxPerDay int) {
 }
 
 func (s *Service) shouldAskIGDB(query string) bool {
-	cached, err := getCachedSearch(context.Background(), s.db, query)
+	cached, err := getCachedSearchDB(context.Background(), s.db, query)
 	if err == nil && cached {
 		return false
 	}
@@ -154,7 +156,7 @@ func (s *Service) cacheIGDBGame(ctx context.Context, key string, game Game) {
 		VALUES (?, ?, ?)`, key, string(data), time.Now().Add(24*time.Hour).Format(time.RFC3339))
 }
 
-func cacheSearchResults(ctx context.Context, db *sql.DB, query string, games []Game) {
+func cacheSearchResultsDB(ctx context.Context, db *db.DB, query string, games []Game) {
 	if len(games) == 0 {
 		return
 	}
@@ -163,7 +165,7 @@ func cacheSearchResults(ctx context.Context, db *sql.DB, query string, games []G
 		VALUES (?, ?, ?)`, "search:"+query, string(data), time.Now().Add(24*time.Hour).Format(time.RFC3339))
 }
 
-func getCachedSearch(ctx context.Context, db *sql.DB, query string) (bool, error) {
+func getCachedSearchDB(ctx context.Context, db *db.DB, query string) (bool, error) {
 	var expiresAt string
 	err := db.QueryRowContext(ctx,
 		"SELECT expires_at FROM igdb_query_cache WHERE normalized_query = ?",

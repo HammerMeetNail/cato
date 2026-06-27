@@ -1,7 +1,6 @@
 package covers
 
 import (
-	"database/sql"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"cato/internal/db"
 )
 
 // maxConcurrentDownloads controls how many cover images are fetched in parallel.
@@ -18,13 +19,13 @@ import (
 const maxConcurrentDownloads = 5
 
 type Worker struct {
-	db       *sql.DB
+	db       *db.DB
 	coverDir string
 	client   *http.Client
 	sem      chan struct{}
 }
 
-func NewWorker(db *sql.DB, coverDir string) *Worker {
+func NewWorker(db *db.DB, coverDir string) *Worker {
 	return &Worker{
 		db:       db,
 		coverDir: coverDir,
@@ -95,20 +96,14 @@ func (w *Worker) CleanStaleLocalPaths() {
 // prevents the coordinator loop from re-selecting the same job while its
 // download goroutine is still running.
 //
-// Two separate queries are used deliberately:
-//  1. Library-priority query: INNER JOIN against the small library_items table
-//     so SQLite only considers O(|library|) rows — no full-table sort.
-//  2. Fallback query: no ORDER BY, so the idx_cover_jobs_next_attempt index
-//     returns one row in O(1) without a temporary B-tree sort on all rows.
-//
-// A single LEFT JOIN query looks clean but forces a temp B-tree sort of the
-// entire cover_jobs table (potentially 100k+ rows), which holds the single
-// DB connection for 1–3 s and starves every concurrent HTTP handler.
+// Only library-priority jobs are downloaded. The query INNER JOINs against
+// the library_items table so SQLite only considers O(|library|) rows.
+// When there are no library jobs, the worker idles (returns gameID == 0).
 func (w *Worker) nextJob() (int64, string, error) {
 	var gameID int64
 	var sourceURL string
 
-	// Step 1: prefer a game that's already in someone's library.
+	// Prefer a game that's already in someone's library.
 	// INNER JOIN is fast because library_items is small.
 	err := w.db.QueryRow(`
 		SELECT cj.game_id, cj.source_url
@@ -118,23 +113,11 @@ func (w *Worker) nextJob() (int64, string, error) {
 		ORDER BY cj.created_at ASC LIMIT 1`,
 		time.Now().Format(time.RFC3339)).Scan(&gameID, &sourceURL)
 
-	if err == sql.ErrNoRows {
-		// Step 2: no library games are waiting; grab any pending job.
-		// Omitting ORDER BY lets SQLite return the first index entry it
-		// finds without building a sort tree — O(1) with the index.
-		err = w.db.QueryRow(`
-			SELECT game_id, source_url FROM cover_jobs
-			WHERE attempts < 5 AND next_attempt_at <= ?
-			LIMIT 1`,
-			time.Now().Format(time.RFC3339)).Scan(&gameID, &sourceURL)
-	}
-
-	if err == sql.ErrNoRows {
+	if err != nil {
+		// sql.ErrNoRows or other error; return 0 to signal idle.
 		return 0, "", nil
 	}
-	if err != nil {
-		return 0, "", err
-	}
+
 	// Reserve the job for 30 minutes so the coordinator loop skips it.
 	w.db.Exec("UPDATE cover_jobs SET next_attempt_at = ? WHERE game_id = ?",
 		time.Now().Add(30*time.Minute).Format(time.RFC3339), gameID)
@@ -152,12 +135,8 @@ func (w *Worker) downloadAndSave(gameID int64, sourceURL string) {
 		return
 	}
 
-	// Request WebP format from the IGDB CDN for a smaller payload.
-	// Cloudinary (which powers images.igdb.com) serves WebP automatically
-	// when the URL extension is changed from .jpg to .webp.
-	webpURL := toWebPURL(sourceURL)
-
-	src, err := downloadCover(w.client, webpURL)
+	// Download the original URL (JPEG format).
+	src, err := downloadCover(w.client, sourceURL)
 	if err != nil {
 		w.db.Exec(`UPDATE cover_jobs SET attempts = attempts + 1,
 			last_error = ?, next_attempt_at = ?, updated_at = CURRENT_TIMESTAMP
@@ -182,15 +161,6 @@ func (w *Worker) downloadAndSave(gameID int64, sourceURL string) {
 	w.db.Exec("UPDATE games SET local_cover_path = ? WHERE id = ?", publicCoverPath(gameID), gameID)
 }
 
-// toWebPURL converts an IGDB Cloudinary URL from JPEG to WebP.
-// Example: .../t_cover_big/co1wyy.jpg → .../t_cover_big/co1wyy.webp
-func toWebPURL(rawURL string) string {
-	if strings.HasSuffix(rawURL, ".jpg") {
-		return rawURL[:len(rawURL)-4] + ".webp"
-	}
-	return rawURL
-}
-
 func downloadCover(client *http.Client, url string) (io.ReadCloser, error) {
 	resp, err := client.Get(url)
 	if err != nil {
@@ -213,44 +183,43 @@ func backoffNext(now time.Time, attempt int) string {
 
 // CoverPath returns the on-disk path for a game's locally cached cover.
 func CoverPath(coverDir string, gameID int64) string {
-	return filepath.Join(coverDir, fmt.Sprintf("%d.webp", gameID))
+	return filepath.Join(coverDir, fmt.Sprintf("%d.jpg", gameID))
 }
 
 // publicCoverPath returns the URL path served to the browser.
 func publicCoverPath(gameID int64) string {
-	return fmt.Sprintf("/covers/%d.webp", gameID)
+	return fmt.Sprintf("/covers/%d.jpg", gameID)
 }
 
 // CoverExists reports whether a game's cover has been downloaded locally.
+// It checks for .jpg (current) or .webp (legacy files).
 func CoverExists(coverDir string, gameID int64) bool {
-	_, err := os.Stat(CoverPath(coverDir, gameID))
-	return err == nil
+	jpgPath := filepath.Join(coverDir, fmt.Sprintf("%d.jpg", gameID))
+	if _, err := os.Stat(jpgPath); err == nil {
+		return true
+	}
+	webpPath := filepath.Join(coverDir, fmt.Sprintf("%d.webp", gameID))
+	if _, err := os.Stat(webpPath); err == nil {
+		return true
+	}
+	return false
 }
 
 // ServeCover handles GET /covers/... requests.
-// It serves the local file if present, redirects to the IGDB CDN URL if not,
-// and falls back to an inline SVG placeholder. Both .jpg and .webp filenames
-// are accepted so the handler works with covers downloaded before the WebP
-// migration and with any existing local_cover_path values in the DB.
-func ServeCover(db *sql.DB, coverDir string) http.HandlerFunc {
+// It serves the local file if present (with long cache headers) or a placeholder
+// (with short cache headers) if not. No DB query or redirect; instantly returns
+// from disk or a cached SVG placeholder.
+func ServeCover(coverDir string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		filename := strings.TrimPrefix(r.URL.Path, "/covers/")
 		if filename == "" || filename == "placeholder.jpg" {
-			servePlaceholder(w)
+			servePlaceholder(w, 300) // short cache on miss
 			return
 		}
 
-		diskPath := filepath.Join(coverDir, filename)
-		if _, err := os.Stat(diskPath); err == nil {
-			w.Header().Set("Cache-Control", "public, max-age=86400")
-			http.ServeFile(w, r, diskPath)
-			return
-		}
-
-		// Strip extension to parse the game ID — support both .jpg (legacy)
-		// and .webp (current).
+		// Strip extension to parse the game ID — support both .jpg and .webp.
 		idStr := filename
-		for _, ext := range []string{".webp", ".jpg"} {
+		for _, ext := range []string{".jpg", ".webp"} {
 			if strings.HasSuffix(idStr, ext) {
 				idStr = strings.TrimSuffix(idStr, ext)
 				break
@@ -258,25 +227,35 @@ func ServeCover(db *sql.DB, coverDir string) http.HandlerFunc {
 		}
 		gameID, err := strconv.ParseInt(idStr, 10, 64)
 		if err != nil {
-			servePlaceholder(w)
+			servePlaceholder(w, 300)
 			return
 		}
 
-		var coverURL string
-		err = db.QueryRow("SELECT cover_url FROM games WHERE id = ?", gameID).Scan(&coverURL)
-		if err != nil || coverURL == "" {
-			servePlaceholder(w)
+		// Look on disk for .jpg then .webp (prefer .jpg, support legacy .webp).
+		var diskPath string
+		for _, ext := range []string{".jpg", ".webp"} {
+			candidate := filepath.Join(coverDir, fmt.Sprintf("%d%s", gameID, ext))
+			if _, err := os.Stat(candidate); err == nil {
+				diskPath = candidate
+				break
+			}
+		}
+
+		if diskPath != "" {
+			// Hit: serve from disk with long-term cache (1 year, immutable).
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			http.ServeFile(w, r, diskPath)
 			return
 		}
 
-		w.Header().Set("Cache-Control", "public, max-age=3600")
-		http.Redirect(w, r, coverURL, http.StatusFound)
+		// Miss: serve placeholder with short cache so browser retries soon.
+		servePlaceholder(w, 300)
 	}
 }
 
-func servePlaceholder(w http.ResponseWriter) {
+func servePlaceholder(w http.ResponseWriter, maxAge int) {
 	w.Header().Set("Content-Type", "image/svg+xml")
-	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", maxAge))
 	w.Write([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="264" height="374" viewBox="0 0 264 374">
 <rect width="264" height="374" fill="#16213e"/>
 <text x="132" y="187" font-family="sans-serif" font-size="16" fill="#999" text-anchor="middle" dominant-baseline="middle">No Cover</text>

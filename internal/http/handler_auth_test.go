@@ -2,7 +2,6 @@ package http
 
 import (
 	"bytes"
-	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -18,7 +17,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func setupAuthTestDB(t *testing.T) *sql.DB {
+func setupAuthTestDB(t *testing.T) *db.DB {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "test.db")
 	database, err := db.Open(path)
@@ -31,7 +30,7 @@ func setupAuthTestDB(t *testing.T) *sql.DB {
 	return database
 }
 
-func newTestAuthHandler(database *sql.DB) *AuthHandler {
+func newTestAuthHandler(database *db.DB) *AuthHandler {
 	cfg := &config.Config{
 		ListenAddr:   ":7080",
 		CookieSecure: false,

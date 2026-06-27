@@ -107,8 +107,12 @@ export function getCoverThumbnailURL(game) {
 }
 
 export const library = {
-  list(status) {
-    const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+  list(status, limit = 60, offset = 0) {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    params.append('limit', limit);
+    params.append('offset', offset);
+    const qs = params.toString() ? `?${params.toString()}` : '';
     return api.get(`/api/library${qs}`);
   },
 

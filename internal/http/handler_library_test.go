@@ -1,7 +1,6 @@
 package http
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -16,7 +15,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func setupLibraryTestDB(t *testing.T) *sql.DB {
+func setupLibraryTestDB(t *testing.T) *db.DB {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "test.db")
 	database, err := db.Open(path)
@@ -32,7 +31,7 @@ func setupLibraryTestDB(t *testing.T) *sql.DB {
 	return database
 }
 
-func createLibrarySession(t *testing.T, db *sql.DB, userID string) string {
+func createLibrarySession(t *testing.T, db *db.DB, userID string) string {
 	t.Helper()
 	session, err := auth.CreateSession(db, userID)
 	if err != nil {
@@ -41,7 +40,7 @@ func createLibrarySession(t *testing.T, db *sql.DB, userID string) string {
 	return session.ID
 }
 
-func newTestLibraryMux(db *sql.DB) *http.ServeMux {
+func newTestLibraryMux(db *db.DB) *http.ServeMux {
 	mux := http.NewServeMux()
 	handler := NewLibraryHandler(db)
 	handler.Register(mux)
