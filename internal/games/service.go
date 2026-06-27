@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"time"
 
@@ -97,6 +98,63 @@ func (s *Service) EnqueueMissingCovers() {
 	if count > 0 {
 		log.Printf("cover backfill: enqueued %d cover download jobs", count)
 	}
+}
+
+// BackfillPopularity walks backfill-candidate rows (see GetBackfillCandidates)
+// and re-fetches each from IGDB so the new popularity fields (follows, hypes,
+// total_rating_count, category, status) get populated. Respects the IGDB rate
+// limiter baked into the client (~1 req/sec). Resumable: each successfully
+// upserted row gets popularity_fetched_at set, so re-running skips done rows.
+// `progress` is called after each batch with (done, total) for logging.
+func (s *Service) BackfillPopularity(ctx context.Context, batchSize, recentYears int, progress func(done, total int)) (int, error) {
+	pending, err := s.store.CountPendingBackfill(ctx, recentYears)
+	if err != nil {
+		return 0, fmt.Errorf("count pending: %w", err)
+	}
+	total := int(pending)
+	done := 0
+	progress(done, total)
+
+	for {
+		if ctx.Err() != nil {
+			return done, ctx.Err()
+		}
+		ids, err := s.store.GetBackfillCandidates(ctx, batchSize, recentYears)
+		if err != nil {
+			return done, fmt.Errorf("get candidates: %w", err)
+		}
+		if len(ids) == 0 {
+			break
+		}
+
+		for _, id := range ids {
+			if ctx.Err() != nil {
+				return done, ctx.Err()
+			}
+			s.rateLimiter.Wait()
+
+			game, err := s.igdb.GetGame(ctx, id)
+			if err != nil {
+				log.Printf("backfill: game %d failed: %v", id, err)
+				continue
+			}
+			if game == nil {
+				// IGDB no longer knows this ID; mark fetched so we don't
+				// retry it forever.
+				s.store.MarkPopularityFetched(ctx, id)
+				done++
+				continue
+			}
+
+			if err := s.store.UpsertIGDBGame(ctx, *game); err != nil {
+				log.Printf("backfill: upsert game %d failed: %v", id, err)
+				continue
+			}
+			done++
+		}
+		progress(done, total)
+	}
+	return done, nil
 }
 
 func (s *Service) refreshStaleGames(maxPerDay int) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -11,14 +12,21 @@ import (
 	"cato/internal/config"
 	"cato/internal/covers"
 	"cato/internal/db"
+	"cato/internal/games"
 	"cato/internal/http"
 	"cato/internal/importer"
+	"cato/internal/igdb"
 )
 
 func main() {
 	importCmd := flag.NewFlagSet("import-games", flag.ExitOnError)
 	importInput := importCmd.String("input", "", "Postgres COPY dump SQL file")
 	importDB := importCmd.String("db", "data/cato.db", "SQLite database path")
+
+	backfillCmd := flag.NewFlagSet("backfill-popularity", flag.ExitOnError)
+	backfillDB := backfillCmd.String("db", "data/cato.db", "SQLite database path")
+	backfillBatch := backfillCmd.Int("batch", 500, "rows per IGDB fetch cycle")
+	backfillYears := backfillCmd.Int("recent-years", 2, "also backfill games released within this many years")
 
 	if len(os.Args) >= 2 && os.Args[1] == "import-games" {
 		importCmd.Parse(os.Args[2:])
@@ -32,6 +40,46 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("imported %d games\n", count)
+		return
+	}
+
+	if len(os.Args) >= 2 && os.Args[1] == "backfill-popularity" {
+		backfillCmd.Parse(os.Args[2:])
+		cfg := config.Load()
+		if cfg.IGDBClientID == "" {
+			fmt.Fprintln(os.Stderr, "backfill-popularity requires IGDB_CLIENT_ID (or TWITCH_OAUTH_ID)")
+			os.Exit(1)
+		}
+		database, err := db.Open(*backfillDB)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "open db: %v\n", err)
+			os.Exit(1)
+		}
+		defer database.Close()
+		if err := db.Migrate(database); err != nil {
+			fmt.Fprintf(os.Stderr, "migrate: %v\n", err)
+			os.Exit(1)
+		}
+		store := games.NewStore(database)
+		igdbClient := igdb.NewClient(cfg.IGDBClientID, cfg.IGDBClientSecret)
+		svc := games.NewService(store, igdbClient, database)
+
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer cancel()
+
+		progress := func(done, total int) {
+			if total == 0 {
+				log.Printf("backfill: no pending rows")
+				return
+			}
+			log.Printf("backfill: %d/%d (%.1f%%)", done, total, 100*float64(done)/float64(total))
+		}
+		done, err := svc.BackfillPopularity(ctx, *backfillBatch, *backfillYears, progress)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "backfill stopped: %v (completed %d)\n", err, done)
+			os.Exit(1)
+		}
+		fmt.Printf("backfill: refreshed popularity for %d games\n", done)
 		return
 	}
 
