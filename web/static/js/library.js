@@ -1,6 +1,41 @@
-import { library, getCoverURL } from './api.js';
+import { library, getCoverURL, getGame } from './api.js';
 
 const VALID_STATUSES = ['wishlist', 'backlog', 'playing', 'completed', 'abandoned'];
+
+// Hash routing utilities
+export function getHashStatus() {
+  const hash = window.location.hash.slice(1);
+  if (!hash || hash.startsWith('game/')) return '';
+  if (VALID_STATUSES.includes(hash)) return hash;
+  return '';
+}
+
+export function getHashGameId() {
+  const hash = window.location.hash.slice(1);
+  if (!hash.startsWith('game/')) return null;
+  const id = parseInt(hash.slice(5), 10);
+  return isNaN(id) ? null : id;
+}
+
+export function setHash(status) {
+  if (status) {
+    const target = '#' + status;
+    if (window.location.hash !== target) {
+      window.location.hash = target;
+    }
+  } else {
+    if (window.location.hash) {
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  }
+}
+
+export function setGameHash(gameId) {
+  const target = '#game/' + gameId;
+  if (window.location.hash !== target) {
+    history.replaceState(null, '', window.location.pathname + window.location.search + target);
+  }
+}
 const PAGE_SIZE = 60;
 
 // Pagination state
@@ -70,13 +105,12 @@ function renderPagedItems(grid, items, isFirstPage = true) {
 
 // renderLibraryItems is for the initial server-rendered page load.
 // It sets up pagination state and attaches scroll listener.
-export function renderLibraryItems(items) {
+export function renderLibraryItems(items, status = '') {
   const grid = document.getElementById('gameGrid');
   if (!grid) return;
 
-  // Initialize pagination state for empty status
   paginationState = {
-    currentStatus: '',
+    currentStatus: status || '',
     offset: 0,
     loading: false,
     hasMore: true,
@@ -277,6 +311,17 @@ function attachCardEvents(grid, newItems = null) {
   });
 }
 
+// openGameModal fetches a game by ID from the API and opens the add-to-library
+// modal. Used for direct game links (#game/<id>).
+export async function openGameModal(gameID) {
+  try {
+    const game = await getGame(gameID);
+    openAddToLibraryModal(game);
+  } catch (err) {
+    console.error('Failed to fetch game:', err.message);
+  }
+}
+
 // addGameToLibrary opens a modal pre-filled with the game's info so the user
 // can choose status/rating/playtime/notes before the game is added. The actual
 // POST only happens on "Add to Library"; cancelling dismisses the modal and
@@ -340,6 +385,10 @@ function openAddToLibraryModal(game) {
   document.body.appendChild(modal);
   document.body.classList.add('modal-open');
 
+  const prevHash = window.location.hash;
+  const prevHashWasGame = prevHash.startsWith('#game/');
+  setGameHash(game.id);
+
   // Live-update the rating/playtime preview labels, mirroring the card back.
   modal.querySelector('.modal-rating').addEventListener('input', (e) => {
     modal.querySelector('.modal-rating-val').textContent = e.target.value;
@@ -352,6 +401,14 @@ function openAddToLibraryModal(game) {
   const close = () => {
     modal.remove();
     document.body.classList.remove('modal-open');
+    document.removeEventListener('keydown', escHandler);
+    if (window.location.hash.startsWith('#game/')) {
+      if (prevHashWasGame || !prevHash) {
+        history.replaceState(null, '', window.location.pathname + window.location.search);
+      } else {
+        history.replaceState(null, '', window.location.pathname + window.location.search + prevHash);
+      }
+    }
   };
   modal.querySelector('.modal-close').addEventListener('click', close);
   modal.querySelector('.modal-cancel').addEventListener('click', close);

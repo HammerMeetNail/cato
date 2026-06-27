@@ -42,7 +42,7 @@
   <script type="module">
     import { checkAuth, logout, library } from '/js/api.js';
     import { initSearch } from '/js/search.js';
-    import { loadLibrary, addGameToLibrary, renderLibraryItems } from '/js/library.js';
+    import { loadLibrary, addGameToLibrary, renderLibraryItems, getHashStatus, getHashGameId, openGameModal } from '/js/library.js';
 
     const searchInput = document.getElementById('searchInput');
     const searchResults = document.getElementById('searchResults');
@@ -51,6 +51,30 @@
     const logoutLink = document.getElementById('logoutLink');
     const statusTabs = document.getElementById('statusTabs');
 
+    function activateTab(status) {
+      statusTabs.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      const tab = statusTabs.querySelector(`.tab[data-status="${status}"]`);
+      if (tab) {
+        tab.classList.add('active');
+      } else {
+        const allTab = statusTabs.querySelector('.tab[data-status=""]');
+        if (allTab) allTab.classList.add('active');
+      }
+    }
+
+    function handleRoute() {
+      const status = getHashStatus();
+      const gameId = getHashGameId();
+      activateTab(status);
+      loadLibrary(status);
+      if (gameId) {
+        openGameModal(gameId);
+      }
+    }
+
+    const initialStatus = getHashStatus();
+    const initialGameId = getHashGameId();
+
     // Fire auth check and library fetch simultaneously so neither waits for
     // the other.  On a fresh page load this cuts the visible wait time from
     // sum(auth + library) to roughly max(auth, library).
@@ -58,11 +82,11 @@
     // that so it doesn't surface as an unhandled rejection.
     const [auth, items] = await Promise.all([
       checkAuth(),
-      library.list('').catch(() => null),
+      library.list(initialStatus).catch(() => null),
     ]);
 
     if (!auth.authenticated) {
-      window.location.href = '/login';
+      window.location.href = '/login' + window.location.hash;
       throw new Error('Not authenticated');
     }
 
@@ -85,19 +109,30 @@
     // Status tabs
     statusTabs.querySelectorAll('.tab').forEach(tab => {
       tab.addEventListener('click', () => {
-        statusTabs.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
-        loadLibrary(tab.dataset.status || '');
+        const status = tab.dataset.status || '';
+        if (status) {
+          window.location.hash = '#' + status;
+        } else {
+          history.replaceState(null, '', window.location.pathname + window.location.search);
+          handleRoute();
+        }
       });
     });
 
     // Render with already-loaded data; fall back to a fresh fetch if the
     // parallel request failed for a non-auth reason (e.g. transient error).
+    activateTab(initialStatus);
     if (items !== null) {
-      renderLibraryItems(items);
+      renderLibraryItems(items, initialStatus);
     } else {
-      loadLibrary('');
+      loadLibrary(initialStatus);
     }
+
+    if (initialGameId) {
+      openGameModal(initialGameId);
+    }
+
+    window.addEventListener('hashchange', handleRoute);
   </script>
 </body>
 </html>
