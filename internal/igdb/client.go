@@ -44,16 +44,23 @@ type igdbGame struct {
 	TotalRatingCount      int64   `json:"total_rating_count"`
 	Follows               int64   `json:"follows"`
 	Hypes                 int64   `json:"hypes"`
-	Popularity            float64 `json:"popularity"`
 	Category              int64   `json:"category"`
 	Status                int64   `json:"status"`
 	VersionParent         int64   `json:"version_parent"`
 }
 
 // igdbFields is the IGDB API v4 fields clause requested on every games query.
-// Extended to include popularity signals (follows, hypes, popularity,
+// Extended to include popularity signals (follows, hypes,
 // total_rating_count, etc.) used to compute Game.PopularityScore.
-const igdbFields = "id,name,slug,summary,storyline,cover,first_release_date,aggregated_rating,aggregated_rating_count,platforms,genres,url,updated_at,rating,rating_count,total_rating,total_rating_count,follows,hypes,popularity,category,status,version_parent"
+//
+// Note: IGDB's games endpoint does NOT accept a "popularity" field name
+// (returns 400 "Invalid field name"); the raw IGDB popularity score is
+// only available via the separate /popularity endpoint. We therefore store
+// igdb_popularity as NULL and compute popularity_score solely from
+// follows, hypes, total_rating_count, category, and status. Do not add
+// `popularity` back to this list without first verifying via the
+// /popularity endpoint integration.
+const igdbFields = "id,name,slug,summary,storyline,cover,first_release_date,aggregated_rating,aggregated_rating_count,platforms,genres,url,updated_at,rating,rating_count,total_rating,total_rating_count,follows,hypes,category,status,version_parent"
 
 func NewClient(clientID, clientSecret string) *Client {
 	return &Client{
@@ -132,7 +139,7 @@ func (c *Client) toGame(g igdbGame) games.Game {
 		TotalRatingCount:      g.TotalRatingCount,
 		Follows:               g.Follows,
 		Hypes:                 g.Hypes,
-		IGDBPopularity:        g.Popularity,
+		IGDBPopularity:        0,
 		Category:              g.Category,
 		Status:                g.Status,
 		VersionParent:         g.VersionParent,
