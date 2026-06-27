@@ -9,13 +9,14 @@ import (
 	"time"
 
 	"cato/internal/auth"
+	"cato/internal/db"
 )
 
 type LibraryHandler struct {
-	db *sql.DB
+	db *db.DB
 }
 
-func NewLibraryHandler(db *sql.DB) *LibraryHandler {
+func NewLibraryHandler(db *db.DB) *LibraryHandler {
 	return &LibraryHandler{db: db}
 }
 
@@ -60,6 +61,24 @@ func (h *LibraryHandler) handleLibraryItem(w http.ResponseWriter, r *http.Reques
 func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, userID string) {
 	status := r.URL.Query().Get("status")
 
+	// Parse pagination parameters.
+	limit := 60 // default
+	offset := 0
+
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.ParseInt(limitStr, 10, 64); err == nil {
+			if l > 0 && l <= 200 {
+				limit = int(l)
+			}
+		}
+	}
+
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		if o, err := strconv.ParseInt(offsetStr, 10, 64); err == nil && o >= 0 {
+			offset = int(o)
+		}
+	}
+
 	var rows *sql.Rows
 	var err error
 
@@ -70,7 +89,8 @@ func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, use
 			FROM library_items li
 			JOIN games g ON g.id = li.game_id
 			WHERE li.user_id = ? AND li.status = ?
-			ORDER BY li.updated_at DESC`, userID, status)
+			ORDER BY li.updated_at DESC
+			LIMIT ? OFFSET ?`, userID, status, limit, offset)
 	} else {
 		rows, err = h.db.Query(`SELECT li.game_id, li.status, li.rating, li.playtime_minutes, li.tags_json,
 			li.notes, li.started_at, li.completed_at, li.created_at, li.updated_at,
@@ -78,7 +98,8 @@ func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, use
 			FROM library_items li
 			JOIN games g ON g.id = li.game_id
 			WHERE li.user_id = ?
-			ORDER BY li.updated_at DESC`, userID)
+			ORDER BY li.updated_at DESC
+			LIMIT ? OFFSET ?`, userID, limit, offset)
 	}
 
 	if err != nil {
@@ -212,6 +233,11 @@ func (h *LibraryHandler) upsertLibraryItem(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to save library item"))
 		return
 	}
+
+	// Enqueue a cover job for this game (best-effort, ignore errors).
+	h.db.Exec(`INSERT INTO cover_jobs (game_id, source_url)
+		SELECT id, cover_url FROM games WHERE id = ? AND cover_url != ''
+		ON CONFLICT(game_id) DO NOTHING`, gameID)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }

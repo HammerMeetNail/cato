@@ -2,12 +2,12 @@ package http
 
 import (
 	"context"
-	"database/sql"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"cato/internal/config"
+	"cato/internal/db"
 	"cato/internal/games"
 	"cato/internal/igdb"
 )
@@ -16,7 +16,7 @@ type GameHandler struct {
 	service *games.Service
 }
 
-func NewGameHandler(db *sql.DB, cfg *config.Config) *GameHandler {
+func NewGameHandler(db *db.DB, cfg *config.Config) *GameHandler {
 	store := games.NewStore(db)
 	var igdbClient games.IGDBClient
 	if cfg.IGDBClientID != "" {
@@ -25,7 +25,6 @@ func NewGameHandler(db *sql.DB, cfg *config.Config) *GameHandler {
 		igdbClient = &noopIGDBClient{}
 	}
 	svc := games.NewService(store, igdbClient, db)
-	svc.EnqueueMissingCovers()
 	if cfg.IGDBClientID != "" {
 		svc.StartStaleRefresh()
 	}

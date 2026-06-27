@@ -123,12 +123,16 @@ CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);`,
 	},
 }
 
-func Migrate(database *sql.DB) error {
-	if err := createMigrationsTable(database); err != nil {
+// Migrate runs pending migrations on the writer connection. All DDL/writes go
+// through the single writer pool to avoid contending with the read pool.
+func Migrate(database *DB) error {
+	w := database.Write
+
+	if err := createMigrationsTable(w); err != nil {
 		return fmt.Errorf("create migrations table: %w", err)
 	}
 
-	currentVersion, err := getCurrentVersion(database)
+	currentVersion, err := getCurrentVersion(w)
 	if err != nil {
 		return fmt.Errorf("get current version: %w", err)
 	}
@@ -142,7 +146,7 @@ func Migrate(database *sql.DB) error {
 			continue
 		}
 
-		if err := applyMigration(database, m); err != nil {
+		if err := applyMigration(w, m); err != nil {
 			return fmt.Errorf("apply migration %d: %w", m.Version, err)
 		}
 	}

@@ -2,7 +2,6 @@ package games
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -29,7 +28,7 @@ func (f *fakeIGDB) GetGame(ctx context.Context, id int64) (*Game, error) {
 	return nil, nil
 }
 
-func setupGameDB(t *testing.T) (*sql.DB, *Store) {
+func setupGameDB(t *testing.T) (*db.DB, *Store) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "test.db")
 	database, err := db.Open(path)

@@ -5,13 +5,15 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"cato/internal/db"
 )
 
 type Store struct {
-	db *sql.DB
+	db *db.DB
 }
 
-func NewStore(db *sql.DB) *Store {
+func NewStore(db *db.DB) *Store {
 	return &Store{db: db}
 }
 

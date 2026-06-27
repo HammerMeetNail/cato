@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -48,7 +47,7 @@ func ClearSessionCookie(w http.ResponseWriter, secure bool) {
 	})
 }
 
-func AuthRequired(db *sql.DB) func(http.Handler) http.Handler {
+func AuthRequired(db Querier) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			sessionID := GetSessionID(r)
@@ -70,7 +69,7 @@ func AuthRequired(db *sql.DB) func(http.Handler) http.Handler {
 	}
 }
 
-func CSRFRequired(db *sql.DB) func(http.Handler) http.Handler {
+func CSRFRequired(db Querier) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
