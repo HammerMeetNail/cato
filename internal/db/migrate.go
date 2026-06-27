@@ -13,6 +13,58 @@ type Migration struct {
 
 var migrations = []Migration{
 	{
+		Version: 5,
+		// FTS5 trigram virtual table over normalized_name for typo-tolerant
+		// search. Trigram tokenizer matches on shared 3-character substrings,
+		// so a query like "zleda" still matches "zelda". External-content
+		// mode (content='games') avoids duplicating the text column, but
+		// FTS5 does not auto-sync external content tables — the three
+		// triggers below keep the index in step with INSERT/UPDATE/DELETE
+		// on games. This covers every write path including the raw COPY
+		// import in internal/importer, which bypasses the Go store layer.
+		Up: `CREATE VIRTUAL TABLE IF NOT EXISTS games_fts USING fts5(
+		     normalized_name,
+		     tokenize='trigram',
+		     content='games',
+		     content_rowid='rowid'
+		     );
+		     INSERT INTO games_fts(rowid, normalized_name)
+		       SELECT rowid, normalized_name FROM games;
+
+		     CREATE TRIGGER IF NOT EXISTS games_fts_ai AFTER INSERT ON games BEGIN
+		       INSERT INTO games_fts(rowid, normalized_name) VALUES (new.rowid, new.normalized_name);
+		     END;
+		     CREATE TRIGGER IF NOT EXISTS games_fts_ad AFTER DELETE ON games BEGIN
+		       INSERT INTO games_fts(games_fts, rowid, normalized_name) VALUES ('delete', old.rowid, old.normalized_name);
+		     END;
+		     CREATE TRIGGER IF NOT EXISTS games_fts_au AFTER UPDATE ON games BEGIN
+		       INSERT INTO games_fts(games_fts, rowid, normalized_name) VALUES ('delete', old.rowid, old.normalized_name);
+		       INSERT INTO games_fts(rowid, normalized_name) VALUES (new.rowid, new.normalized_name);
+		     END;`,
+	},
+	{
+		Version: 4,
+		// Popularity fields fetched from IGDB and a denormalized
+		// popularity_score computed at upsert time from
+		// follows*3 + hypes*2 + total_rating_count + main-game-released bonus.
+		// The score drives search ranking (store.go SearchLocal) and is
+		// indexed so the ORDER BY stays an O(limit) index scan.
+		Up: `ALTER TABLE games ADD COLUMN rating REAL NOT NULL DEFAULT 0;
+		     ALTER TABLE games ADD COLUMN rating_count INTEGER NOT NULL DEFAULT 0;
+		     ALTER TABLE games ADD COLUMN total_rating REAL NOT NULL DEFAULT 0;
+		     ALTER TABLE games ADD COLUMN total_rating_count INTEGER NOT NULL DEFAULT 0;
+		     ALTER TABLE games ADD COLUMN follows INTEGER NOT NULL DEFAULT 0;
+		     ALTER TABLE games ADD COLUMN hypes INTEGER NOT NULL DEFAULT 0;
+		     ALTER TABLE games ADD COLUMN igdb_popularity REAL NOT NULL DEFAULT 0;
+		     ALTER TABLE games ADD COLUMN category INTEGER NOT NULL DEFAULT 0;
+		     ALTER TABLE games ADD COLUMN status INTEGER NOT NULL DEFAULT 0;
+		     ALTER TABLE games ADD COLUMN version_parent INTEGER NOT NULL DEFAULT 0;
+		     ALTER TABLE games ADD COLUMN popularity_score INTEGER NOT NULL DEFAULT 0;
+		     ALTER TABLE games ADD COLUMN popularity_fetched_at INTEGER NOT NULL DEFAULT 0;
+		     CREATE INDEX IF NOT EXISTS idx_games_popularity ON games(popularity_score DESC);
+		     CREATE INDEX IF NOT EXISTS idx_games_pop_fetch ON games(popularity_fetched_at) WHERE popularity_fetched_at = 0;`,
+	},
+	{
 		Version: 3,
 		// GetStaleGames used a correlated subquery in its ORDER BY which forced
 		// a full-table sort of the games table.  Adding an index on
