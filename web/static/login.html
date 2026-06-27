@@ -52,7 +52,7 @@
     // Redirect if already logged in
     const auth = await checkAuth();
     if (auth.authenticated) {
-      window.location.href = '/';
+      window.location.href = '/' + window.location.hash;
       throw new Error('Already authenticated');
     }
 
@@ -77,7 +77,7 @@
         } else {
           await login(email, password);
         }
-        window.location.href = '/';
+        window.location.href = '/' + window.location.hash;
       } catch (err) {
         showError(err.message || 'Authentication failed');
       }

@@ -82,6 +82,10 @@ export async function logout() {
   api.setCSRF(null);
 }
 
+export async function getGame(id) {
+  return api.get(`/api/games/${id}`);
+}
+
 export async function searchGames(query, signal) {
   if (!query || query.length < 2) return [];
   return api.get(`/api/games/search?q=${encodeURIComponent(query)}`, { signal });
