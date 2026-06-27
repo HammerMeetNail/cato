@@ -279,3 +279,128 @@ func TestNormalizeName(t *testing.T) {
 		}
 	}
 }
+
+func TestSearchLocalRanksByPopularityScore(t *testing.T) {
+	database, store := setupGameDB(t)
+	defer database.Close()
+
+	// Two games whose normalized names both match "zelda". The obscure one
+	// has higher aggregated_rating_count (the old sort key) but the popular
+	// one has a much higher popularity_score (follows-weighted). Popularity
+	// must win within the same name-match tier.
+	database.Exec(`INSERT INTO games (id, name, slug, normalized_name, aggregated_rating_count, popularity_score, category) VALUES
+		(1, 'Zelda Popular', 'zelda-popular', 'zelda popular', 50, 5000, 0),
+		(2, 'Zelda Obscure', 'zelda-obscure', 'zelda obscure', 9999, 5, 0)`)
+
+	results, err := store.SearchLocal(context.Background(), "zelda", 10)
+	if err != nil {
+		t.Fatalf("search failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].ID != 1 {
+		t.Errorf("expected popular game (id=1) first, got id=%d", results[0].ID)
+	}
+}
+
+func TestSearchLocalDeprioritizesDLC(t *testing.T) {
+	database, store := setupGameDB(t)
+	defer database.Close()
+
+	// Same name-match tier, same popularity_score. The main game
+	// (category=0) must rank above the DLC (category=1).
+	database.Exec(`INSERT INTO games (id, name, slug, normalized_name, popularity_score, category) VALUES
+		(10, 'Zelda DLC', 'zelda-dlc', 'zelda dlc', 1000, 1),
+		(11, 'Zelda Main', 'zelda-main', 'zelda main', 1000, 0)`)
+
+	results, err := store.SearchLocal(context.Background(), "zelda", 10)
+	if err != nil {
+		t.Fatalf("search failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	if results[0].ID != 11 {
+		t.Errorf("expected main game (id=11) before DLC, got id=%d", results[0].ID)
+	}
+}
+
+func TestSearchLocalSubstringFragmentMatching(t *testing.T) {
+	database, store := setupGameDB(t)
+	defer database.Close()
+
+	database.Exec(`INSERT INTO games (id, name, slug, normalized_name) VALUES
+		(1, 'The Legend of Zelda', 'the-legend-of-zelda', 'the legend of zelda')`)
+
+	// The trigram tokenizer matches on shared 3-char substrings, so a query
+	// fragment that is a contiguous substring of the indexed name matches —
+	// including fragments that span word boundaries mid-word. This is what
+	// replaces the old LIKE '%...%' scan but via the FTS index.
+	for _, q := range []string{"zeld", "egend of zel", "the legend of zelda"} {
+		results, err := store.SearchLocal(context.Background(), q, 10)
+		if err != nil {
+			t.Fatalf("search %q failed: %v", q, err)
+		}
+		if len(results) != 1 || results[0].ID != 1 {
+			t.Errorf("expected match for substring %q, got %v", q, results)
+		}
+	}
+}
+
+func TestSearchLocalShortQueryFallsBackToLike(t *testing.T) {
+	database, store := setupGameDB(t)
+	defer database.Close()
+
+	database.Exec(`INSERT INTO games (id, name, slug, normalized_name) VALUES
+		(1, 'Go', 'go', 'go')`)
+
+	// 2-char queries can't use the trigram tokenizer; must fall back to LIKE.
+	results, err := store.SearchLocal(context.Background(), "go", 10)
+	if err != nil {
+		t.Fatalf("search failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("expected 1 result via LIKE fallback for 2-char query, got %d", len(results))
+	}
+}
+
+func TestComputePopularityScore(t *testing.T) {
+	tests := []struct {
+		name              string
+		follows, hypes    int64
+		totalRatingCount  int64
+		category, status  int64
+		want              int64
+	}{
+		{"released main game with follows", 100, 50, 200, 0, 0, 100*3 + 50*2 + 200 + 10},
+		{"DLC gets no bonus", 100, 50, 200, 1, 0, 100*3 + 50*2 + 200},
+		{"unreleased gets no bonus", 100, 50, 200, 0, 2, 100*3 + 50*2 + 200},
+		{"zeros", 0, 0, 0, 0, 0, 10},
+	}
+	for _, tt := range tests {
+		got := ComputePopularityScore(tt.follows, tt.hypes, tt.totalRatingCount, tt.category, tt.status)
+		if got != tt.want {
+			t.Errorf("%s: got %d, want %d", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestBuildFTSMatch(t *testing.T) {
+	tests := []struct {
+		query string
+		match string
+		ok    bool
+	}{
+		{"ab", "", false},               // < 3 chars
+		{"zelda", `"zelda"`, true},       // single token
+		{"the legend of zelda", `"the legend of zelda"`, true}, // short tokens kept
+		{`zelda"`, `"zelda"`, true},      // special char stripped
+	}
+	for _, tt := range tests {
+		match, ok := BuildFTSMatch(tt.query)
+		if match != tt.match || ok != tt.ok {
+			t.Errorf("BuildFTSMatch(%q) = (%q, %v), want (%q, %v)", tt.query, match, ok, tt.match, tt.ok)
+		}
+	}
+}

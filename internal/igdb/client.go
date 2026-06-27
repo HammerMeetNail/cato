@@ -25,20 +25,35 @@ type Client struct {
 }
 
 type igdbGame struct {
-	ID                   int64   `json:"id"`
-	Name                 string  `json:"name"`
-	Slug                 string  `json:"slug"`
-	Summary              string  `json:"summary"`
-	Storyline            string  `json:"storyline"`
-	Cover                int64   `json:"cover"`
-	FirstReleaseDate     int64   `json:"first_release_date"`
-	AggregatedRating     float64 `json:"aggregated_rating"`
-	AggregatedRatingCount int64  `json:"aggregated_rating_count"`
-	Platforms            []int64 `json:"platforms"`
-	Genres               []int64 `json:"genres"`
-	URL                  string  `json:"url"`
-	UpdatedAt            int64   `json:"updated_at"`
+	ID                    int64   `json:"id"`
+	Name                  string  `json:"name"`
+	Slug                  string  `json:"slug"`
+	Summary               string  `json:"summary"`
+	Storyline             string  `json:"storyline"`
+	Cover                 int64   `json:"cover"`
+	FirstReleaseDate      int64   `json:"first_release_date"`
+	AggregatedRating      float64 `json:"aggregated_rating"`
+	AggregatedRatingCount int64   `json:"aggregated_rating_count"`
+	Platforms             []int64 `json:"platforms"`
+	Genres                []int64 `json:"genres"`
+	URL                   string  `json:"url"`
+	UpdatedAt             int64   `json:"updated_at"`
+	Rating                float64 `json:"rating"`
+	RatingCount           int64   `json:"rating_count"`
+	TotalRating           float64 `json:"total_rating"`
+	TotalRatingCount      int64   `json:"total_rating_count"`
+	Follows               int64   `json:"follows"`
+	Hypes                 int64   `json:"hypes"`
+	Popularity            float64 `json:"popularity"`
+	Category              int64   `json:"category"`
+	Status                int64   `json:"status"`
+	VersionParent         int64   `json:"version_parent"`
 }
+
+// igdbFields is the IGDB API v4 fields clause requested on every games query.
+// Extended to include popularity signals (follows, hypes, popularity,
+// total_rating_count, etc.) used to compute Game.PopularityScore.
+const igdbFields = "id,name,slug,summary,storyline,cover,first_release_date,aggregated_rating,aggregated_rating_count,platforms,genres,url,updated_at,rating,rating_count,total_rating,total_rating_count,follows,hypes,popularity,category,status,version_parent"
 
 func NewClient(clientID, clientSecret string) *Client {
 	return &Client{
@@ -56,7 +71,7 @@ func (c *Client) SearchGames(ctx context.Context, query string, limit int) ([]ga
 
 	c.rateLimiter.Wait()
 
-	body := fmt.Sprintf(`search "%s"; fields id,name,slug,summary,storyline,cover,first_release_date,aggregated_rating,aggregated_rating_count,platforms,genres,url,updated_at; limit %d;`, query, limit)
+	body := fmt.Sprintf(`search "%s"; fields %s; limit %d;`, query, igdbFields, limit)
 
 	igdbGames, err := c.post(ctx, "games", body)
 	if err != nil {
@@ -78,7 +93,7 @@ func (c *Client) GetGame(ctx context.Context, id int64) (*games.Game, error) {
 
 	c.rateLimiter.Wait()
 
-	body := fmt.Sprintf(`where id = %d; fields id,name,slug,summary,storyline,cover,first_release_date,aggregated_rating,aggregated_rating_count,platforms,genres,url,updated_at;`, id)
+	body := fmt.Sprintf(`where id = %d; fields %s;`, id, igdbFields)
 
 	igdbGames, err := c.post(ctx, "games", body)
 	if err != nil {
@@ -111,6 +126,19 @@ func (c *Client) toGame(g igdbGame) games.Game {
 		GenresJSON:            intsToJSON(g.Genres),
 		IGDBURL:               g.URL,
 		SourceUpdatedAt:       g.UpdatedAt,
+		Rating:                g.Rating,
+		RatingCount:           g.RatingCount,
+		TotalRating:           g.TotalRating,
+		TotalRatingCount:      g.TotalRatingCount,
+		Follows:               g.Follows,
+		Hypes:                 g.Hypes,
+		IGDBPopularity:        g.Popularity,
+		Category:              g.Category,
+		Status:                g.Status,
+		VersionParent:         g.VersionParent,
+		PopularityScore: games.ComputePopularityScore(
+			g.Follows, g.Hypes, g.TotalRatingCount, g.Category, g.Status,
+		),
 	}
 }
 
