@@ -53,13 +53,18 @@ func (s *Server) routes() {
 	s.mux.Handle("/", staticCacheMiddleware(fs))
 }
 
-// staticCacheMiddleware adds cache headers to static assets under /js/, /css/, and /favicon.svg
+// staticCacheMiddleware sets caching policy for static assets. JS/CSS use
+// "no-cache" — the browser MAY cache but MUST revalidate every load (a cheap
+// 304 when unchanged). Because these files have stable names (no content hash /
+// no build step), a long max-age would serve stale JS for the whole TTL after a
+// deploy. Covers are NOT handled here; they get their own long immutable cache
+// in covers.ServeCover (safe because they're keyed by immutable game ID).
 func staticCacheMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/js/") ||
 			strings.HasPrefix(r.URL.Path, "/css/") ||
 			r.URL.Path == "/favicon.svg" {
-			w.Header().Set("Cache-Control", "public, max-age=3600")
+			w.Header().Set("Cache-Control", "no-cache")
 		}
 		next.ServeHTTP(w, r)
 	})
