@@ -277,21 +277,120 @@ function attachCardEvents(grid, newItems = null) {
   });
 }
 
-export async function addGameToLibrary(game, status = 'backlog') {
+// addGameToLibrary opens a modal pre-filled with the game's info so the user
+// can choose status/rating/playtime/notes before the game is added. The actual
+// POST only happens on "Add to Library"; cancelling dismisses the modal and
+// leaves the library untouched.
+export function addGameToLibrary(game) {
   if (!game || !game.id) return;
-  try {
-    await library.add(game.id, {
-      status,
-      rating: 0,
-      playtime_minutes: 0,
-      tags: [],
-      notes: '',
-    });
-    const activeTab = document.querySelector('.tab.active');
-    await loadLibrary(activeTab?.dataset?.status || '');
-  } catch (err) {
-    alert('Failed to add game: ' + err.message);
-  }
+  openAddToLibraryModal(game);
+}
+
+function openAddToLibraryModal(game) {
+  // Replace any existing modal (e.g. user clicks a second result).
+  const existing = document.getElementById('addGameModal');
+  if (existing) existing.remove();
+
+  const year = game.first_release_date
+    ? new Date(game.first_release_date * 1000).getFullYear()
+    : '';
+
+  const modal = document.createElement('div');
+  modal.id = 'addGameModal';
+  modal.className = 'modal-overlay';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-labelledby', 'addGameModalTitle');
+  modal.innerHTML = `
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 id="addGameModalTitle">Add to Library</h2>
+        <button class="modal-close" type="button" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-game-info">
+          <img src="${getCoverURL(game)}" alt="${escapeHTML(game.name)}" decoding="async">
+          <div class="modal-game-meta">
+            <h3>${escapeHTML(game.name)}</h3>
+            ${year ? `<div class="modal-year">${year}</div>` : ''}
+          </div>
+        </div>
+        <label class="modal-field">Status
+          <select class="modal-status">
+            ${VALID_STATUSES.map(s => `
+              <option value="${s}"${s === 'backlog' ? ' selected' : ''}>${s}</option>
+            `).join('')}
+          </select>
+        </label>
+        <label class="modal-field">Rating: <span class="modal-rating-val">0</span>
+          <input type="range" min="0" max="100" value="0" class="modal-rating">
+        </label>
+        <label class="modal-field">Hours: <span class="modal-playtime-val">0.0</span>
+          <input type="number" min="0" value="0" class="modal-playtime" step="15">
+        </label>
+        <label class="modal-field">Notes
+          <textarea class="modal-notes" placeholder="Notes..."></textarea>
+        </label>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary modal-cancel" type="button">Cancel</button>
+        <button class="btn btn-primary modal-submit" type="button">Add to Library</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  document.body.classList.add('modal-open');
+
+  // Live-update the rating/playtime preview labels, mirroring the card back.
+  modal.querySelector('.modal-rating').addEventListener('input', (e) => {
+    modal.querySelector('.modal-rating-val').textContent = e.target.value;
+  });
+  modal.querySelector('.modal-playtime').addEventListener('input', (e) => {
+    modal.querySelector('.modal-playtime-val').textContent =
+      (parseInt(e.target.value || 0) / 60).toFixed(1);
+  });
+
+  const close = () => {
+    modal.remove();
+    document.body.classList.remove('modal-open');
+  };
+  modal.querySelector('.modal-close').addEventListener('click', close);
+  modal.querySelector('.modal-cancel').addEventListener('click', close);
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) close();
+  });
+  const escHandler = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', escHandler);
+
+  modal.querySelector('.modal-submit').addEventListener('click', async () => {
+    const status = modal.querySelector('.modal-status').value;
+    const rating = parseInt(modal.querySelector('.modal-rating').value) || 0;
+    const playtime = parseInt(modal.querySelector('.modal-playtime').value) || 0;
+    const notes = modal.querySelector('.modal-notes').value;
+    const submitBtn = modal.querySelector('.modal-submit');
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Adding...';
+    try {
+      await library.add(game.id, {
+        status,
+        rating,
+        playtime_minutes: playtime,
+        tags: [],
+        notes,
+      });
+      close();
+      const activeTab = document.querySelector('.tab.active');
+      await loadLibrary(activeTab?.dataset?.status || '');
+    } catch (err) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Add to Library';
+      alert('Failed to add game: ' + err.message);
+    } finally {
+      document.removeEventListener('keydown', escHandler);
+    }
+  });
+
+  modal.querySelector('.modal-close').focus();
 }
 
 function escapeHTML(str) {

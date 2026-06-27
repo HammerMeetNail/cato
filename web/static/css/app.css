@@ -352,6 +352,11 @@ a { color: var(--accent); text-decoration: none; }
   color: white;
 }
 
+.btn-secondary {
+  background: var(--surface2);
+  color: var(--text);
+}
+
 .btn-google {
   background: #4285f4;
   color: white;
@@ -457,4 +462,135 @@ a { color: var(--accent); text-decoration: none; }
   .topbar {
     padding: 10px 14px;
   }
+}
+
+/* Add-to-library modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 100;
+  animation: modal-fade-in 120ms ease;
+}
+
+body.modal-open {
+  overflow: hidden;
+}
+
+.modal-card {
+  background: var(--surface);
+  border: 1px solid var(--surface2);
+  border-radius: var(--radius);
+  width: 100%;
+  max-width: 420px;
+  max-height: 90vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--surface2);
+}
+
+.modal-header h2 {
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.modal-close:hover {
+  color: var(--text);
+}
+
+.modal-body {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.modal-game-info {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.modal-game-info img {
+  width: 60px;
+  height: 80px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: var(--surface2);
+  flex-shrink: 0;
+}
+
+.modal-game-meta h3 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.modal-year {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.modal-field select,
+.modal-field input[type="range"],
+.modal-field input[type="number"],
+.modal-field textarea {
+  width: 100%;
+  padding: 6px;
+  font-size: 0.85rem;
+  background: var(--surface2);
+  border: 1px solid var(--surface2);
+  border-radius: 4px;
+  color: var(--text);
+}
+
+.modal-field textarea {
+  height: 60px;
+  resize: vertical;
+}
+
+.modal-footer {
+  display: flex;
+  gap: 10px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--surface2);
+}
+
+.modal-footer .btn {
+  flex: 1;
+}
+
+@keyframes modal-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
