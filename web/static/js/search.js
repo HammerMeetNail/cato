@@ -40,28 +40,33 @@ function scheduleSearch(query, resultsEl, onSelect, onSubmit, onTagLookup) {
   clearTimeout(searchTimer);
   currentQuery = query;
 
-  // Handle #tag prefix — autocomplete tags from user's library
-  if (query.startsWith('#') && onTagLookup) {
-    const prefix = query.slice(1).trim();
-    if (prefix.length < 1) {
+  // Handle $tag prefix — autocomplete tags from user's library.
+  // Space-separated = AND, pipe-separated = OR.
+  if (query.startsWith('$') && onTagLookup) {
+    const raw = query.slice(1).trim();
+    if (raw.length < 1) {
       resultsEl.classList.remove('active');
       currentResults = [];
       currentQuery = '';
       return;
     }
 
+    // Extract the last "word" for autocomplete (the prefix being typed)
+    const lastSep = Math.max(raw.lastIndexOf(' '), raw.lastIndexOf('|'));
+    const prefix = lastSep >= 0 ? raw.slice(lastSep + 1).trim() : raw;
+
     searchTimer = setTimeout(async () => {
       try {
         const [tagSuggestions, items] = await Promise.all([
           autocompleteTags(prefix),
-          onTagLookup(prefix),
+          onTagLookup(raw),
         ]);
         currentResults = items;
         selectedIndex = -1;
-        renderTagSuggestions(tagSuggestions, items, resultsEl, onSelect, prefix);
+        renderTagSuggestions(tagSuggestions, items, resultsEl, onSelect, prefix, raw);
       } catch (err) {
         currentResults = [];
-        renderTagSuggestions([], [], resultsEl, onSelect, prefix);
+        renderTagSuggestions([], [], resultsEl, onSelect, prefix, raw);
       }
     }, 200);
     return;
@@ -146,8 +151,17 @@ function renderResults(results, resultsEl, onSelect, onSubmit) {
   resultsEl.classList.add('active');
 }
 
-function renderTagSuggestions(tagSuggestions, items, resultsEl, onSelect, prefix) {
+function renderTagSuggestions(tagSuggestions, items, resultsEl, onSelect, prefix, raw) {
   let html = '';
+
+  // Build replacement function: replaces last word in raw with the given tag
+  function replaceLastWord(tag) {
+    const lastSep = Math.max(raw.lastIndexOf(' '), raw.lastIndexOf('|'));
+    if (lastSep >= 0) {
+      return raw.slice(0, lastSep + 1) + tag;
+    }
+    return tag;
+  }
 
   // Tag autocomplete suggestions
   if (tagSuggestions.length > 0) {
@@ -189,20 +203,27 @@ function renderTagSuggestions(tagSuggestions, items, resultsEl, onSelect, prefix
         </div>`;
     }).join('');
 
-    html += `<div class="search-result-more">Filter library by "${escapeHTML(prefix)}" →</div>`;
+    html += `<div class="search-result-more">Filter library by "${escapeHTML(raw)}" →</div>`;
   } else if (tagSuggestions.length === 0) {
-    html += `<div class="no-results">No games tagged "${escapeHTML(prefix)}"</div>`;
+    html += `<div class="no-results">No games tagged "${escapeHTML(raw)}"</div>`;
   }
 
   resultsEl.innerHTML = html;
 
-  // Click handlers for tag suggestion chips
+  // Click handlers for tag suggestion chips — replace last word in input, re-search
   resultsEl.querySelectorAll('.tag-suggestion-chip').forEach(chip => {
     chip.addEventListener('click', () => {
       const tag = chip.dataset.tag;
+      const newRaw = replaceLastWord(tag);
+      // Find the search input and update its value
+      const inputEl = document.getElementById('searchInput');
+      if (inputEl) {
+        inputEl.value = '$' + newRaw;
+        inputEl.focus();
+      }
       resultsEl.classList.remove('active');
-      const event = new CustomEvent('tagfilter', { detail: { tag } });
-      resultsEl.dispatchEvent(event);
+      // Re-trigger search with new value
+      inputEl.dispatchEvent(new Event('input'));
     });
   });
 
@@ -217,12 +238,12 @@ function renderTagSuggestions(tagSuggestions, items, resultsEl, onSelect, prefix
     });
   });
 
-  // Footer "Filter library" click
+  // Footer "Filter library" click — use the full raw string
   const footerRow = resultsEl.querySelector('.search-result-more');
   if (footerRow) {
     footerRow.addEventListener('click', () => {
       resultsEl.classList.remove('active');
-      const event = new CustomEvent('tagfilter', { detail: { tag: prefix } });
+      const event = new CustomEvent('tagfilter', { detail: { tag: raw } });
       resultsEl.dispatchEvent(event);
     });
   }
@@ -249,8 +270,8 @@ function handleKeyboard(e, inputEl, resultsEl, onSelect, onSubmit, onTagLookup) 
       if (resultsEl.classList.contains('active') && selectedIndex >= 0 && selectedIndex < currentResults.length) {
         resultsEl.classList.remove('active');
         if (onSelect) onSelect(currentResults[selectedIndex]);
-      } else if (currentQuery && currentQuery.startsWith('#') && onTagLookup) {
-        // #tag with no selection — filter library by tag
+      } else if (currentQuery && currentQuery.startsWith('$') && onTagLookup) {
+        // $tag with no selection — filter library by tag(s)
         const tag = currentQuery.slice(1).trim();
         if (tag) {
           resultsEl.classList.remove('active');

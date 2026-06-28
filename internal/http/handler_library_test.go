@@ -356,6 +356,103 @@ func TestLibraryFilterByTag(t *testing.T) {
 	}
 }
 
+func TestLibraryFilterByMultipleTags(t *testing.T) {
+	database := setupLibraryTestDB(t)
+	defer database.Close()
+	// Add extra games for the multi-tag test
+	database.Exec("INSERT INTO games (id, name, slug, normalized_name) VALUES (3, 'Game Three', 'game-three', 'game three')")
+	database.Exec("INSERT INTO games (id, name, slug, normalized_name) VALUES (4, 'Game Four', 'game-four', 'game four')")
+	sessionID := createLibrarySession(t, database, "user-1")
+	session, _ := auth.GetSession(database, sessionID)
+	mux := newTestLibraryMux(database)
+
+	// Game 1: switch + steam
+	// Game 2: switch only
+	// Game 3: steam only
+	// Game 4: neither
+	for _, g := range []struct {
+		id     int
+		status string
+		tags   string
+	}{
+		{1, "backlog", `["switch","steam"]`},
+		{2, "backlog", `["switch"]`},
+		{3, "backlog", `["steam"]`},
+		{4, "backlog", `["ps5"]`},
+	} {
+		body := fmt.Sprintf(`{"status":"%s","rating":80,"playtime_minutes":0,"tags":%s,"notes":""}`, g.status, g.tags)
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/library/%d", g.id), strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})
+		req.Header.Set("X-CSRF-Token", session.CSRFToken)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+	}
+
+	var items []map[string]interface{}
+
+	// OR: switch | steam — games 1, 2, 3 (default tag_op=and, so use tag_op=or)
+	req := httptest.NewRequest(http.MethodGet, "/api/library?tag=switch&tag=steam&tag_op=or", nil)
+	req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	json.NewDecoder(rec.Body).Decode(&items)
+	if len(items) != 3 {
+		t.Fatalf("expected 3 items for switch OR steam, got %d", len(items))
+	}
+
+	// AND: switch & steam — only game 1
+	req = httptest.NewRequest(http.MethodGet, "/api/library?tag=switch&tag=steam&tag_op=and", nil)
+	req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	json.NewDecoder(rec.Body).Decode(&items)
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item for switch AND steam, got %d", len(items))
+	}
+	if items[0]["game_id"] != float64(1) {
+		t.Errorf("expected game_id 1 for switch AND steam, got %v", items[0]["game_id"])
+	}
+
+	// AND: switch & ps5 — no games have both
+	req = httptest.NewRequest(http.MethodGet, "/api/library?tag=switch&tag=ps5&tag_op=and", nil)
+	req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	json.NewDecoder(rec.Body).Decode(&items)
+	if len(items) != 0 {
+		t.Errorf("expected 0 items for switch AND ps5, got %d", len(items))
+	}
+
+	// OR: switch & ps5 — games 1, 2, 4
+	req = httptest.NewRequest(http.MethodGet, "/api/library?tag=switch&tag=ps5&tag_op=or", nil)
+	req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	json.NewDecoder(rec.Body).Decode(&items)
+	if len(items) != 3 {
+		t.Fatalf("expected 3 items for switch OR ps5, got %d", len(items))
+	}
+
+	// Single tag still works (defaults to AND which is same as OR for single tag)
+	req = httptest.NewRequest(http.MethodGet, "/api/library?tag=switch", nil)
+	req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	json.NewDecoder(rec.Body).Decode(&items)
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items for tag=switch, got %d", len(items))
+	}
+}
+
 func TestLibraryTagAutocomplete(t *testing.T) {
 	database := setupLibraryTestDB(t)
 	defer database.Close()

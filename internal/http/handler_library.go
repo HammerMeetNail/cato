@@ -61,7 +61,11 @@ func (h *LibraryHandler) handleLibraryItem(w http.ResponseWriter, r *http.Reques
 
 func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, userID string) {
 	status := r.URL.Query().Get("status")
-	tag := r.URL.Query().Get("tag")
+	tags := r.URL.Query()["tag"]
+	tagOp := r.URL.Query().Get("tag_op")
+	if tagOp != "or" {
+		tagOp = "and"
+	}
 
 	// Parse pagination parameters.
 	limit := 60 // default
@@ -89,9 +93,26 @@ func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, use
 		WHERE li.user_id = ?`
 	args := []interface{}{userID}
 
-	if tag != "" {
-		query += ` AND EXISTS (SELECT 1 FROM json_each(li.tags_json) WHERE value = ?)`
-		args = append(args, tag)
+	if len(tags) > 0 {
+		placeholders := make([]string, len(tags))
+		for i := range placeholders {
+			placeholders[i] = "?"
+		}
+		inClause := strings.Join(placeholders, ", ")
+		if tagOp == "and" {
+			// All tags must be present
+			query += ` AND (SELECT COUNT(DISTINCT value) FROM json_each(li.tags_json) WHERE value IN (` + inClause + `)) = ?`
+			for _, t := range tags {
+				args = append(args, t)
+			}
+			args = append(args, len(tags))
+		} else {
+			// Any tag must be present
+			query += ` AND EXISTS (SELECT 1 FROM json_each(li.tags_json) WHERE value IN (` + inClause + `))`
+			for _, t := range tags {
+				args = append(args, t)
+			}
+		}
 	}
 	if status != "" && isValidStatus(status) {
 		query += ` AND li.status = ?`
