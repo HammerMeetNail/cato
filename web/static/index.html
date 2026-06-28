@@ -42,7 +42,7 @@
   <script type="module">
     import { checkAuth, logout, library } from '/js/api.js';
     import { initSearch } from '/js/search.js';
-    import { loadLibrary, addGameToLibrary, renderLibraryItems, getHashStatus, getHashGameId, openGameModal } from '/js/library.js';
+    import { loadLibrary, loadSearchResults, addGameToLibrary, renderLibraryItems, getHashStatus, getHashGameId, getHashSearch, openGameModal, activateStatusTab } from '/js/library.js';
 
     const searchInput = document.getElementById('searchInput');
     const searchResults = document.getElementById('searchResults');
@@ -51,27 +51,23 @@
     const logoutLink = document.getElementById('logoutLink');
     const statusTabs = document.getElementById('statusTabs');
 
-    function activateTab(status) {
-      statusTabs.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-      const tab = statusTabs.querySelector(`.tab[data-status="${status}"]`);
-      if (tab) {
-        tab.classList.add('active');
-      } else {
-        const allTab = statusTabs.querySelector('.tab[data-status=""]');
-        if (allTab) allTab.classList.add('active');
+    async function handleRoute() {
+      const searchQuery = getHashSearch();
+      if (searchQuery) {
+        searchInput.value = searchQuery;
+        await loadSearchResults(searchQuery);
+        return;
       }
-    }
 
-    function handleRoute() {
       const status = getHashStatus();
       const gameId = getHashGameId();
-      activateTab(status);
-      loadLibrary(status);
+      await loadLibrary(status);
       if (gameId) {
         openGameModal(gameId);
       }
     }
 
+    const initialSearch = getHashSearch();
     const initialStatus = getHashStatus();
     const initialGameId = getHashGameId();
 
@@ -82,7 +78,7 @@
     // that so it doesn't surface as an unhandled rejection.
     const [auth, items] = await Promise.all([
       checkAuth(),
-      library.list(initialStatus).catch(() => null),
+      initialSearch ? null : library.list(initialStatus).catch(() => null),
     ]);
 
     if (!auth.authenticated) {
@@ -104,32 +100,40 @@
     initSearch(searchInput, searchResults, (game) => {
       addGameToLibrary(game);
       searchInput.value = '';
+    }, (query) => {
+      window.location.hash = '#search/' + encodeURIComponent(query);
     });
 
     // Status tabs
     statusTabs.querySelectorAll('.tab').forEach(tab => {
-      tab.addEventListener('click', () => {
+      tab.addEventListener('click', async () => {
         const status = tab.dataset.status || '';
         if (status) {
           window.location.hash = '#' + status;
         } else {
           history.replaceState(null, '', window.location.pathname + window.location.search);
-          handleRoute();
+          searchInput.value = '';
+          await handleRoute();
         }
       });
     });
 
     // Render with already-loaded data; fall back to a fresh fetch if the
     // parallel request failed for a non-auth reason (e.g. transient error).
-    activateTab(initialStatus);
-    if (items !== null) {
-      renderLibraryItems(items, initialStatus);
+    if (initialSearch) {
+      searchInput.value = initialSearch;
+      await loadSearchResults(initialSearch);
     } else {
-      loadLibrary(initialStatus);
-    }
+      activateStatusTab(initialStatus);
+      if (items !== null) {
+        renderLibraryItems(items, initialStatus);
+      } else {
+        loadLibrary(initialStatus);
+      }
 
-    if (initialGameId) {
-      openGameModal(initialGameId);
+      if (initialGameId) {
+        openGameModal(initialGameId);
+      }
     }
 
     window.addEventListener('hashchange', handleRoute);

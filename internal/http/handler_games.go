@@ -48,7 +48,53 @@ func (h *GameHandler) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Branch on full=1 for paginated full results vs. dropdown.
+	if r.URL.Query().Get("full") == "1" {
+		h.handleSearchFull(w, r, query)
+		return
+	}
+
 	results, err := h.service.Search(r.Context(), query)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errResp("search_error", "Search failed"))
+		return
+	}
+
+	if results == nil {
+		results = []games.GameResult{}
+	}
+	writeJSON(w, http.StatusOK, results)
+}
+
+// handleSearchFull handles paginated full-results search with the relevance floor.
+// Parses limit (default 24, clamped [1,60]) and offset (default 0, clamped >=0).
+func (h *GameHandler) handleSearchFull(w http.ResponseWriter, r *http.Request, query string) {
+	limit := 24
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil {
+			limit = parsed
+		}
+	}
+	// Clamp limit to [1, 60]
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 60 {
+		limit = 60
+	}
+
+	offset := 0
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		if parsed, err := strconv.Atoi(offsetStr); err == nil {
+			offset = parsed
+		}
+	}
+	// Clamp offset to >= 0
+	if offset < 0 {
+		offset = 0
+	}
+
+	results, err := h.service.SearchPaged(r.Context(), query, limit, offset)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errResp("search_error", "Search failed"))
 		return

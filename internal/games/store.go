@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"cato/internal/db"
@@ -58,8 +59,19 @@ ORDER BY
 LIMIT ?5`
 
 func (s *Store) SearchLocal(ctx context.Context, query string, limit int) ([]GameResult, error) {
+	return s.SearchLocalPaged(ctx, query, limit, 0, false)
+}
+
+// SearchLocalPaged performs a paginated search with optional relevance floor.
+// When applyFloor is true, weak (tier-3 substring) matches are hidden unless
+// they have popularity_score > 0, keeping obvious junk off the full results
+// page. When false, all matches are returned (original dropdown behavior).
+func (s *Store) SearchLocalPaged(ctx context.Context, query string, limit, offset int, applyFloor bool) ([]GameResult, error) {
 	if limit <= 0 {
 		limit = 10
+	}
+	if offset < 0 {
+		offset = 0
 	}
 
 	like := "%" + query + "%"
@@ -67,7 +79,8 @@ func (s *Store) SearchLocal(ctx context.Context, query string, limit int) ([]Gam
 	wordPrefix := "% " + query + "%"
 
 	if match, ok := BuildFTSMatch(query); ok {
-		results, err := s.querySearch(ctx, searchSQL, []interface{}{match, query, prefix, wordPrefix, limit})
+		sql, args := s.buildSearchSQL(searchSQL, match, query, prefix, wordPrefix, limit, offset, applyFloor)
+		results, err := s.querySearch(ctx, sql, args)
 		if err == nil {
 			return results, nil
 		}
@@ -75,7 +88,53 @@ func (s *Store) SearchLocal(ctx context.Context, query string, limit int) ([]Gam
 		// This keeps search working on databases migrated before v5 or if
 		// the FTS virtual table is ever dropped.
 	}
-	return s.querySearch(ctx, searchLikeFallback, []interface{}{like, query, prefix, wordPrefix, limit})
+	sql, args := s.buildSearchSQL(searchLikeFallback, like, query, prefix, wordPrefix, limit, offset, applyFloor)
+	return s.querySearch(ctx, sql, args)
+}
+
+// buildSearchSQL constructs the SQL and args for a search query with optional
+// offset and floor predicate. When applyFloor is true, adds a WHERE condition
+// that keeps exact/prefix/word-prefix matches always, but weak tier-3 substring
+// matches only if popularity_score > 0. OFFSET is appended to the query.
+func (s *Store) buildSearchSQL(template string, ftsMgLike string, query string, prefix string, wordPrefix string, limit int, offset int, applyFloor bool) (string, []interface{}) {
+	isFTS := strings.Contains(template, "games_fts")
+
+	// Start with base args.
+	args := []interface{}{ftsMgLike, query, prefix, wordPrefix, limit}
+
+	var sql string
+	if applyFloor {
+		// Add floor clause. The floor allows exact/prefix/word-prefix matches
+		// always, and tier-3 (neither of the above) matches only if popular.
+		args = append(args, query, prefix, wordPrefix) // ?6, ?7, ?8 for the floor
+
+		if isFTS {
+			sql = strings.Replace(
+				template,
+				"WHERE f.normalized_name MATCH ?1",
+				"WHERE f.normalized_name MATCH ?1 AND ( g.normalized_name = ?6 OR g.normalized_name LIKE ?7 OR g.normalized_name LIKE ?8 OR g.popularity_score > 0 )",
+				1,
+			)
+		} else {
+			sql = strings.Replace(
+				template,
+				"WHERE normalized_name LIKE ?1",
+				"WHERE normalized_name LIKE ?1 AND ( normalized_name = ?6 OR normalized_name LIKE ?7 OR normalized_name LIKE ?8 OR popularity_score > 0 )",
+				1,
+			)
+		}
+	} else {
+		sql = template
+	}
+
+	// Add OFFSET clause if needed.
+	if offset > 0 {
+		// Use parameterized OFFSET to be safe.
+		sql += " OFFSET ?"
+		args = append(args, offset)
+	}
+
+	return sql, args
 }
 
 func (s *Store) querySearch(ctx context.Context, sql string, args []interface{}) ([]GameResult, error) {
