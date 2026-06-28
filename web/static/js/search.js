@@ -4,14 +4,15 @@ let searchTimer = null;
 let activeController = null;
 let selectedIndex = -1;
 let currentResults = [];
+let currentQuery = '';
 
-export function initSearch(inputEl, resultsEl, onSelect) {
+export function initSearch(inputEl, resultsEl, onSelect, onSubmit) {
   inputEl.addEventListener('input', () => {
-    scheduleSearch(inputEl.value, resultsEl, onSelect);
+    scheduleSearch(inputEl.value, resultsEl, onSelect, onSubmit);
   });
 
   inputEl.addEventListener('keydown', (e) => {
-    handleKeyboard(e, resultsEl, onSelect);
+    handleKeyboard(e, inputEl, resultsEl, onSelect, onSubmit);
   });
 
   inputEl.addEventListener('focus', () => {
@@ -35,8 +36,9 @@ export function initSearch(inputEl, resultsEl, onSelect) {
   };
 }
 
-function scheduleSearch(query, resultsEl, onSelect) {
+function scheduleSearch(query, resultsEl, onSelect, onSubmit) {
   clearTimeout(searchTimer);
+  currentQuery = query;
 
   if (query.length < 2) {
     resultsEl.classList.remove('active');
@@ -54,22 +56,24 @@ function scheduleSearch(query, resultsEl, onSelect) {
       if (controller === activeController) {
         currentResults = results;
         selectedIndex = -1;
-        renderResults(results, resultsEl, onSelect);
+        renderResults(results, resultsEl, onSelect, onSubmit);
       }
     } catch (err) {
       if (err.name !== 'AbortError' && controller === activeController) {
         currentResults = [];
-        renderResults([], resultsEl, onSelect);
+        renderResults([], resultsEl, onSelect, onSubmit);
       }
     }
   }, 400);
 }
 
-function renderResults(results, resultsEl, onSelect) {
+function renderResults(results, resultsEl, onSelect, onSubmit) {
   if (results.length === 0) {
     resultsEl.innerHTML = '<div class="no-results">No games found</div>';
   } else {
-    resultsEl.innerHTML = results.map((g, i) => {
+    // Slice to first 8 results for dropdown display
+    const displayResults = results.slice(0, 8);
+    let html = displayResults.map((g, i) => {
       const year = g.first_release_date
         ? new Date(g.first_release_date * 1000).getFullYear()
         : '';
@@ -85,6 +89,13 @@ function renderResults(results, resultsEl, onSelect) {
         </div>`;
     }).join('');
 
+    // Add footer "See all results" row if there are results and onSubmit is provided
+    if (results.length > 0 && onSubmit) {
+      html += `<div class="search-result-more">See all results for "${escapeHTML(currentQuery)}" →</div>`;
+    }
+
+    resultsEl.innerHTML = html;
+
     resultsEl.querySelectorAll('.search-result-item').forEach(item => {
       item.addEventListener('click', () => {
         const id = Number(item.dataset.id);
@@ -94,30 +105,42 @@ function renderResults(results, resultsEl, onSelect) {
         if (onSelect) onSelect(game);
       });
     });
+
+    // Add footer row click handler
+    const footerRow = resultsEl.querySelector('.search-result-more');
+    if (footerRow && onSubmit) {
+      footerRow.addEventListener('click', () => {
+        resultsEl.classList.remove('active');
+        if (onSubmit) onSubmit(currentQuery);
+      });
+    }
   }
 
   resultsEl.classList.add('active');
 }
 
-function handleKeyboard(e, resultsEl, onSelect) {
-  if (!resultsEl.classList.contains('active')) return;
-
+function handleKeyboard(e, inputEl, resultsEl, onSelect, onSubmit) {
   switch (e.key) {
     case 'ArrowDown':
+      if (!resultsEl.classList.contains('active')) return;
       e.preventDefault();
       selectedIndex = Math.min(selectedIndex + 1, currentResults.length - 1);
       updateSelection(resultsEl);
       break;
     case 'ArrowUp':
+      if (!resultsEl.classList.contains('active')) return;
       e.preventDefault();
       selectedIndex = Math.max(selectedIndex - 1, 0);
       updateSelection(resultsEl);
       break;
     case 'Enter':
       e.preventDefault();
-      if (selectedIndex >= 0 && selectedIndex < currentResults.length) {
+      if (resultsEl.classList.contains('active') && selectedIndex >= 0 && selectedIndex < currentResults.length) {
         resultsEl.classList.remove('active');
         if (onSelect) onSelect(currentResults[selectedIndex]);
+      } else if (currentQuery && currentQuery.length >= 2 && onSubmit) {
+        resultsEl.classList.remove('active');
+        if (onSubmit) onSubmit(currentQuery);
       }
       break;
     case 'Escape':
