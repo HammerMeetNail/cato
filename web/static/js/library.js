@@ -48,6 +48,7 @@ const SEARCH_PAGE_SIZE = 24;
 // Pagination state
 let paginationState = {
   currentStatus: '',
+  tagFilter: '',
   offset: 0,
   loading: false,
   hasMore: true,
@@ -107,6 +108,7 @@ export async function loadSearchResults(query) {
   // Reset pagination state to search mode
   paginationState = {
     currentStatus: '',
+    tagFilter: '',
     offset: 0,
     loading: false,
     hasMore: true,
@@ -156,13 +158,14 @@ export async function loadSearchResults(query) {
   }
 }
 
-export async function loadLibrary(status) {
+export async function loadLibrary(status, tag = '') {
   const grid = document.getElementById('gameGrid');
   if (!grid) return;
 
   // Reset pagination state
   paginationState = {
     currentStatus: status || '',
+    tagFilter: tag || '',
     offset: 0,
     loading: false,
     hasMore: true,
@@ -177,11 +180,12 @@ export async function loadLibrary(status) {
   const statusTabs = document.getElementById('statusTabs');
   if (statusTabs) statusTabs.style.display = '';
   activateStatusTab(status || '');
+  updateTagFilterBar();
 
   grid.innerHTML = '<div class="loading">Loading library...</div>';
 
   try {
-    const items = await library.list(status || '', PAGE_SIZE, 0);
+    const items = await library.list(status || '', PAGE_SIZE, 0, tag || '');
     renderPagedItems(grid, items, true);
   } catch (err) {
     grid.innerHTML = `<div class="empty-state">Failed to load library: ${err.message}</div>`;
@@ -245,6 +249,7 @@ export function renderLibraryItems(items, status = '') {
 
   paginationState = {
     currentStatus: status || '',
+    tagFilter: '',
     offset: 0,
     loading: false,
     hasMore: true,
@@ -291,7 +296,8 @@ async function loadMore() {
       items = await library.list(
         paginationState.currentStatus,
         paginationState.pageSize,
-        paginationState.offset
+        paginationState.offset,
+        paginationState.tagFilter
       );
     }
     renderPagedItems(grid, items, false); // false = append, not replace
@@ -313,6 +319,55 @@ function attachScrollListener() {
       loadMore();
     }
   });
+
+  // Delegated click handler for tag chips on cards
+  const grid = document.getElementById('gameGrid');
+  if (grid) {
+    grid.addEventListener('click', (e) => {
+      const chip = e.target.closest('.tag-chip');
+      if (chip && chip.dataset.tag) {
+        e.stopPropagation();
+        filterByTag(chip.dataset.tag);
+      }
+    });
+  }
+}
+
+// filterByTag sets the tag filter and reloads the library.
+// Called when a tag chip on a card is clicked.
+export function filterByTag(tag) {
+  const activeTab = document.querySelector('.tab.active');
+  loadLibrary(activeTab?.dataset?.status || '', tag);
+}
+
+// clearTagFilter removes the tag filter and reloads.
+export function clearTagFilter() {
+  const activeTab = document.querySelector('.tab.active');
+  loadLibrary(activeTab?.dataset?.status || '', '');
+}
+
+// updateTagFilterBar shows or hides the "filtered by tag" bar.
+function updateTagFilterBar() {
+  const existing = document.getElementById('tagFilterBar');
+  if (existing) existing.remove();
+
+  const tag = paginationState.tagFilter;
+  if (!tag) return;
+
+  const container = document.querySelector('.container');
+  const statusTabs = document.getElementById('statusTabs');
+  const bar = document.createElement('div');
+  bar.id = 'tagFilterBar';
+  bar.className = 'tag-filter-bar';
+  bar.innerHTML = `
+    <span>Filtered by tag: <strong>${escapeHTML(tag)}</strong></span>
+    <button class="tag-filter-clear" type="button" aria-label="Clear tag filter">✕</button>
+  `;
+  bar.querySelector('.tag-filter-clear').addEventListener('click', clearTagFilter);
+
+  // Insert after status tabs (or after search header, or after search wrap)
+  const after = statusTabs && statusTabs.style.display !== 'none' ? statusTabs : document.getElementById('searchResultsHeader') || document.querySelector('.search-wrap');
+  after.insertAdjacentElement('afterend', bar);
 }
 
 function buildCardHTML(items) {
@@ -320,7 +375,7 @@ function buildCardHTML(items) {
     // High priority for the first 8 cards
     const priority = index < 8 ? ' fetchpriority="high"' : '';
     const tagsHTML = (item.tags && item.tags.length)
-      ? `<div class="card-tags">${item.tags.map(t => `<span class="tag-chip">${escapeHTML(t)}</span>`).join('')}</div>`
+      ? `<div class="card-tags">${item.tags.map(t => `<span class="tag-chip" data-tag="${escapeHTML(t)}">${escapeHTML(t)}</span>`).join('')}</div>`
       : '';
     return `
     <div class="game-card" data-game-id="${item.game_id}">
@@ -583,7 +638,7 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
       // reload to reflect the change.
       if (!wasSearch) {
         const activeTab = document.querySelector('.tab.active');
-        await loadLibrary(activeTab?.dataset?.status || '');
+        await loadLibrary(activeTab?.dataset?.status || '', paginationState.tagFilter);
       }
     } catch (err) {
       submitBtn.disabled = false;
@@ -604,7 +659,7 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
         await library.remove(id);
         close();
         const activeTab = document.querySelector('.tab.active');
-        await loadLibrary(activeTab?.dataset?.status || '');
+        await loadLibrary(activeTab?.dataset?.status || '', paginationState.tagFilter);
       } catch (err) {
         removeBtn.disabled = false;
         removeBtn.textContent = 'Remove';
