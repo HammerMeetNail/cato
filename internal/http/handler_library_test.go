@@ -355,3 +355,69 @@ func TestLibraryFilterByTag(t *testing.T) {
 		t.Errorf("expected 0 items for tag=xbox, got %d", len(items))
 	}
 }
+
+func TestLibraryTagAutocomplete(t *testing.T) {
+	database := setupLibraryTestDB(t)
+	defer database.Close()
+	sessionID := createLibrarySession(t, database, "user-1")
+	session, _ := auth.GetSession(database, sessionID)
+	mux := newTestLibraryMux(database)
+
+	// Add items with different tags
+	for _, g := range []struct {
+		id     int
+		status string
+		tags   string
+	}{
+		{1, "backlog", `["ps5","ps4","rpg"]`},
+		{2, "backlog", `["steam","switch"]`},
+	} {
+		body := fmt.Sprintf(`{"status":"%s","rating":80,"playtime_minutes":0,"tags":%s,"notes":""}`, g.status, g.tags)
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/library/%d", g.id), strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})
+		req.Header.Set("X-CSRF-Token", session.CSRFToken)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+	}
+
+	// Autocomplete "ps" — should return ps4 and ps5
+	req := httptest.NewRequest(http.MethodGet, "/api/library/tags?q=ps", nil)
+	req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var tags []string
+	json.NewDecoder(rec.Body).Decode(&tags)
+	if len(tags) != 2 {
+		t.Fatalf("expected 2 tags matching 'ps', got %d: %v", len(tags), tags)
+	}
+	if tags[0] != "ps4" || tags[1] != "ps5" {
+		t.Errorf("expected [ps4 ps5], got %v", tags)
+	}
+
+	// Autocomplete "s" — should return steam and switch
+	req = httptest.NewRequest(http.MethodGet, "/api/library/tags?q=s", nil)
+	req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	json.NewDecoder(rec.Body).Decode(&tags)
+	if len(tags) != 2 {
+		t.Fatalf("expected 2 tags matching 's', got %d", len(tags))
+	}
+
+	// Autocomplete "xyz" — should return empty
+	req = httptest.NewRequest(http.MethodGet, "/api/library/tags?q=xyz", nil)
+	req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	json.NewDecoder(rec.Body).Decode(&tags)
+	if len(tags) != 0 {
+		t.Errorf("expected 0 tags matching 'xyz', got %d", len(tags))
+	}
+}
