@@ -60,6 +60,7 @@ func (h *LibraryHandler) handleLibraryItem(w http.ResponseWriter, r *http.Reques
 
 func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, userID string) {
 	status := r.URL.Query().Get("status")
+	tag := r.URL.Query().Get("tag")
 
 	// Parse pagination parameters.
 	limit := 60 // default
@@ -79,29 +80,27 @@ func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, use
 		}
 	}
 
-	var rows *sql.Rows
-	var err error
+	query := `SELECT li.game_id, li.status, li.rating, li.playtime_minutes, li.tags_json,
+		li.notes, li.started_at, li.completed_at, li.created_at, li.updated_at,
+		g.name, g.slug, g.cover_url, g.local_cover_path, g.first_release_date
+		FROM library_items li
+		JOIN games g ON g.id = li.game_id
+		WHERE li.user_id = ?`
+	args := []interface{}{userID}
 
+	if tag != "" {
+		query += ` AND EXISTS (SELECT 1 FROM json_each(li.tags_json) WHERE value = ?)`
+		args = append(args, tag)
+	}
 	if status != "" && isValidStatus(status) {
-		rows, err = h.db.Query(`SELECT li.game_id, li.status, li.rating, li.playtime_minutes, li.tags_json,
-			li.notes, li.started_at, li.completed_at, li.created_at, li.updated_at,
-			g.name, g.slug, g.cover_url, g.local_cover_path, g.first_release_date
-			FROM library_items li
-			JOIN games g ON g.id = li.game_id
-			WHERE li.user_id = ? AND li.status = ?
-			ORDER BY li.updated_at DESC
-			LIMIT ? OFFSET ?`, userID, status, limit, offset)
-	} else {
-		rows, err = h.db.Query(`SELECT li.game_id, li.status, li.rating, li.playtime_minutes, li.tags_json,
-			li.notes, li.started_at, li.completed_at, li.created_at, li.updated_at,
-			g.name, g.slug, g.cover_url, g.local_cover_path, g.first_release_date
-			FROM library_items li
-			JOIN games g ON g.id = li.game_id
-			WHERE li.user_id = ?
-			ORDER BY li.updated_at DESC
-			LIMIT ? OFFSET ?`, userID, limit, offset)
+		query += ` AND li.status = ?`
+		args = append(args, status)
 	}
 
+	query += ` ORDER BY li.updated_at DESC LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
+
+	rows, err := h.db.Query(query, args...)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to fetch library"))
 		return

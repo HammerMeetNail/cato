@@ -179,6 +179,39 @@ a { color: var(--accent); text-decoration: none; }
   color: var(--text);
 }
 
+/* Tag filter bar */
+.tag-filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  margin-bottom: 16px;
+  background: var(--surface);
+  border: 1px solid var(--surface2);
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.tag-filter-bar strong {
+  color: var(--text);
+}
+
+.tag-filter-clear {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0 4px;
+  transition: color var(--transition);
+}
+
+.tag-filter-clear:hover {
+  color: var(--accent);
+}
+
 /* Tabs */
 .tabs {
   display: flex;
@@ -266,6 +299,16 @@ a { color: var(--accent); text-decoration: none; }
   padding: 0 10px 6px;
   overflow: hidden;
   max-height: 24px;
+}
+
+.card-tags .tag-chip {
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+}
+
+.card-tags .tag-chip:hover {
+  background: var(--accent);
+  color: white;
 }
 
 .tag-chip {
