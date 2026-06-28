@@ -335,9 +335,12 @@ function attachScrollListener() {
 
 // filterByTag sets the tag filter and reloads the library.
 // Called when a tag chip on a card is clicked.
+// If a filter is already active, adds the tag with AND (space-separated).
 export function filterByTag(tag) {
   const activeTab = document.querySelector('.tab.active');
-  loadLibrary(activeTab?.dataset?.status || '', tag);
+  const current = paginationState.tagFilter;
+  const newFilter = current ? current + ' ' + tag : tag;
+  loadLibrary(activeTab?.dataset?.status || '', newFilter);
 }
 
 // clearTagFilter removes the tag filter and reloads.
@@ -354,16 +357,38 @@ function updateTagFilterBar() {
   const tag = paginationState.tagFilter;
   if (!tag) return;
 
+  const hasPipe = tag.includes('|');
+  const separator = hasPipe ? '|' : ' ';
+  const tagList = tag.split(separator).map(t => t.trim()).filter(t => t.length > 0);
+  const joiner = hasPipe ? ' OR ' : ' AND ';
+  const display = tagList.map(t => `<span class="tag-filter-chip" data-tag="${escapeHTML(t)}">${escapeHTML(t)}<button type="button" class="tag-filter-chip-x" aria-label="Remove ${escapeHTML(t)}">×</button></span>`).join(joiner);
+
   const container = document.querySelector('.container');
   const statusTabs = document.getElementById('statusTabs');
   const bar = document.createElement('div');
   bar.id = 'tagFilterBar';
   bar.className = 'tag-filter-bar';
   bar.innerHTML = `
-    <span>Filtered by tag: <strong>${escapeHTML(tag)}</strong></span>
+    <span class="tag-filter-label">${display}</span>
     <button class="tag-filter-clear" type="button" aria-label="Clear tag filter">✕</button>
   `;
   bar.querySelector('.tag-filter-clear').addEventListener('click', clearTagFilter);
+
+  // Clicking an individual tag chip in the filter bar removes just that tag
+  bar.querySelectorAll('.tag-filter-chip-x').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const removeTag = btn.parentElement.dataset.tag;
+      const remaining = tagList.filter(t => t !== removeTag);
+      if (remaining.length === 0) {
+        clearTagFilter();
+      } else {
+        const newFilter = hasPipe ? remaining.join('|') : remaining.join(' ');
+        const activeTab = document.querySelector('.tab.active');
+        loadLibrary(activeTab?.dataset?.status || '', newFilter);
+      }
+    });
+  });
 
   // Insert after status tabs (or after search header, or after search wrap)
   const after = statusTabs && statusTabs.style.display !== 'none' ? statusTabs : document.getElementById('searchResultsHeader') || document.querySelector('.search-wrap');

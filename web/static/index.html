@@ -107,7 +107,7 @@
       }
       searchInput.value = '';
     }, (query) => {
-      if (query.startsWith('#')) {
+      if (query.startsWith('$')) {
         const tag = query.slice(1).trim();
         if (tag) {
           searchInput.value = '';
@@ -124,7 +124,7 @@
       }
     });
 
-    // Listen for tagfilter events from search.js (#tag Enter or "Filter library" click)
+    // Listen for tagfilter events from search.js ($tag Enter or "Filter library" click)
     searchResults.addEventListener('tagfilter', (e) => {
       searchInput.value = '';
       filterByTag(e.detail.tag);

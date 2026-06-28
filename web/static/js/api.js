@@ -129,7 +129,16 @@ export const library = {
   list(status, limit = 60, offset = 0, tag = '') {
     const params = new URLSearchParams();
     if (status) params.append('status', status);
-    if (tag) params.append('tag', tag);
+    if (tag) {
+      // Space-separated = AND, pipe-separated = OR
+      const hasPipe = tag.includes('|');
+      const separator = hasPipe ? '|' : ' ';
+      const tagList = tag.split(separator).map(t => t.trim()).filter(t => t.length > 0);
+      if (hasPipe) params.append('tag_op', 'or');
+      for (const t of tagList) {
+        params.append('tag', t);
+      }
+    }
     params.append('limit', limit);
     params.append('offset', offset);
     const qs = params.toString() ? `?${params.toString()}` : '';

@@ -244,6 +244,42 @@ a { color: var(--accent); text-decoration: none; }
   color: var(--text);
 }
 
+.tag-filter-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.tag-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--surface2);
+  color: var(--text);
+  padding: 2px 4px 2px 6px;
+  border-radius: 3px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.tag-filter-chip-x {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  border-radius: 2px;
+  transition: color var(--transition);
+}
+
+.tag-filter-chip-x:hover {
+  color: var(--accent);
+}
+
 .tag-filter-clear {
   background: none;
   border: none;
