@@ -42,7 +42,7 @@
   <script type="module">
     import { checkAuth, logout, library } from '/js/api.js';
     import { initSearch } from '/js/search.js';
-    import { loadLibrary, loadSearchResults, addGameToLibrary, renderLibraryItems, getHashStatus, getHashGameId, getHashSearch, openGameModal, activateStatusTab } from '/js/library.js';
+    import { loadLibrary, loadSearchResults, addGameToLibrary, renderLibraryItems, getHashStatus, getHashGameId, getHashSearch, openGameModal, activateStatusTab, openLibraryItemModal, filterByTag } from '/js/library.js';
 
     const searchInput = document.getElementById('searchInput');
     const searchResults = document.getElementById('searchResults');
@@ -98,10 +98,36 @@
 
     // Search
     initSearch(searchInput, searchResults, (game) => {
-      addGameToLibrary(game);
+      // If game has a status field, it's a library item (tag search result) —
+      // open the edit modal instead of the add modal.
+      if (game.status) {
+        openLibraryItemModal(game);
+      } else {
+        addGameToLibrary(game);
+      }
       searchInput.value = '';
     }, (query) => {
+      if (query.startsWith('#')) {
+        const tag = query.slice(1).trim();
+        if (tag) {
+          searchInput.value = '';
+          filterByTag(tag);
+          return;
+        }
+      }
       window.location.hash = '#search/' + encodeURIComponent(query);
+    }, async (tag) => {
+      try {
+        return await library.list('', 8, 0, tag);
+      } catch {
+        return [];
+      }
+    });
+
+    // Listen for tagfilter events from search.js (#tag Enter or "Filter library" click)
+    searchResults.addEventListener('tagfilter', (e) => {
+      searchInput.value = '';
+      filterByTag(e.detail.tag);
     });
 
     // Status tabs
