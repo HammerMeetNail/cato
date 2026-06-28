@@ -319,10 +319,14 @@ function buildCardHTML(items) {
   return items.map((item, index) => {
     // High priority for the first 8 cards
     const priority = index < 8 ? ' fetchpriority="high"' : '';
+    const tagsHTML = (item.tags && item.tags.length)
+      ? `<div class="card-tags">${item.tags.map(t => `<span class="tag-chip">${escapeHTML(t)}</span>`).join('')}</div>`
+      : '';
     return `
     <div class="game-card" data-game-id="${item.game_id}">
       <img src="${getCoverURL(item)}" alt="${escapeHTML(item.game_name)}" loading="lazy" decoding="async"${priority}>
       <div class="card-title">${escapeHTML(item.game_name)}</div>
+      ${tagsHTML}
       ${item.rating > 0 ? `<div class="rating-display">${item.rating}</div>` : ''}
     </div>
   `}).join('');
@@ -416,6 +420,7 @@ export function openLibraryItemModal(item) {
     status: item.status,
     rating: item.rating || 0,
     playtime: item.playtime_minutes || 0,
+    tags: item.tags || [],
     notes: item.notes || '',
     inLibrary: true,
   });
@@ -426,7 +431,7 @@ export function openLibraryItemModal(item) {
 // (inLibrary=true) it is pre-filled and offers Save and Remove. Both actions
 // POST to library.add, which upserts.
 function openGameForm({ id, name, cover, year = '', status = 'backlog',
-                        rating = 0, playtime = 0, notes = '', inLibrary = false }) {
+                        rating = 0, playtime = 0, tags = [], notes = '', inLibrary = false }) {
   // Replace any existing modal (e.g. user clicks a second result).
   const existing = document.getElementById('addGameModal');
   if (existing) existing.remove();
@@ -466,6 +471,10 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
         </label>
         <label class="modal-field">Hours: <span class="modal-playtime-val">${(playtime / 60).toFixed(1)}</span>
           <input type="number" min="0" value="${playtime}" class="modal-playtime" step="15">
+        </label>
+        <label class="modal-field">Tags
+          <input type="text" class="modal-tags" placeholder="PS5, Steam, X1..." value="${escapeHTML(tags.join(', '))}">
+          <span class="modal-tags-hint">Comma-separated</span>
         </label>
         <label class="modal-field">Notes
           <textarea class="modal-notes" placeholder="Notes...">${escapeHTML(notes)}</textarea>
@@ -518,6 +527,10 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
     const newRating = parseInt(modal.querySelector('.modal-rating').value) || 0;
     const newPlaytime = parseInt(modal.querySelector('.modal-playtime').value) || 0;
     const newNotes = modal.querySelector('.modal-notes').value;
+    const newTagsRaw = modal.querySelector('.modal-tags').value;
+    const newTags = newTagsRaw
+      ? newTagsRaw.split(',').map(t => t.trim()).filter(t => t.length > 0)
+      : [];
     const submitBtn = modal.querySelector('.modal-submit');
 
     submitBtn.disabled = true;
@@ -527,7 +540,7 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
         status: newStatus,
         rating: newRating,
         playtime_minutes: newPlaytime,
-        tags: [],
+        tags: newTags,
         notes: newNotes,
       });
       const wasSearch = paginationState.mode === 'search';

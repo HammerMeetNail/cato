@@ -258,6 +258,29 @@ a { color: var(--accent); text-decoration: none; }
   font-weight: 700;
 }
 
+/* Tag chips on cards */
+.card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 10px 6px;
+  overflow: hidden;
+  max-height: 24px;
+}
+
+.tag-chip {
+  display: inline-block;
+  background: var(--surface2);
+  color: var(--text-dim);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  white-space: nowrap;
+  line-height: 1.5;
+}
+
 /* Login page */
 .login-page {
   display: flex;
@@ -550,6 +573,12 @@ body.modal-open {
 .modal-field textarea {
   height: 60px;
   resize: vertical;
+}
+
+.modal-tags-hint {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  opacity: 0.6;
 }
 
 .modal-footer {
