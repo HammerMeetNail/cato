@@ -575,10 +575,72 @@ body.modal-open {
   resize: vertical;
 }
 
-.modal-tags-hint {
-  font-size: 0.7rem;
+.modal-tags-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  background: var(--surface2);
+  border: 1px solid var(--surface2);
+  border-radius: 4px;
+  min-height: 36px;
+  cursor: text;
+}
+
+.modal-tags-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.modal-tags-wrap .tag-chip-removable {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 2px 4px 2px 6px;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  white-space: nowrap;
+  line-height: 1.6;
+}
+
+.tag-chip-x {
+  background: none;
+  border: none;
   color: var(--text-dim);
-  opacity: 0.6;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  margin-left: 1px;
+  border-radius: 2px;
+}
+
+.tag-chip-x:hover {
+  color: var(--accent);
+  background: rgba(233,69,96,0.15);
+}
+
+.modal-tags-input {
+  flex: 1;
+  min-width: 100px;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 0.85rem;
+  padding: 2px 4px;
+}
+
+.modal-tags-input::placeholder {
+  color: var(--text-dim);
+  opacity: 0.5;
 }
 
 .modal-footer {

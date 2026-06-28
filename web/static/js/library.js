@@ -473,8 +473,10 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
           <input type="number" min="0" value="${playtime}" class="modal-playtime" step="15">
         </label>
         <label class="modal-field">Tags
-          <input type="text" class="modal-tags" placeholder="PS5, Steam, X1..." value="${escapeHTML(tags.join(', '))}">
-          <span class="modal-tags-hint">Comma-separated</span>
+          <div class="modal-tags-wrap">
+            <div class="modal-tags-chips">${tags.map(t => `<span class="tag-chip tag-chip-removable">${escapeHTML(t)}<button type="button" class="tag-chip-x" aria-label="Remove ${escapeHTML(t)}">&times;</button></span>`).join('')}</div>
+            <input type="text" class="modal-tags-input" placeholder="Add tag...">
+          </div>
         </label>
         <label class="modal-field">Notes
           <textarea class="modal-notes" placeholder="Notes...">${escapeHTML(notes)}</textarea>
@@ -502,6 +504,39 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
       (parseInt(e.target.value || 0) / 60).toFixed(1);
   });
 
+  // Tag chip input
+  const chipsContainer = modal.querySelector('.modal-tags-chips');
+  const tagInput = modal.querySelector('.modal-tags-input');
+
+  function addChip(text) {
+    const chip = document.createElement('span');
+    chip.className = 'tag-chip tag-chip-removable';
+    chip.innerHTML = `${escapeHTML(text)}<button type="button" class="tag-chip-x" aria-label="Remove ${escapeHTML(text)}">&times;</button>`;
+    chip.querySelector('.tag-chip-x').addEventListener('click', () => chip.remove());
+    chipsContainer.appendChild(chip);
+  }
+
+  chipsContainer.querySelectorAll('.tag-chip-x').forEach(btn => {
+    btn.addEventListener('click', () => btn.parentElement.remove());
+  });
+
+  tagInput.addEventListener('keydown', (e) => {
+    const val = tagInput.value.trim();
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      if (val) { addChip(val); tagInput.value = ''; }
+    } else if (e.key === 'Backspace' && !val) {
+      const chips = chipsContainer.querySelectorAll('.tag-chip-removable');
+      if (chips.length) chips[chips.length - 1].remove();
+    }
+  });
+
+  // On blur, convert any pending text to a chip
+  tagInput.addEventListener('blur', () => {
+    const val = tagInput.value.trim();
+    if (val) { addChip(val); tagInput.value = ''; }
+  });
+
   const close = () => {
     modal.remove();
     document.body.classList.remove('modal-open');
@@ -527,10 +562,8 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
     const newRating = parseInt(modal.querySelector('.modal-rating').value) || 0;
     const newPlaytime = parseInt(modal.querySelector('.modal-playtime').value) || 0;
     const newNotes = modal.querySelector('.modal-notes').value;
-    const newTagsRaw = modal.querySelector('.modal-tags').value;
-    const newTags = newTagsRaw
-      ? newTagsRaw.split(',').map(t => t.trim()).filter(t => t.length > 0)
-      : [];
+    const chipEls = modal.querySelectorAll('.modal-tags-chips .tag-chip-removable');
+    const newTags = Array.from(chipEls).map(c => c.firstChild.textContent.trim());
     const submitBtn = modal.querySelector('.modal-submit');
 
     submitBtn.disabled = true;
