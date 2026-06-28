@@ -6,13 +6,13 @@ let selectedIndex = -1;
 let currentResults = [];
 let currentQuery = '';
 
-export function initSearch(inputEl, resultsEl, onSelect, onSubmit) {
+export function initSearch(inputEl, resultsEl, onSelect, onSubmit, onTagLookup) {
   inputEl.addEventListener('input', () => {
-    scheduleSearch(inputEl.value, resultsEl, onSelect, onSubmit);
+    scheduleSearch(inputEl.value, resultsEl, onSelect, onSubmit, onTagLookup);
   });
 
   inputEl.addEventListener('keydown', (e) => {
-    handleKeyboard(e, inputEl, resultsEl, onSelect, onSubmit);
+    handleKeyboard(e, inputEl, resultsEl, onSelect, onSubmit, onTagLookup);
   });
 
   inputEl.addEventListener('focus', () => {
@@ -36,9 +36,33 @@ export function initSearch(inputEl, resultsEl, onSelect, onSubmit) {
   };
 }
 
-function scheduleSearch(query, resultsEl, onSelect, onSubmit) {
+function scheduleSearch(query, resultsEl, onSelect, onSubmit, onTagLookup) {
   clearTimeout(searchTimer);
   currentQuery = query;
+
+  // Handle #tag prefix — search library tags instead of game names
+  if (query.startsWith('#') && onTagLookup) {
+    const tag = query.slice(1).trim();
+    if (tag.length < 1) {
+      resultsEl.classList.remove('active');
+      currentResults = [];
+      currentQuery = '';
+      return;
+    }
+
+    searchTimer = setTimeout(async () => {
+      try {
+        const results = await onTagLookup(tag);
+        currentResults = results;
+        selectedIndex = -1;
+        renderTagResults(results, resultsEl, onSelect, tag);
+      } catch (err) {
+        currentResults = [];
+        renderTagResults([], resultsEl, onSelect, tag);
+      }
+    }, 300);
+    return;
+  }
 
   if (query.length < 2) {
     resultsEl.classList.remove('active');
@@ -119,7 +143,55 @@ function renderResults(results, resultsEl, onSelect, onSubmit) {
   resultsEl.classList.add('active');
 }
 
-function handleKeyboard(e, inputEl, resultsEl, onSelect, onSubmit) {
+function renderTagResults(items, resultsEl, onSelect, tag) {
+  if (!items || items.length === 0) {
+    resultsEl.innerHTML = `<div class="no-results">No games tagged "${escapeHTML(tag)}"</div>`;
+  } else {
+    const displayItems = items.slice(0, 8);
+    let html = displayItems.map((item, i) => {
+      const year = item.first_release_date
+        ? new Date(item.first_release_date * 1000).getFullYear()
+        : '';
+      return `
+        <div class="search-result-item tag-result${i === selectedIndex ? ' selected' : ''}"
+             data-index="${i}" data-id="${item.game_id}">
+          <img src="${getCoverThumbnailURL(item)}"
+               alt="${escapeHTML(item.game_name)}" loading="lazy" decoding="async">
+          <div class="info">
+            <div class="name">${escapeHTML(item.game_name)}</div>
+            <div class="year">${year} · ${escapeHTML(item.status)}</div>
+          </div>
+        </div>`;
+    }).join('');
+
+    html += `<div class="search-result-more">Filter library by "${escapeHTML(tag)}" →</div>`;
+    resultsEl.innerHTML = html;
+
+    resultsEl.querySelectorAll('.search-result-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const id = Number(item.dataset.id);
+        const match = items.find(g => String(g.game_id) === String(id));
+        if (!match) return;
+        resultsEl.classList.remove('active');
+        if (onSelect) onSelect(match);
+      });
+    });
+
+    const footerRow = resultsEl.querySelector('.search-result-more');
+    if (footerRow) {
+      footerRow.addEventListener('click', () => {
+        resultsEl.classList.remove('active');
+        // Dispatch a custom event that index.html listens for to filter by tag
+        const event = new CustomEvent('tagfilter', { detail: { tag } });
+        resultsEl.dispatchEvent(event);
+      });
+    }
+  }
+
+  resultsEl.classList.add('active');
+}
+
+function handleKeyboard(e, inputEl, resultsEl, onSelect, onSubmit, onTagLookup) {
   switch (e.key) {
     case 'ArrowDown':
       if (!resultsEl.classList.contains('active')) return;
@@ -138,6 +210,14 @@ function handleKeyboard(e, inputEl, resultsEl, onSelect, onSubmit) {
       if (resultsEl.classList.contains('active') && selectedIndex >= 0 && selectedIndex < currentResults.length) {
         resultsEl.classList.remove('active');
         if (onSelect) onSelect(currentResults[selectedIndex]);
+      } else if (currentQuery && currentQuery.startsWith('#') && onTagLookup) {
+        // #tag with no selection — filter library by tag
+        const tag = currentQuery.slice(1).trim();
+        if (tag) {
+          resultsEl.classList.remove('active');
+          const event = new CustomEvent('tagfilter', { detail: { tag } });
+          resultsEl.dispatchEvent(event);
+        }
       } else if (currentQuery && currentQuery.length >= 2 && onSubmit) {
         resultsEl.classList.remove('active');
         if (onSubmit) onSubmit(currentQuery);
