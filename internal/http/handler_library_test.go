@@ -68,9 +68,9 @@ func TestLibraryAddItem(t *testing.T) {
 	}
 
 	// Verify item in DB
-	var status string
+	var status, tagsJSON string
 	var rating, playtime int64
-	database.QueryRow("SELECT status, rating, playtime_minutes FROM library_items WHERE user_id = 'user-1' AND game_id = 1").Scan(&status, &rating, &playtime)
+	database.QueryRow("SELECT status, rating, playtime_minutes, tags_json FROM library_items WHERE user_id = 'user-1' AND game_id = 1").Scan(&status, &rating, &playtime, &tagsJSON)
 	if status != "backlog" {
 		t.Errorf("expected status 'backlog', got %q", status)
 	}
@@ -79,6 +79,9 @@ func TestLibraryAddItem(t *testing.T) {
 	}
 	if playtime != 60 {
 		t.Errorf("expected playtime 60, got %d", playtime)
+	}
+	if tagsJSON != `["rpg"]` {
+		t.Errorf("expected tags [\"rpg\"], got %q", tagsJSON)
 	}
 }
 
@@ -111,9 +114,9 @@ func TestLibraryUpdateItem(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
-	var status string
+	var status, tagsJSON string
 	var rating, playtime int64
-	database.QueryRow("SELECT status, rating, playtime_minutes FROM library_items WHERE user_id = 'user-1' AND game_id = 1").Scan(&status, &rating, &playtime)
+	database.QueryRow("SELECT status, rating, playtime_minutes, tags_json FROM library_items WHERE user_id = 'user-1' AND game_id = 1").Scan(&status, &rating, &playtime, &tagsJSON)
 	if status != "playing" {
 		t.Errorf("expected status 'playing', got %q", status)
 	}
@@ -122,6 +125,9 @@ func TestLibraryUpdateItem(t *testing.T) {
 	}
 	if playtime != 120 {
 		t.Errorf("expected playtime 120, got %d", playtime)
+	}
+	if tagsJSON != `["favorite"]` {
+		t.Errorf("expected tags [\"favorite\"], got %q", tagsJSON)
 	}
 }
 
@@ -171,11 +177,12 @@ func TestLibraryList(t *testing.T) {
 		id     int
 		status string
 		rating int
+		tags   string
 	}{
-		{1, "backlog", 80},
-		{2, "playing", 90},
+		{1, "backlog", 80, `["rpg","ps5"]`},
+		{2, "playing", 90, `[]`},
 	} {
-		body := fmt.Sprintf(`{"status":"%s","rating":%d,"playtime_minutes":0,"tags":[],"notes":""}`, g.status, g.rating)
+		body := fmt.Sprintf(`{"status":"%s","rating":%d,"playtime_minutes":0,"tags":%s,"notes":""}`, g.status, g.rating, g.tags)
 		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/library/%d", g.id), strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})
@@ -198,6 +205,12 @@ func TestLibraryList(t *testing.T) {
 	json.NewDecoder(rec.Body).Decode(&items)
 	if len(items) != 2 {
 		t.Errorf("expected 2 items, got %d", len(items))
+	}
+	for _, item := range items {
+		tags, _ := item["tags"].([]interface{})
+		if item["game_id"] == float64(1) && len(tags) != 2 {
+			t.Errorf("expected 2 tags for game 1, got %v", item["tags"])
+		}
 	}
 
 	// Filter by status
