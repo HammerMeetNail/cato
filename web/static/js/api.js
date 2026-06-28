@@ -91,6 +91,16 @@ export async function searchGames(query, signal) {
   return api.get(`/api/games/search?q=${encodeURIComponent(query)}`, { signal });
 }
 
+export async function searchGamesFull(query, { limit = 24, offset = 0, signal } = {}) {
+  if (!query || query.length < 2) return [];
+  const params = new URLSearchParams();
+  params.append('q', query);
+  params.append('full', '1');
+  params.append('limit', limit);
+  params.append('offset', offset);
+  return api.get(`/api/games/search?${params.toString()}`, { signal });
+}
+
 export function getCoverURL(game) {
   if (game.local_cover_path) return game.local_cover_path;
   if (game.cover_url) return game.cover_url;
