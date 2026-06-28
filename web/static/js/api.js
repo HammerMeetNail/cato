@@ -101,6 +101,11 @@ export async function searchGamesFull(query, { limit = 24, offset = 0, signal } 
   return api.get(`/api/games/search?${params.toString()}`, { signal });
 }
 
+export async function autocompleteTags(prefix) {
+  if (!prefix || prefix.length < 1) return [];
+  return api.get(`/api/library/tags?q=${encodeURIComponent(prefix)}`);
+}
+
 export function getCoverURL(game) {
   if (game.local_cover_path) return game.local_cover_path;
   if (game.cover_url) return game.cover_url;

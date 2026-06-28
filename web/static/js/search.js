@@ -1,4 +1,4 @@
-import { searchGames, getCoverThumbnailURL } from './api.js';
+import { searchGames, getCoverThumbnailURL, autocompleteTags } from './api.js';
 
 let searchTimer = null;
 let activeController = null;
@@ -40,10 +40,10 @@ function scheduleSearch(query, resultsEl, onSelect, onSubmit, onTagLookup) {
   clearTimeout(searchTimer);
   currentQuery = query;
 
-  // Handle #tag prefix — search library tags instead of game names
+  // Handle #tag prefix — autocomplete tags from user's library
   if (query.startsWith('#') && onTagLookup) {
-    const tag = query.slice(1).trim();
-    if (tag.length < 1) {
+    const prefix = query.slice(1).trim();
+    if (prefix.length < 1) {
       resultsEl.classList.remove('active');
       currentResults = [];
       currentQuery = '';
@@ -52,15 +52,18 @@ function scheduleSearch(query, resultsEl, onSelect, onSubmit, onTagLookup) {
 
     searchTimer = setTimeout(async () => {
       try {
-        const results = await onTagLookup(tag);
-        currentResults = results;
+        const [tagSuggestions, items] = await Promise.all([
+          autocompleteTags(prefix),
+          onTagLookup(prefix),
+        ]);
+        currentResults = items;
         selectedIndex = -1;
-        renderTagResults(results, resultsEl, onSelect, tag);
+        renderTagSuggestions(tagSuggestions, items, resultsEl, onSelect, prefix);
       } catch (err) {
         currentResults = [];
-        renderTagResults([], resultsEl, onSelect, tag);
+        renderTagSuggestions([], [], resultsEl, onSelect, prefix);
       }
-    }, 300);
+    }, 200);
     return;
   }
 
@@ -143,12 +146,34 @@ function renderResults(results, resultsEl, onSelect, onSubmit) {
   resultsEl.classList.add('active');
 }
 
-function renderTagResults(items, resultsEl, onSelect, tag) {
-  if (!items || items.length === 0) {
-    resultsEl.innerHTML = `<div class="no-results">No games tagged "${escapeHTML(tag)}"</div>`;
+function renderTagSuggestions(tagSuggestions, items, resultsEl, onSelect, prefix) {
+  let html = '';
+
+  // Tag autocomplete suggestions
+  if (tagSuggestions.length > 0) {
+    html += '<div class="tag-suggestions">';
+    html += tagSuggestions.map(t => {
+      const matchStart = t.toLowerCase().indexOf(prefix.toLowerCase());
+      const before = t.slice(0, matchStart);
+      const match = t.slice(matchStart, matchStart + prefix.length);
+      const after = t.slice(matchStart + prefix.length);
+      return `<span class="tag-suggestion-chip" data-tag="${escapeHTML(t)}">${escapeHTML(before)}<strong>${escapeHTML(match)}</strong>${escapeHTML(after)}</span>`;
+    }).join('');
+    // Also show the literal prefix as an option if not already a suggestion
+    if (!tagSuggestions.some(t => t.toLowerCase() === prefix.toLowerCase())) {
+      html += `<span class="tag-suggestion-chip tag-suggestion-new" data-tag="${escapeHTML(prefix)}">"${escapeHTML(prefix)}"</span>`;
+    }
+    html += '</div>';
   } else {
+    // No autocomplete matches — show the literal prefix as a filter option
+    html += `<div class="tag-suggestions"><span class="tag-suggestion-chip tag-suggestion-new" data-tag="${escapeHTML(prefix)}">Search tag "${escapeHTML(prefix)}"</span></div>`;
+  }
+
+  // Matching library items
+  if (items && items.length > 0) {
+    if (html) html += '<div class="search-result-divider"></div>';
     const displayItems = items.slice(0, 8);
-    let html = displayItems.map((item, i) => {
+    html += displayItems.map((item, i) => {
       const year = item.first_release_date
         ? new Date(item.first_release_date * 1000).getFullYear()
         : '';
@@ -164,28 +189,42 @@ function renderTagResults(items, resultsEl, onSelect, tag) {
         </div>`;
     }).join('');
 
-    html += `<div class="search-result-more">Filter library by "${escapeHTML(tag)}" →</div>`;
-    resultsEl.innerHTML = html;
+    html += `<div class="search-result-more">Filter library by "${escapeHTML(prefix)}" →</div>`;
+  } else if (tagSuggestions.length === 0) {
+    html += `<div class="no-results">No games tagged "${escapeHTML(prefix)}"</div>`;
+  }
 
-    resultsEl.querySelectorAll('.search-result-item').forEach(item => {
-      item.addEventListener('click', () => {
-        const id = Number(item.dataset.id);
-        const match = items.find(g => String(g.game_id) === String(id));
-        if (!match) return;
-        resultsEl.classList.remove('active');
-        if (onSelect) onSelect(match);
-      });
+  resultsEl.innerHTML = html;
+
+  // Click handlers for tag suggestion chips
+  resultsEl.querySelectorAll('.tag-suggestion-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const tag = chip.dataset.tag;
+      resultsEl.classList.remove('active');
+      const event = new CustomEvent('tagfilter', { detail: { tag } });
+      resultsEl.dispatchEvent(event);
     });
+  });
 
-    const footerRow = resultsEl.querySelector('.search-result-more');
-    if (footerRow) {
-      footerRow.addEventListener('click', () => {
-        resultsEl.classList.remove('active');
-        // Dispatch a custom event that index.html listens for to filter by tag
-        const event = new CustomEvent('tagfilter', { detail: { tag } });
-        resultsEl.dispatchEvent(event);
-      });
-    }
+  // Click handlers for library items
+  resultsEl.querySelectorAll('.search-result-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const id = Number(item.dataset.id);
+      const match = items.find(g => String(g.game_id) === String(id));
+      if (!match) return;
+      resultsEl.classList.remove('active');
+      if (onSelect) onSelect(match);
+    });
+  });
+
+  // Footer "Filter library" click
+  const footerRow = resultsEl.querySelector('.search-result-more');
+  if (footerRow) {
+    footerRow.addEventListener('click', () => {
+      resultsEl.classList.remove('active');
+      const event = new CustomEvent('tagfilter', { detail: { tag: prefix } });
+      resultsEl.dispatchEvent(event);
+    });
   }
 
   resultsEl.classList.add('active');

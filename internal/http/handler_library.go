@@ -25,6 +25,7 @@ func (h *LibraryHandler) Register(mux *http.ServeMux) {
 	csrfChain := auth.CSRFRequired(h.db)
 
 	mux.Handle("/api/library", chain(csrfChain(http.HandlerFunc(h.handleLibrary))))
+	mux.Handle("/api/library/tags", chain(http.HandlerFunc(h.handleLibraryTags)))
 	mux.Handle("/api/library/", chain(csrfChain(http.HandlerFunc(h.handleLibraryItem))))
 }
 
@@ -255,6 +256,38 @@ func (h *LibraryHandler) deleteLibraryItem(w http.ResponseWriter, r *http.Reques
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+}
+
+func (h *LibraryHandler) handleLibraryTags(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, errResp("method_not_allowed", "Method not allowed"))
+		return
+	}
+
+	userID := auth.GetUserID(r.Context())
+	q := r.URL.Query().Get("q")
+
+	rows, err := h.db.Query(`SELECT DISTINCT j.value
+		FROM library_items li, json_each(li.tags_json) j
+		WHERE li.user_id = ? AND j.value LIKE ?
+		ORDER BY j.value
+		LIMIT 10`, userID, q+"%")
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to fetch tags"))
+		return
+	}
+	defer rows.Close()
+
+	tags := make([]string, 0)
+	for rows.Next() {
+		var tag string
+		if err := rows.Scan(&tag); err != nil {
+			continue
+		}
+		tags = append(tags, tag)
+	}
+
+	writeJSON(w, http.StatusOK, tags)
 }
 
 func extractGameID(path string) (int64, error) {
