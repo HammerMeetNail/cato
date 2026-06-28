@@ -46,9 +46,43 @@ func (s *Service) Search(ctx context.Context, query string) ([]GameResult, error
 		return local, nil
 	}
 
+	s.refreshFromIGDB(ctx, query)
+
+	return s.store.SearchLocal(ctx, query, 10)
+}
+
+// SearchPaged performs a paginated search with a relevance floor applied to
+// exclude weak (tier-3 substring) matches unless popular. On page 1 (offset=0),
+// it runs the IGDB live fallback before returning results; on deeper pages,
+// it returns pure local DB results (no IGDB hammering).
+func (s *Service) SearchPaged(ctx context.Context, query string, limit, offset int) ([]GameResult, error) {
+	query = NormalizeName(query)
+	if len(query) < 2 {
+		return nil, nil
+	}
+
+	local, err := s.store.SearchLocalPaged(ctx, query, limit, offset, true)
+	if err != nil {
+		return nil, err
+	}
+
+	// Only ask IGDB on page 1 and only if the query is long enough and not cached.
+	if offset > 0 || !s.shouldAskIGDB(query) {
+		return local, nil
+	}
+
+	// Page 1: refresh from IGDB, then re-query locally.
+	s.refreshFromIGDB(ctx, query)
+
+	return s.store.SearchLocalPaged(ctx, query, limit, offset, true)
+}
+
+// refreshFromIGDB fetches a query from IGDB, upserts all results, enqueues
+// cover jobs, caches individual games, and records the search in the cache.
+func (s *Service) refreshFromIGDB(ctx context.Context, query string) {
 	remote, err := s.igdb.SearchGames(ctx, query, 10)
 	if err != nil {
-		return local, nil
+		return
 	}
 
 	for _, game := range remote {
@@ -64,8 +98,6 @@ func (s *Service) Search(ctx context.Context, query string) ([]GameResult, error
 	}
 
 	cacheSearchResultsDB(ctx, s.db, query, remote)
-
-	return s.store.SearchLocal(ctx, query, 10)
 }
 
 func (s *Service) GetGame(ctx context.Context, id int64) (*Game, error) {

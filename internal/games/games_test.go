@@ -367,11 +367,11 @@ func TestSearchLocalShortQueryFallsBackToLike(t *testing.T) {
 
 func TestComputePopularityScore(t *testing.T) {
 	tests := []struct {
-		name              string
-		follows, hypes    int64
-		totalRatingCount  int64
-		category, status  int64
-		want              int64
+		name             string
+		follows, hypes   int64
+		totalRatingCount int64
+		category, status int64
+		want             int64
 	}{
 		{"released main game with follows", 100, 50, 200, 0, 0, 100*3 + 50*2 + 200 + 10},
 		{"DLC gets no bonus", 100, 50, 200, 1, 0, 100*3 + 50*2 + 200},
@@ -392,15 +392,129 @@ func TestBuildFTSMatch(t *testing.T) {
 		match string
 		ok    bool
 	}{
-		{"ab", "", false},               // < 3 chars
-		{"zelda", `"zelda"`, true},       // single token
+		{"ab", "", false},          // < 3 chars
+		{"zelda", `"zelda"`, true}, // single token
 		{"the legend of zelda", `"the legend of zelda"`, true}, // short tokens kept
-		{`zelda"`, `"zelda"`, true},      // special char stripped
+		{`zelda"`, `"zelda"`, true},                            // special char stripped
 	}
 	for _, tt := range tests {
 		match, ok := BuildFTSMatch(tt.query)
 		if match != tt.match || ok != tt.ok {
 			t.Errorf("BuildFTSMatch(%q) = (%q, %v), want (%q, %v)", tt.query, match, ok, tt.match, tt.ok)
 		}
+	}
+}
+
+func TestSearchLocalPagedFloorOptIn(t *testing.T) {
+	database, store := setupGameDB(t)
+	defer database.Close()
+
+	// Insert a strong match (prefix match — starts with "zeld").
+	// This should always be returned regardless of floor.
+	database.Exec(`INSERT INTO games (id, name, slug, normalized_name, popularity_score, category) VALUES
+		(1, 'Zelda Test Strong', 'zelda-test-strong', 'zelda test strong', 0, 0)`)
+
+	// Insert an obscure tier-3 substring match (contains "zeld" but doesn't start with it
+	// and doesn't have a space before it, so matches only via substring LIKE, not prefix/word-prefix).
+	// This should only be returned if popularity_score > 0 when floor is applied,
+	// or always returned when floor is not applied.
+	database.Exec(`INSERT INTO games (id, name, slug, normalized_name, popularity_score, category) VALUES
+		(2, 'Puzzzeldic Game', 'puzzzeldic-game', 'puzzzeldic game', 0, 0)`)
+
+	// Query for "zeld":
+	// - "zelda test strong" matches via prefix (tier 2)
+	// - "puzzzeldic game" matches only via tier-3 substring (contains "zeld" but no space before it)
+	query := "zeld"
+
+	// Without floor: both should be returned
+	results, err := store.SearchLocalPaged(context.Background(), query, 10, 0, false)
+	if err != nil {
+		t.Fatalf("search without floor failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("without floor: expected 2 results, got %d", len(results))
+	}
+
+	// With floor: only strong match (id=1) should be returned
+	// because the second game has popularity_score=0 and matches only via tier-3 (substring).
+	results, err = store.SearchLocalPaged(context.Background(), query, 10, 0, true)
+	if err != nil {
+		t.Fatalf("search with floor failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("with floor: expected 1 result (strong match only), got %d", len(results))
+	}
+	if len(results) > 0 && results[0].ID != 1 {
+		t.Errorf("with floor: expected result id=1, got id=%d", results[0].ID)
+	}
+
+	// Now update the weak match to have popularity > 0
+	database.Exec(`UPDATE games SET popularity_score = 100 WHERE id = 2`)
+
+	// With floor and popularity > 0: both should be returned
+	results, err = store.SearchLocalPaged(context.Background(), query, 10, 0, true)
+	if err != nil {
+		t.Fatalf("search with floor (after popularity update) failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("with floor and popularity > 0: expected 2 results, got %d", len(results))
+	}
+}
+
+func TestSearchLocalPagedOffsetPagination(t *testing.T) {
+	database, store := setupGameDB(t)
+	defer database.Close()
+
+	// Insert 5 games that match "zelda"
+	for i := 1; i <= 5; i++ {
+		name := fmt.Sprintf("Zelda %d", i)
+		normalized := fmt.Sprintf("zelda %d", i)
+		database.Exec(`INSERT INTO games (id, name, slug, normalized_name) VALUES (?, ?, ?, ?)`,
+			i, name, fmt.Sprintf("zelda-%d", i), normalized)
+	}
+
+	query := "zelda"
+
+	// Page 1: offset=0, limit=2
+	page1, err := store.SearchLocalPaged(context.Background(), query, 2, 0, false)
+	if err != nil {
+		t.Fatalf("page 1 search failed: %v", err)
+	}
+	if len(page1) != 2 {
+		t.Errorf("page 1: expected 2 results, got %d", len(page1))
+	}
+
+	// Page 2: offset=2, limit=2
+	page2, err := store.SearchLocalPaged(context.Background(), query, 2, 2, false)
+	if err != nil {
+		t.Fatalf("page 2 search failed: %v", err)
+	}
+	if len(page2) != 2 {
+		t.Errorf("page 2: expected 2 results, got %d", len(page2))
+	}
+
+	// Page 3: offset=4, limit=2
+	page3, err := store.SearchLocalPaged(context.Background(), query, 2, 4, false)
+	if err != nil {
+		t.Fatalf("page 3 search failed: %v", err)
+	}
+	if len(page3) != 1 {
+		t.Errorf("page 3: expected 1 result, got %d", len(page3))
+	}
+
+	// Verify pages are disjoint (no ID overlap)
+	page1IDs := make(map[int64]bool)
+	for _, r := range page1 {
+		page1IDs[r.ID] = true
+	}
+	for _, r := range page2 {
+		if page1IDs[r.ID] {
+			t.Errorf("page 2 result %d overlaps with page 1", r.ID)
+		}
+	}
+
+	// Verify pages are in order (first page should have lower IDs)
+	if len(page1) > 0 && len(page2) > 0 && page1[0].ID > page2[0].ID {
+		t.Errorf("pages not in order: page1[0].ID=%d > page2[0].ID=%d", page1[0].ID, page2[0].ID)
 	}
 }

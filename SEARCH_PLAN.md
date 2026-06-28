@@ -289,3 +289,100 @@ The 311k-row backfill is the riskiest part. Concretely:
 
 Phases 1-2 alone deliver most of the value (rank popular games first); phases
 3-5 are the polish.
+
+---
+
+# v2: Goodreads-style full results page
+
+Status: **approved, implementing.** The popularity/FTS ranking from §1-8 is
+already shipped (see `store.go`); this section layers a real results page on
+top of it.
+
+## v2.1 Problem
+
+Search today is *only* a 10-row autocomplete dropdown. There is no way to
+"commit" a query and browse a full results list — pressing Enter with no
+highlighted row does nothing. We want the Goodreads pattern: a type-ahead
+dropdown for quick picks, plus Enter (or a "see all results" affordance) that
+opens a full, paginated results page.
+
+## v2.2 Decisions (settled with the user)
+
+- **Results render in place**, replacing the library grid, routed as
+  `#search/<encoded-query>` (back/forward + shareable, consistent with the
+  existing `#game/<id>` routing).
+- **Keep both**: the type-ahead dropdown *and* Enter-for-full-results.
+- **Paginated + relevance floor**: 24/page via the existing infinite-scroll
+  machinery, with a minimum-relevance predicate so obvious junk is hidden, not
+  just sorted last.
+- **IGDB live fallback fires on page 1 only**; deeper pages are pure local DB
+  reads (fast scroll, no IGDB hammering).
+
+## v2.3 Backend
+
+### Contract
+
+`GET /api/games/search?q=<>&full=1&limit=<>&offset=<>`
+
+- Without `full=1`: unchanged dropdown path (`service.Search`, limit 10, no
+  floor). Preserves current behavior **and** the existing fragment-matching
+  tests, which depend on un-floored tier-3 substring matches.
+- With `full=1`: paginated full-results path (`service.SearchPaged`), floor
+  applied. `limit` defaults to 24, clamped to `[1,60]`; `offset` defaults to 0.
+- Response is a bare `[]GameResult` in both cases — the frontend infers
+  `hasMore` from page fill, exactly like `library.list`.
+
+### `store.go`
+
+Add `SearchLocalPaged(ctx, query, limit, offset int, applyFloor bool)`.
+`SearchLocal` becomes `SearchLocalPaged(ctx, query, limit, 0, false)` so all
+existing callers/tests are untouched. The SQL gains `OFFSET ?`, and when
+`applyFloor` is set, a predicate that keeps strong matches always and weak
+(tier-3) matches only if they have some popularity:
+
+```sql
+AND ( g.normalized_name = ?exact
+   OR g.normalized_name LIKE ?prefix
+   OR g.normalized_name LIKE ?wordPrefix
+   OR g.popularity_score > 0 )
+```
+
+The same floor is applied to the `LIKE` fallback path. One expression, easy to
+tune (loosen `popularity_score > 0` to a small threshold if it ever hides a
+legit niche title).
+
+### `service.go`
+
+Add `SearchPaged(ctx, query, limit, offset)`:
+
+1. normalize + min-length guard (same as `Search`);
+2. `local := store.SearchLocalPaged(ctx, q, limit, offset, /*floor*/ true)`;
+3. if `offset > 0` or `!shouldAskIGDB(q)` → return `local`;
+4. otherwise (page 1) run the existing IGDB fetch/upsert/cache block, then
+   re-query `SearchLocalPaged(..., true)`.
+
+Factor the IGDB upsert loop out of `Search` into a shared helper so both paths
+use it.
+
+## v2.4 Frontend
+
+- **`api.js`** — add `searchGamesFull(query, { limit, offset, signal })` →
+  `?q=&full=1&limit=&offset=`. Dropdown keeps `searchGames` (sliced to 8 rows).
+- **`search.js`** — keep the dropdown; add an `onSubmit(query)` callback.
+  Enter with no highlighted row → `onSubmit`; add a "See all results for
+  '<query>' →" footer row → `onSubmit`.
+- **`library.js`** — generalize `paginationState` with a `mode`
+  (`'library'` | `'search'`); `loadMore` branches on it. Add
+  `loadSearchResults(query)` that resets to search mode, renders a results
+  header bar ("Results for '<query>' · ✕ Clear"), hides the status tabs, and
+  feeds results through the same `buildCardHTML`/scroll path (a small adapter
+  maps `{id,name,cover_url}` → the card shape; click → `addGameToLibrary`).
+  Add `getHashSearch()` and a `#search/<query>` branch in `handleRoute`.
+- **`index.html`** — wire `onSubmit` to set `#search/<encoded query>`; tab
+  clicks and Clear reset the hash back to the library view.
+- **`app.css`** — styles for the results header bar and the dropdown footer
+  row.
+
+## v2.5 Defaults
+
+Results page size **24**; dropdown **8** rows; floor as written above.
