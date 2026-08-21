@@ -42,7 +42,7 @@
   <script type="module">
     import { checkAuth, logout, library } from '/js/api.js';
     import { initSearch } from '/js/search.js';
-    import { loadLibrary, loadSearchResults, addGameToLibrary, renderLibraryItems, getHashStatus, getHashGameId, getHashSearch, openGameModal, activateStatusTab, openLibraryItemModal, filterByTag } from '/js/library.js';
+    import { loadLibrary, loadSearchResults, addGameToLibrary, renderLibraryItems, getHashStatus, getHashGameId, getHashSearch, openGameModal, activateStatusTab, openLibraryItemModal, filterByTag, refreshTabCounts } from '/js/library.js';
 
     const searchInput = document.getElementById('searchInput');
     const searchResults = document.getElementById('searchResults');
@@ -76,7 +76,7 @@
     // sum(auth + library) to roughly max(auth, library).
     // library.list() will return a 401 for unauthenticated users; we catch
     // that so it doesn't surface as an unhandled rejection.
-    const [auth, items] = await Promise.all([
+    const [auth, lib] = await Promise.all([
       checkAuth(),
       initialSearch ? null : library.list(initialStatus).catch(() => null),
     ]);
@@ -151,8 +151,9 @@
       await loadSearchResults(initialSearch);
     } else {
       activateStatusTab(initialStatus);
-      if (items !== null) {
-        renderLibraryItems(items, initialStatus);
+      refreshTabCounts();
+      if (lib !== null) {
+        renderLibraryItems(lib.items, initialStatus);
       } else {
         loadLibrary(initialStatus);
       }

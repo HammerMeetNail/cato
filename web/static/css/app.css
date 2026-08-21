@@ -373,6 +373,108 @@ a { color: var(--accent); text-decoration: none; }
   font-weight: 700;
 }
 
+/* Completion year badge on cards (✓ 2025) */
+.game-card .completion-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  background: var(--green);
+  color: #fff;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+/* "In library" badge on search result cards */
+.game-card .owned-badge {
+  position: absolute;
+  bottom: 34px;
+  left: 6px;
+  background: var(--accent);
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+/* Retry button after a failed infinite-scroll page load */
+.load-more-retry {
+  display: block;
+  margin: 16px auto;
+  padding: 8px 20px;
+  background: var(--surface2);
+  color: var(--text-dim);
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+/* Toast confirmation */
+#toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(10px);
+  background: rgba(0,0,0,0.85);
+  color: #fff;
+  padding: 10px 22px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  z-index: 1000;
+}
+
+#toast.visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* Added/Started/Completed rows in the edit modal */
+.modal-dates {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--surface2);
+  border-radius: 6px;
+}
+
+.modal-date-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+}
+
+.modal-date-label {
+  color: var(--text-dim);
+  min-width: 84px;
+}
+
+.modal-date-value.cleared {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+.modal-date-clear {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.modal-date-clear:hover {
+  color: var(--accent);
+}
+
 /* Tag chips on cards */
 .card-tags {
   display: flex;

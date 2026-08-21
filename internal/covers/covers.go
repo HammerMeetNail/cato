@@ -3,6 +3,7 @@ package covers
 import (
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,6 +18,11 @@ import (
 // The IGDB image CDN (Cloudinary) has no documented per-client rate limit on image
 // downloads, only on API queries — so we can safely fetch several covers at once.
 const maxConcurrentDownloads = 5
+
+// maxCoverBytes caps how large a downloaded cover may be. Real cover art is
+// well under 1 MB; the cap only exists so a misbehaving server can't make us
+// buffer unbounded data.
+const maxCoverBytes = 8 << 20 // 8 MiB
 
 type Worker struct {
 	db       *db.DB
@@ -42,17 +48,17 @@ func (w *Worker) Start() {
 	w.CleanStaleLocalPaths()
 		go func() {
 		for {
-			gameID, sourceURL, err := w.nextJob()
+			gameID, sourceURL, attempts, err := w.nextJob()
 			if err != nil || gameID == 0 {
 				time.Sleep(500 * time.Millisecond)
 				continue
 			}
 			// Acquire a slot; blocks when all maxConcurrentDownloads are busy.
 			w.sem <- struct{}{}
-			go func(id int64, url string) {
+			go func(id int64, url string, atts int) {
 				defer func() { <-w.sem }()
-				w.downloadAndSave(id, url)
-			}(gameID, sourceURL)
+				w.downloadAndSave(id, url, atts)
+			}(gameID, sourceURL, attempts)
 			// Yield the DB connection between job claims so HTTP request
 			// handlers (session lookups, library queries) are not starved
 			// by rapid back-to-back cover_jobs writes.
@@ -99,34 +105,36 @@ func (w *Worker) CleanStaleLocalPaths() {
 // Only library-priority jobs are downloaded. The query INNER JOINs against
 // the library_items table so SQLite only considers O(|library|) rows.
 // When there are no library jobs, the worker idles (returns gameID == 0).
-func (w *Worker) nextJob() (int64, string, error) {
+func (w *Worker) nextJob() (int64, string, int, error) {
 	var gameID int64
 	var sourceURL string
+	var attempts int
 
 	// Prefer a game that's already in someone's library.
 	// INNER JOIN is fast because library_items is small.
 	err := w.db.QueryRow(`
-		SELECT cj.game_id, cj.source_url
+		SELECT cj.game_id, cj.source_url, cj.attempts
 		FROM cover_jobs cj
 		INNER JOIN library_items li ON li.game_id = cj.game_id
 		WHERE cj.attempts < 5 AND cj.next_attempt_at <= ?
 		ORDER BY cj.created_at ASC LIMIT 1`,
-		time.Now().Format(time.RFC3339)).Scan(&gameID, &sourceURL)
+		time.Now().Format(time.RFC3339)).Scan(&gameID, &sourceURL, &attempts)
 
 	if err != nil {
 		// sql.ErrNoRows or other error; return 0 to signal idle.
-		return 0, "", nil
+		return 0, "", 0, nil
 	}
 
 	// Reserve the job for 30 minutes so the coordinator loop skips it.
 	w.db.Exec("UPDATE cover_jobs SET next_attempt_at = ? WHERE game_id = ?",
 		time.Now().Add(30*time.Minute).Format(time.RFC3339), gameID)
-	return gameID, sourceURL, nil
+	return gameID, sourceURL, attempts, nil
 }
 
 // downloadAndSave fetches a cover image and writes it to disk, then updates
-// the DB. On failure it resets the job with exponential backoff.
-func (w *Worker) downloadAndSave(gameID int64, sourceURL string) {
+// the DB. On failure it records the attempt and schedules a retry with real
+// exponential backoff (1m, 2m, 4m, 8m, 16m).
+func (w *Worker) downloadAndSave(gameID int64, sourceURL string, attempts int) {
 	destPath := CoverPath(w.coverDir, gameID)
 	if _, err := os.Stat(destPath); err == nil {
 		// File already on disk — just mark the job complete.
@@ -135,42 +143,109 @@ func (w *Worker) downloadAndSave(gameID int64, sourceURL string) {
 		return
 	}
 
-	// Download the original URL (JPEG format).
-	src, err := downloadCover(w.client, sourceURL)
+	data, err := fetchCover(w.client, sourceURL)
 	if err != nil {
-		w.db.Exec(`UPDATE cover_jobs SET attempts = attempts + 1,
-			last_error = ?, next_attempt_at = ?, updated_at = CURRENT_TIMESTAMP
-			WHERE game_id = ?`, err.Error(), backoffNext(time.Now(), 0), gameID)
-		return
-	}
-	defer src.Close()
-
-	if err := os.MkdirAll(w.coverDir, 0755); err != nil {
+		w.recordFailure(gameID, attempts+1, err)
 		return
 	}
 
-	dst, err := os.Create(destPath)
-	if err != nil {
+	if err := w.saveAtomically(destPath, data); err != nil {
+		w.recordFailure(gameID, attempts+1, fmt.Errorf("save: %w", err))
 		return
 	}
-	defer dst.Close()
-
-	io.Copy(dst, src)
 
 	w.db.Exec("DELETE FROM cover_jobs WHERE game_id = ?", gameID)
 	w.db.Exec("UPDATE games SET local_cover_path = ? WHERE id = ?", publicCoverPath(gameID), gameID)
 }
 
-func downloadCover(client *http.Client, url string) (io.ReadCloser, error) {
+// recordFailure bumps the attempt counter and schedules the next try with
+// exponential backoff based on the actual attempt number. (The previous code
+// always passed attempt=0 here, collapsing the "backoff" to a flat 1 minute.)
+func (w *Worker) recordFailure(gameID int64, attempt int, err error) {
+	log.Printf("covers: game %d failed (attempt %d): %v", gameID, attempt, err)
+	w.db.Exec(`UPDATE cover_jobs SET attempts = ?, last_error = ?,
+		next_attempt_at = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE game_id = ?`, attempt, truncateErr(err), backoffNext(time.Now(), attempt), gameID)
+}
+
+// saveAtomically writes data to destPath via a temp file + rename so a crash
+// mid-write can never leave a truncated {id}.jpg behind — such a file would
+// pass the os.Stat fast-path on the next attempt and be served with immutable
+// caching forever.
+func (w *Worker) saveAtomically(destPath string, data []byte) error {
+	dir := filepath.Dir(destPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".cover-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once renamed
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, destPath)
+}
+
+// fetchCover downloads a cover image, enforcing an HTTP 200 status, a size
+// cap, and image magic bytes. Validating before anything touches disk stops
+// truncated responses or HTML error pages from being cached as {id}.jpg.
+func fetchCover(client *http.Client, url string) ([]byte, error) {
 	resp, err := client.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("http get: %w", err)
 	}
+	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
 		return nil, fmt.Errorf("http status %d", resp.StatusCode)
 	}
-	return resp.Body, nil
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxCoverBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+	if len(data) > maxCoverBytes {
+		return nil, fmt.Errorf("image exceeds %d byte limit", maxCoverBytes)
+	}
+	if !looksLikeImage(data) {
+		n := len(data)
+		if n > 4 {
+			n = 4
+		}
+		return nil, fmt.Errorf("response is not an image (magic bytes: % x)", data[:n])
+	}
+	return data, nil
+}
+
+// looksLikeImage reports whether b starts with a known image magic number.
+// IGDB serves JPEG; WEBP/PNG are accepted for legacy sources.
+func looksLikeImage(b []byte) bool {
+	switch {
+	case len(b) >= 3 && b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF: // JPEG
+		return true
+	case len(b) >= 12 && string(b[0:4]) == "RIFF" && string(b[8:12]) == "WEBP":
+		return true
+	case len(b) >= 8 && b[0] == 0x89 && string(b[1:4]) == "PNG":
+		return true
+	}
+	return false
+}
+
+// truncateErr caps an error string before storing it in cover_jobs.last_error,
+// which has no length limit but shouldn't hold multi-KB DNS error dumps.
+func truncateErr(err error) string {
+	s := err.Error()
+	if len(s) > 300 {
+		s = s[:297] + "..."
+	}
+	return s
 }
 
 func backoffNext(now time.Time, attempt int) string {

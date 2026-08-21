@@ -28,8 +28,8 @@ WHERE f.normalized_name MATCH ?1
 ORDER BY
   CASE
     WHEN g.normalized_name = ?2 THEN 0
-    WHEN g.normalized_name LIKE ?3 THEN 1
-    WHEN g.normalized_name LIKE ?4 THEN 2
+    WHEN g.normalized_name LIKE ?3 ESCAPE '\' THEN 1
+    WHEN g.normalized_name LIKE ?4 ESCAPE '\' THEN 2
     ELSE 3
   END,
   CASE WHEN g.category = 0 THEN 0 ELSE 1 END,
@@ -39,16 +39,28 @@ ORDER BY
   g.first_release_date DESC
 LIMIT ?5`
 
+// EscapeLike escapes SQL LIKE wildcards in user input so that a query like
+// "100%" matches the literal string "100%" rather than "100<anything>".
+// Use with `LIKE ? ESCAPE '\'`.
+func EscapeLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}
+
 // searchLikeFallback preserves the pre-FTS behavior for queries too short for
 // the trigram tokenizer (< 3 chars) or if the FTS table is unavailable.
+// All LIKE comparisons use ESCAPE '\' because the patterns are built from
+// user input passed through EscapeLike.
 const searchLikeFallback = `SELECT id, name, slug, cover_url, local_cover_path, first_release_date
 FROM games
-WHERE normalized_name LIKE ?1
+WHERE normalized_name LIKE ?1 ESCAPE '\'
 ORDER BY
   CASE
     WHEN normalized_name = ?2 THEN 0
-    WHEN normalized_name LIKE ?3 THEN 1
-    WHEN normalized_name LIKE ?4 THEN 2
+    WHEN normalized_name LIKE ?3 ESCAPE '\' THEN 1
+    WHEN normalized_name LIKE ?4 ESCAPE '\' THEN 2
     ELSE 3
   END,
   CASE WHEN category = 0 THEN 0 ELSE 1 END,
@@ -74,9 +86,9 @@ func (s *Store) SearchLocalPaged(ctx context.Context, query string, limit, offse
 		offset = 0
 	}
 
-	like := "%" + query + "%"
-	prefix := query + "%"
-	wordPrefix := "% " + query + "%"
+	like := "%" + EscapeLike(query) + "%"
+	prefix := EscapeLike(query) + "%"
+	wordPrefix := "% " + EscapeLike(query) + "%"
 
 	if match, ok := BuildFTSMatch(query); ok {
 		sql, args := s.buildSearchSQL(searchSQL, match, query, prefix, wordPrefix, limit, offset, applyFloor)
@@ -112,14 +124,14 @@ func (s *Store) buildSearchSQL(template string, ftsMgLike string, query string, 
 			sql = strings.Replace(
 				template,
 				"WHERE f.normalized_name MATCH ?1",
-				"WHERE f.normalized_name MATCH ?1 AND ( g.normalized_name = ?6 OR g.normalized_name LIKE ?7 OR g.normalized_name LIKE ?8 OR g.popularity_score > 0 )",
+				"WHERE f.normalized_name MATCH ?1 AND ( g.normalized_name = ?6 OR g.normalized_name LIKE ?7 ESCAPE '\\' OR g.normalized_name LIKE ?8 ESCAPE '\\' OR g.popularity_score > 0 )",
 				1,
 			)
 		} else {
 			sql = strings.Replace(
 				template,
-				"WHERE normalized_name LIKE ?1",
-				"WHERE normalized_name LIKE ?1 AND ( normalized_name = ?6 OR normalized_name LIKE ?7 OR normalized_name LIKE ?8 OR popularity_score > 0 )",
+				"WHERE normalized_name LIKE ?1 ESCAPE '\\'",
+				"WHERE normalized_name LIKE ?1 ESCAPE '\\' AND ( normalized_name = ?6 OR normalized_name LIKE ?7 ESCAPE '\\' OR normalized_name LIKE ?8 ESCAPE '\\' OR popularity_score > 0 )",
 				1,
 			)
 		}
@@ -261,6 +273,17 @@ func daysAgo(days int) int64 {
 	return time.Now().AddDate(0, 0, -days).Unix()
 }
 
+// MarkRefreshed bumps source_updated_at to now so GetStaleGames stops
+// re-selecting a row whose IGDB refresh permanently failed (e.g. the ID was
+// deleted upstream). Without this, failed rows sit at the head of the stale
+// queue forever and block newer games from ever being refreshed.
+func (s *Store) MarkRefreshed(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE games SET source_updated_at = ? WHERE id = ?`,
+		time.Now().Unix(), id)
+	return err
+}
+
 // GetBackfillCandidates returns up to `limit` game IDs that have not yet had
 // their popularity fields fetched, restricted to rows likely to matter for
 // search ranking: anything with a non-zero critic rating count, or released
@@ -314,8 +337,21 @@ func (s *Store) EnqueueCoverJob(ctx context.Context, gameID int64, sourceURL str
 	if sourceURL == "" {
 		return nil
 	}
+	// ON CONFLICT DO UPDATE (not DO NOTHING): a job that exhausted its retries
+	// under an old/broken URL must be revivable when the game is re-enqueued
+	// with a corrected URL. Only reset when the job is exhausted or the URL
+	// changed, so routine re-saves of a library item don't restart healthy
+	// in-flight jobs.
 	_, err := s.db.ExecContext(ctx, `INSERT INTO cover_jobs (game_id, source_url)
-		VALUES (?, ?) ON CONFLICT(game_id) DO NOTHING`, gameID, sourceURL)
+		VALUES (?, ?)
+		ON CONFLICT(game_id) DO UPDATE SET
+			source_url = excluded.source_url,
+			attempts = 0,
+			last_error = '',
+			next_attempt_at = CURRENT_TIMESTAMP,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE cover_jobs.attempts >= 5 OR cover_jobs.source_url != excluded.source_url`,
+		gameID, sourceURL)
 	return err
 }
 

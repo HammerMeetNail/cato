@@ -44,8 +44,12 @@ deploy-push: deploy-build
 	tar czf - web/static | ssh $(NAS_HOST) 'cd $(NAS_PATH) && rm -rf web/static && tar xzf -'
 
 deploy-db:
+	@if ! command -v sqlite3 >/dev/null 2>&1; then \
+		echo "sqlite3 is required to take a consistent backup (raw copies of a WAL database can be torn)"; exit 1; fi
 	ssh $(NAS_HOST) 'mkdir -p $(NAS_PATH)/data'
-	cat data/cato.db | ssh $(NAS_HOST) 'cat > $(NAS_PATH)/data/cato.db'
+	sqlite3 data/cato.db ".backup '/tmp/cato-deploy.db'"
+	cat /tmp/cato-deploy.db | ssh $(NAS_HOST) 'cat > $(NAS_PATH)/data/cato.db'
+	rm -f /tmp/cato-deploy.db
 
 deploy-up:
 	ssh $(NAS_HOST) 'cd $(NAS_PATH) && $(COMPOSE) -f docker-compose.yml up -d --build'
