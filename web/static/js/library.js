@@ -1134,12 +1134,12 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
         <label class="modal-field">Hours:
           <input type="number" min="0" step="0.25" value="${hours}" class="modal-playtime" inputmode="decimal">
         </label>
-        <label class="modal-field">Tags
+        <div class="modal-field">Tags
           <div class="modal-tags-wrap">
-            <div class="modal-tags-chips">${tags.map(t => `<span class="tag-chip tag-chip-removable">${escapeHTML(t)}<button type="button" class="tag-chip-x" aria-label="Remove ${escapeHTML(t)}">&times;</button></span>`).join('')}</div>
+            <div class="modal-tags-chips">${tags.map(t => `<span class="tag-chip tag-chip-removable" data-tag="${escapeHTML(t)}">${escapeHTML(t)}<button type="button" class="tag-chip-x" aria-label="Remove ${escapeHTML(t)}">&times;</button></span>`).join('')}</div>
             <input type="text" class="modal-tags-input" placeholder="Add tag...">
           </div>
-        </label>
+        </div>
         <label class="modal-field">Notes
           <textarea class="modal-notes" placeholder="Notes...">${escapeHTML(notes)}</textarea>
         </label>
@@ -1214,6 +1214,7 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
   function addChip(text) {
     const chip = document.createElement('span');
     chip.className = 'tag-chip tag-chip-removable';
+    chip.dataset.tag = text;
     chip.innerHTML = `${escapeHTML(text)}<button type="button" class="tag-chip-x" aria-label="Remove ${escapeHTML(text)}">&times;</button>`;
     chip.querySelector('.tag-chip-x').addEventListener('click', () => chip.remove());
     chipsContainer.appendChild(chip);
@@ -1240,7 +1241,73 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
     if (val) { addChip(val); tagInput.value = ''; }
   });
 
+  // Clicking a tag chip's body (not its ×) offers to show every library game
+  // carrying that tag: a small popover with one action. Choosing it closes the
+  // form and applies the library tag filter, so unsaved edits are never lost
+  // by an accidental chip click.
+  let tagMenu = null;
+
+  function dismissTagMenu() {
+    if (!tagMenu) return;
+    tagMenu.remove();
+    tagMenu = null;
+    document.removeEventListener('click', onDocClickTagMenu, true);
+    document.removeEventListener('keydown', onTagMenuEsc, true);
+    window.removeEventListener('resize', dismissTagMenu);
+    window.removeEventListener('scroll', dismissTagMenu, true);
+  }
+
+  // Capture phase so the menu dismisses on any outside click before other
+  // handlers (e.g. the modal-overlay backdrop close) react to it.
+  function onDocClickTagMenu(e) {
+    if (tagMenu && !tagMenu.contains(e.target)) dismissTagMenu();
+  }
+
+  // Escape dismisses just the menu — stopPropagation keeps escHandler from
+  // closing the whole form at the same time.
+  function onTagMenuEsc(e) {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      dismissTagMenu();
+    }
+  }
+
+  function showTagMenu(chip) {
+    dismissTagMenu();
+    const tag = chip.dataset.tag;
+    if (!tag) return;
+    tagMenu = document.createElement('div');
+    tagMenu.className = 'tag-chip-menu';
+    tagMenu.setAttribute('role', 'menu');
+    tagMenu.innerHTML = `<button type="button" class="tag-chip-menu-item" role="menuitem">Show all games tagged "${escapeHTML(tag)}"</button>`;
+    tagMenu.querySelector('.tag-chip-menu-item').addEventListener('click', () => {
+      dismissTagMenu();
+      close();
+      filterByTag(tag);
+    });
+    document.body.appendChild(tagMenu);
+    // Fixed positioning from the chip's viewport rect; clamp so wide tags
+    // don't overflow the right edge.
+    const r = chip.getBoundingClientRect();
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - tagMenu.offsetWidth - 8));
+    tagMenu.style.left = `${Math.round(left)}px`;
+    tagMenu.style.top = `${Math.round(Math.min(r.bottom + 6, window.innerHeight - tagMenu.offsetHeight - 8))}px`;
+    setTimeout(() => {
+      document.addEventListener('click', onDocClickTagMenu, true);
+      document.addEventListener('keydown', onTagMenuEsc, true);
+      window.addEventListener('resize', dismissTagMenu);
+      window.addEventListener('scroll', dismissTagMenu, true);
+    }, 0);
+  }
+
+  chipsContainer.addEventListener('click', (e) => {
+    if (e.target.closest('.tag-chip-x')) return;
+    const chip = e.target.closest('.tag-chip-removable');
+    if (chip && chipsContainer.contains(chip)) showTagMenu(chip);
+  });
+
   const close = () => {
+    dismissTagMenu();
     modal.remove();
     document.body.classList.remove('modal-open');
     document.removeEventListener('keydown', escHandler);
