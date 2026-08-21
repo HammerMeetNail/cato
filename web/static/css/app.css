@@ -1499,6 +1499,43 @@ body.modal-open {
   text-transform: uppercase;
   white-space: nowrap;
   line-height: 1.6;
+  cursor: pointer;
+}
+
+.modal-tags-wrap .tag-chip-removable:hover {
+  color: var(--accent);
+}
+
+/* Popover shown when a tag chip in the game form is clicked: offers to show
+   every library game carrying that tag. Fixed-position, above the modal
+   overlay (z-index 100). */
+.tag-chip-menu {
+  position: fixed;
+  z-index: 101;
+  min-width: 200px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--surface2);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.tag-chip-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 0.8rem;
+  font-family: inherit;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.tag-chip-menu-item:hover {
+  background: var(--surface2);
 }
 
 .tag-chip-x {
