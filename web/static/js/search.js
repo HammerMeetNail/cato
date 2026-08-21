@@ -1,4 +1,4 @@
-import { searchGames, getCoverThumbnailURL, autocompleteTags } from './api.js';
+import { searchGames, getCoverThumbnailURL, autocompleteTags, formatTagForQuery } from './api.js';
 import { escapeHTML } from './library.js';
 
 let searchTimer = null;
@@ -10,6 +10,33 @@ let currentQuery = '';
 // renders only the first 8 results while ArrowDown used to index into all 10,
 // letting the selection become invisible (FINDINGS §3.6).
 let renderedCount = 0;
+
+// lastTagSegment finds the tag currently being typed in a raw query string.
+// A double-quoted run counts as one segment even if it contains spaces/pipes,
+// so typing $"Switch 2 autocompletes against "Switch 2", not "2".
+// Returns { start, text } — start is where the segment begins (including any
+// opening quote) so it can be replaced wholesale; text is quote-stripped.
+function lastTagSegment(raw) {
+  let segStart = 0;
+  let quoted = false;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (ch === '"') {
+      if (!quoted) {
+        segStart = i;
+        quoted = true;
+      } else {
+        quoted = false;
+      }
+    } else if (!quoted && (ch === ' ' || ch === '|')) {
+      segStart = i + 1;
+    }
+  }
+  let text = raw.slice(segStart);
+  if (text.startsWith('"')) text = text.slice(1);
+  if (!quoted && text.endsWith('"')) text = text.slice(0, -1);
+  return { start: segStart, text };
+}
 
 export function initSearch(inputEl, resultsEl, onSelect, onSubmit, onTagLookup) {
   inputEl.addEventListener('input', () => {
@@ -56,9 +83,8 @@ function scheduleSearch(query, resultsEl, onSelect, onSubmit, onTagLookup) {
       return;
     }
 
-    // Extract the last "word" for autocomplete (the prefix being typed)
-    const lastSep = Math.max(raw.lastIndexOf(' '), raw.lastIndexOf('|'));
-    const prefix = lastSep >= 0 ? raw.slice(lastSep + 1).trim() : raw;
+    // Extract the segment currently being typed for autocomplete
+    const { text: prefix, start: segStart } = lastTagSegment(raw);
 
     searchTimer = setTimeout(async () => {
       try {
@@ -68,10 +94,10 @@ function scheduleSearch(query, resultsEl, onSelect, onSubmit, onTagLookup) {
         ]);
         currentResults = items;
         selectedIndex = -1;
-        renderTagSuggestions(tagSuggestions, items, resultsEl, onSelect, prefix, raw);
+        renderTagSuggestions(tagSuggestions, items, resultsEl, onSelect, prefix, raw, segStart);
       } catch (err) {
         currentResults = [];
-        renderTagSuggestions([], [], resultsEl, onSelect, prefix, raw);
+        renderTagSuggestions([], [], resultsEl, onSelect, prefix, raw, segStart);
       }
     }, 200);
     return;
@@ -158,17 +184,14 @@ function renderResults(results, resultsEl, onSelect, onSubmit) {
   resultsEl.classList.add('active');
 }
 
-function renderTagSuggestions(tagSuggestions, items, resultsEl, onSelect, prefix, raw) {
+function renderTagSuggestions(tagSuggestions, items, resultsEl, onSelect, prefix, raw, segStart) {
   let html = '';
   renderedCount = 0;
 
-  // Build replacement function: replaces last word in raw with the given tag
+  // Build replacement function: replaces the segment being typed with the
+  // chosen tag, quoting it when it contains spaces/pipes.
   function replaceLastWord(tag) {
-    const lastSep = Math.max(raw.lastIndexOf(' '), raw.lastIndexOf('|'));
-    if (lastSep >= 0) {
-      return raw.slice(0, lastSep + 1) + tag;
-    }
-    return tag;
+    return raw.slice(0, segStart) + formatTagForQuery(tag);
   }
 
   // Tag autocomplete suggestions

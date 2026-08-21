@@ -109,6 +109,46 @@ export async function searchGamesFull(query, { limit = 24, offset = 0, signal } 
   return api.get(`/api/games/search?${params.toString()}`, { signal });
 }
 
+// parseTagQuery parses a raw tag filter string into { tags, op }.
+// Tags containing spaces or pipes must be double-quoted ("Switch 2").
+// Outside quotes: space = AND, pipe = OR (any pipe => op 'or').
+export function parseTagQuery(raw) {
+  const tags = [];
+  let op = 'and';
+  let cur = '';
+  let quoted = false;
+  const push = () => {
+    const t = cur.trim();
+    if (t) tags.push(t);
+    cur = '';
+  };
+  for (const ch of raw) {
+    if (ch === '"') {
+      quoted = !quoted;
+      continue;
+    }
+    if (!quoted && ch === '|') {
+      op = 'or';
+      push();
+      continue;
+    }
+    if (!quoted && /\s/.test(ch)) {
+      if (op !== 'or') push();
+      else cur += ch;
+      continue;
+    }
+    cur += ch;
+  }
+  push();
+  return { tags, op };
+}
+
+// formatTagForQuery quotes a tag when needed so it survives round-tripping
+// through a tag query string (spaces/pipes would otherwise split it).
+export function formatTagForQuery(tag) {
+  return /[\s|"]/.test(tag) ? `"${tag.replace(/"/g, '')}"` : tag;
+}
+
 export async function autocompleteTags(prefix) {
   if (!prefix || prefix.length < 1) return [];
   return api.get(`/api/library/tags?q=${encodeURIComponent(prefix)}`);
@@ -141,11 +181,8 @@ export const library = {
     const params = new URLSearchParams();
     if (status) params.append('status', status);
     if (tag) {
-      // Space-separated = AND, pipe-separated = OR
-      const hasPipe = tag.includes('|');
-      const separator = hasPipe ? '|' : ' ';
-      const tagList = tag.split(separator).map(t => t.trim()).filter(t => t.length > 0);
-      if (hasPipe) params.append('tag_op', 'or');
+      const { tags: tagList, op } = parseTagQuery(tag);
+      if (op === 'or') params.append('tag_op', 'or');
       for (const t of tagList) {
         params.append('tag', t);
       }
