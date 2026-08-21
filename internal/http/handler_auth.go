@@ -68,6 +68,11 @@ func (h *AuthHandler) Register(mux *http.ServeMux) {
 }
 
 func (h *AuthHandler) handleMe(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPatch {
+		h.updateMe(w, r)
+		return
+	}
+
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, errResp("method_not_allowed", "Method not allowed"))
 		return
@@ -110,6 +115,60 @@ func (h *AuthHandler) handleMe(w http.ResponseWriter, r *http.Request) {
 		"email":         email,
 		"display_name":  displayName,
 		"csrf_token":    session.CSRFToken,
+	})
+}
+
+// updateMe handles PATCH /api/me — currently just the display name. The
+// route deliberately has no middleware (GET must answer {authenticated:
+// false} for the login page), so session + CSRF are validated inline with
+// the same rules as auth.CSRFRequired.
+func (h *AuthHandler) updateMe(w http.ResponseWriter, r *http.Request) {
+	sessionID := auth.GetSessionID(r)
+	if sessionID == "" {
+		writeJSON(w, http.StatusUnauthorized, errResp("unauthorized", "Authentication required"))
+		return
+	}
+	session, err := auth.GetSession(h.db, sessionID)
+	if err != nil || session == nil {
+		writeJSON(w, http.StatusUnauthorized, errResp("unauthorized", "Invalid or expired session"))
+		return
+	}
+	if !strings.EqualFold(session.CSRFToken, r.Header.Get("X-CSRF-Token")) {
+		writeJSON(w, http.StatusForbidden, errResp("csrf_mismatch", "CSRF token mismatch"))
+		return
+	}
+
+	var req struct {
+		DisplayName string `json:"display_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, errResp("invalid_body", "Invalid request body"))
+		return
+	}
+	req.DisplayName = strings.TrimSpace(req.DisplayName)
+	if len(req.DisplayName) > 64 {
+		writeJSON(w, http.StatusBadRequest, errResp("invalid_display_name", "Display name must be at most 64 characters"))
+		return
+	}
+
+	if _, err := h.db.Exec(`UPDATE users SET display_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		req.DisplayName, session.UserID); err != nil {
+		log.Printf("update display name for %s: %v", session.UserID, err)
+		writeJSON(w, http.StatusInternalServerError, errResp("internal_error", "Failed to update profile"))
+		return
+	}
+
+	var email string
+	if err := h.db.QueryRow("SELECT email FROM users WHERE id = ?", session.UserID).Scan(&email); err != nil {
+		writeJSON(w, http.StatusInternalServerError, errResp("internal_error", "Failed to load user"))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"authenticated": true,
+		"user_id":       session.UserID,
+		"email":         email,
+		"display_name":  req.DisplayName,
 	})
 }
 

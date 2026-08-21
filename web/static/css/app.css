@@ -15,6 +15,19 @@
   --blue: #2196f3;
   --radius: 8px;
   --transition: 180ms ease;
+  color-scheme: dark;
+}
+
+/* Light theme — variable overrides only; components all flow through vars.
+   Activated by <html data-theme="light">, persisted in localStorage. */
+[data-theme="light"] {
+  --bg: #f2f4f8;
+  --surface: #ffffff;
+  --surface2: #d9dfe9;
+  --text: #1d2433;
+  --text-dim: #5f6b7a;
+  --accent: #d63652;
+  color-scheme: light;
 }
 
 html {
@@ -407,6 +420,197 @@ a { color: var(--accent); text-decoration: none; }
   font-weight: 700;
 }
 
+/* Unified status pill on library cards. Colors come from the shared
+   .status-* classes below; this only handles geometry/typography. */
+.game-card .card-status {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  max-width: calc(100% - 12px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+}
+
+/* Hover-reveal quick actions on library cards (always visible on touch). */
+.game-card .qa-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 56px;
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  opacity: 0;
+  transition: opacity var(--transition);
+}
+
+.game-card:hover .qa-bar,
+.game-card:focus-within .qa-bar {
+  opacity: 1;
+}
+
+.qa-btn {
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.75);
+  color: #fff;
+  font-size: 0.95rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--transition), transform var(--transition);
+}
+
+.qa-btn:hover {
+  background: var(--accent);
+  transform: scale(1.08);
+}
+
+.qa-btn.qa-play:hover { background: var(--green); }
+
+@media (hover: none) {
+  .game-card .qa-bar {
+    opacity: 1;
+    bottom: 60px;
+    gap: 6px;
+  }
+  .qa-btn {
+    width: 32px;
+    height: 32px;
+    font-size: 0.85rem;
+  }
+}
+
+/* Card removal animation (quick action moved it out of the active filter,
+   or the user removed it) */
+.game-card.card-removing {
+  transition: opacity 240ms ease, transform 240ms ease;
+  opacity: 0;
+  transform: scale(0.9);
+  pointer-events: none;
+}
+
+/* "Playing now" hero strip */
+.playing-hero {
+  margin-bottom: 20px;
+}
+
+.playing-hero .hero-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.playing-hero .hero-row {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+}
+
+.hero-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--surface2);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  min-width: 300px;
+}
+
+.playing-hero .hero-card.card-removing {
+  transition: opacity 240ms ease, transform 240ms ease;
+  opacity: 0;
+  transform: scale(0.95);
+  pointer-events: none;
+}
+
+.hero-card img {
+  width: 40px;
+  height: 54px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: var(--surface2);
+  flex-shrink: 0;
+}
+
+.hero-info {
+  min-width: 0;
+  max-width: 150px;
+}
+
+.hero-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hero-sub {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hero-actions {
+  display: flex;
+  gap: 5px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.hero-btn {
+  border: 1px solid var(--surface2);
+  background: var(--bg);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition), color var(--transition);
+}
+
+.hero-btn:hover:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.hero-btn:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.hero-btn.hero-finish {
+  color: var(--green);
+  border-color: var(--green);
+}
+
+.hero-btn.hero-finish:hover:not(:disabled) {
+  background: var(--green);
+  color: #fff;
+}
+
 /* "In library" badge on search result cards */
 .game-card .owned-badge {
   position: absolute;
@@ -452,6 +656,25 @@ a { color: var(--accent); text-decoration: none; }
 #toast.visible {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
+}
+
+#toast.error {
+  background: rgba(200, 40, 40, 0.92);
+}
+
+.toast-action {
+  margin-left: 14px;
+  /* The toast container is pointer-events:none (so it never blocks the
+     page); re-enable it on the action button or Undo can't be clicked. */
+  pointer-events: auto;
+  background: none;
+  border: none;
+  color: #fff;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0;
 }
 
 /* Added/Started/Completed rows in the edit modal */
@@ -668,6 +891,401 @@ a { color: var(--accent); text-decoration: none; }
 .status-completed { background: #9c27b0; }
 .status-abandoned { background: #f44336; }
 
+/* Stats strip under the tabs */
+.stats-strip {
+  margin: -10px 0 16px;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+#statsStrip[role="button"] {
+  cursor: pointer;
+}
+
+#statsStrip[role="button"]:hover {
+  color: var(--text);
+}
+
+/* Stats dialog */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.stat-cell {
+  background: var(--surface2);
+  border-radius: var(--radius);
+  padding: 12px 10px;
+  text-align: center;
+}
+
+.stat-value {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.stat-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.stat-year-line {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  margin-bottom: 14px;
+}
+
+.stat-section {
+  border-top: 1px solid var(--surface2);
+  padding-top: 12px;
+  margin-bottom: 12px;
+}
+
+.stat-section h3 {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.stat-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+  font-size: 0.82rem;
+}
+
+.stat-bar-year {
+  min-width: 40px;
+  color: var(--text-dim);
+}
+
+.stat-bar-track {
+  flex: 1;
+  height: 10px;
+  background: var(--surface2);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.stat-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 5px;
+}
+
+.stat-bar-count {
+  min-width: 24px;
+  text-align: right;
+  font-weight: 600;
+}
+
+.stat-tags .tag-chip { margin: 0 4px 4px 0; }
+
+.stat-list-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+  font-size: 0.88rem;
+}
+
+.stat-dim { color: var(--text-dim); }
+
+.stat-recent {
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-recent-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 4px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--surface2);
+  color: var(--text);
+  font-size: 0.85rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.stat-recent-row:last-child { border-bottom: none; }
+
+.stat-recent-row:hover .stat-recent-name {
+  color: var(--accent);
+}
+
+.stat-recent-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Ownership chip shown in a card's tag row */
+.tag-chip.own-meta-chip {
+  background: rgba(0,0,0,0.55);
+  color: var(--text);
+  text-transform: none;
+  font-weight: 500;
+  cursor: default;
+}
+
+/* Empty state with CTA */
+.empty-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+.empty-state p {
+  max-width: 380px;
+  margin: 0 auto 14px;
+}
+
+.btn-inline {
+  width: auto;
+  padding: 8px 22px;
+}
+
+/* Modal ownership row (platform + format side by side) */
+.modal-ownership {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
+.modal-ownership .modal-field select,
+.modal-ownership .modal-field input[type="text"] {
+  width: 100%;
+  padding: 6px;
+  font-size: 0.85rem;
+  background: var(--surface2);
+  border: 1px solid var(--surface2);
+  border-radius: 4px;
+  color: var(--text);
+}
+
+.modal-ownership input[list] { min-width: 160px; }
+
+/* Settings page sections */
+.settings-page h2 { margin-bottom: 18px; }
+
+.settings-section {
+  border-top: 1px solid var(--surface2);
+  padding-top: 14px;
+  margin-bottom: 18px;
+}
+
+.settings-section h3 {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+
+.settings-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+  font-size: 0.9rem;
+}
+
+.settings-label { color: var(--text-dim); }
+
+.settings-btn {
+  display: block;
+  text-align: center;
+  margin-top: 12px;
+}
+
+/* Display-name editing + theme select */
+.settings-edit {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex: 1;
+  max-width: 300px;
+}
+
+.settings-edit input[type="text"] {
+  flex: 1;
+  padding: 7px 10px;
+  font-size: 0.9rem;
+  background: var(--bg);
+  border: 1px solid var(--surface2);
+  border-radius: var(--radius);
+  color: var(--text);
+  outline: none;
+  min-width: 0;
+}
+
+.settings-edit input[type="text"]:focus {
+  border-color: var(--accent);
+}
+
+.settings-save-btn {
+  width: auto;
+  padding: 7px 14px;
+  white-space: nowrap;
+}
+
+.settings-feedback {
+  font-size: 0.8rem;
+  color: var(--green);
+  min-height: 1em;
+  margin-top: 4px;
+}
+
+.theme-select {
+  padding: 7px 10px;
+  font-size: 0.9rem;
+  background: var(--bg);
+  border: 1px solid var(--surface2);
+  border-radius: var(--radius);
+  color: var(--text);
+}
+
+/* Editable start/completed dates in the modal */
+.modal-date-input {
+  margin-left: auto;
+  padding: 3px 6px;
+  font-size: 0.85rem;
+  background: var(--bg);
+  border: 1px solid var(--surface2);
+  border-radius: 4px;
+  color: var(--text);
+  color-scheme: dark;
+}
+
+.modal-date-input.dirty {
+  border-color: var(--accent);
+}
+
+.modal-dates-hint {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+/* Suggested games in the empty state */
+.suggest-wrap {
+  margin-top: 22px;
+  width: 100%;
+  max-width: 720px;
+}
+
+.suggest-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+
+.suggest-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 12px;
+}
+
+.suggest-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+}
+
+.suggest-card img {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  border-radius: var(--radius);
+  background: var(--surface2);
+  transition: transform var(--transition), outline var(--transition);
+  outline: 2px solid transparent;
+}
+
+.suggest-card:hover img {
+  transform: translateY(-2px);
+  outline-color: var(--accent);
+}
+
+.suggest-card .suggest-name {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.suggest-card .suggest-add {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.75);
+  color: #fff;
+  font-size: 1rem;
+  line-height: 26px;
+  text-align: center;
+}
+
+.suggest-card:hover .suggest-add {
+  background: var(--accent);
+}
+
+.suggest-card:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+/* Mobile add FAB */
+.fab-add {
+  display: none;
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  font-size: 1.7rem;
+  line-height: 1;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.45);
+  z-index: 50;
+  cursor: pointer;
+}
+
+@media (max-width: 600px) {
+  .fab-add { display: block; }
+}
+
 /* Loading / empty */
 .loading, .empty-state {
   text-align: center;
@@ -705,6 +1323,31 @@ a { color: var(--accent); text-decoration: none; }
 
   .topbar {
     padding: 10px 14px;
+  }
+
+  .hero-card {
+    min-width: 260px;
+    max-width: 86vw;
+  }
+
+  .hero-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  /* Single-row scrollable tabs instead of wrapping onto two lines */
+  .tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    margin-bottom: 14px;
+  }
+
+  .tabs::-webkit-scrollbar { display: none; }
+
+  .tab {
+    flex: 0 0 auto;
+    white-space: nowrap;
   }
 }
 

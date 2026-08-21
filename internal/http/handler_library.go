@@ -2,6 +2,7 @@ package http
 
 import (
 	"database/sql"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -36,6 +37,9 @@ func (h *LibraryHandler) Register(mux *http.ServeMux) {
 	// more specific pattern.
 	mux.Handle("/api/library/check", chain(http.HandlerFunc(h.handleLibraryCheck)))
 	mux.Handle("/api/library/counts", chain(http.HandlerFunc(h.handleLibraryCounts)))
+	mux.Handle("/api/library/export", chain(http.HandlerFunc(h.handleLibraryExport)))
+	mux.Handle("/api/library/stats", chain(http.HandlerFunc(h.handleLibraryStats)))
+	mux.Handle("/api/library/suggestions", chain(http.HandlerFunc(h.handleLibrarySuggestions)))
 	mux.Handle("/api/library/", chain(csrfChain(http.HandlerFunc(h.handleLibraryItem))))
 }
 
@@ -64,6 +68,8 @@ func (h *LibraryHandler) handleLibraryItem(w http.ResponseWriter, r *http.Reques
 		h.getLibraryItem(w, r, userID, gameID)
 	case http.MethodPost, http.MethodPut:
 		h.upsertLibraryItem(w, r, userID, gameID)
+	case http.MethodPatch:
+		h.patchLibraryItem(w, r, userID, gameID)
 	case http.MethodDelete:
 		h.deleteLibraryItem(w, r, userID, gameID)
 	default:
@@ -111,9 +117,7 @@ func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, use
 		return
 	}
 
-	query := `SELECT li.game_id, li.status, li.rating, li.playtime_minutes, li.tags_json,
-		li.notes, li.started_at, li.completed_at, li.created_at, li.updated_at,
-		g.name, g.slug, g.cover_url, g.local_cover_path, g.first_release_date
+	query := `SELECT ` + libraryItemSelect + `
 		FROM library_items li
 		JOIN games g ON g.id = li.game_id
 		WHERE li.user_id = ?` + where +
@@ -187,9 +191,13 @@ func libraryFilter(status string, tags []string, tagOp string) (string, []interf
 }
 
 // libraryItemSelect is the column list for a library item joined with its game.
+// g.platforms_json rides along so clients can offer platform choices in the
+// edit form without an extra fetch.
 const libraryItemSelect = `li.game_id, li.status, li.rating, li.playtime_minutes, li.tags_json,
 	li.notes, li.started_at, li.completed_at, li.created_at, li.updated_at,
-	g.name, g.slug, g.cover_url, g.local_cover_path, g.first_release_date`
+	li.platform, li.medium,
+	g.name, g.slug, g.cover_url, g.local_cover_path, g.first_release_date,
+	g.platforms_json`
 
 // scanLibraryItem scans one row of libraryItemSelect into the API's JSON map.
 // Timestamps are emitted as JSON null when unset (previously created_at/
@@ -199,17 +207,24 @@ func scanLibraryItem(row interface{ Scan(...interface{}) error }) (map[string]in
 	var liStatus, tagsJSON, notes string
 	var rating, playtime int64
 	var startedAt, completedAt, createdAt, updatedAt sql.NullString
+	var platform, medium string
 	var name, slug, coverURL, localCoverPath string
 	var firstReleaseDate int64
+	var platformsJSON string
 
 	if err := row.Scan(&gameID, &liStatus, &rating, &playtime, &tagsJSON, &notes,
 		&startedAt, &completedAt, &createdAt, &updatedAt,
-		&name, &slug, &coverURL, &localCoverPath, &firstReleaseDate); err != nil {
+		&platform, &medium,
+		&name, &slug, &coverURL, &localCoverPath, &firstReleaseDate,
+		&platformsJSON); err != nil {
 		return nil, err
 	}
 
 	tags := []string{}
 	json.Unmarshal([]byte(tagsJSON), &tags)
+
+	platforms := []string{}
+	json.Unmarshal([]byte(platformsJSON), &platforms)
 
 	nullOrNil := func(ns sql.NullString) interface{} {
 		if ns.Valid {
@@ -229,11 +244,14 @@ func scanLibraryItem(row interface{ Scan(...interface{}) error }) (map[string]in
 		"completed_at":       nullOrNil(completedAt),
 		"created_at":         nullOrNil(createdAt),
 		"updated_at":         nullOrNil(updatedAt),
+		"platform":           platform,
+		"medium":             medium,
 		"game_name":          name,
 		"game_slug":          slug,
 		"cover_url":          coverURL,
 		"local_cover_path":   localCoverPath,
 		"first_release_date": firstReleaseDate,
+		"platforms":          platforms,
 	}, nil
 }
 
@@ -258,39 +276,195 @@ func (h *LibraryHandler) getLibraryItem(w http.ResponseWriter, r *http.Request, 
 	writeJSON(w, http.StatusOK, item)
 }
 
-func (h *LibraryHandler) upsertLibraryItem(w http.ResponseWriter, r *http.Request, userID string, gameID int64) {
-	var req struct {
-		Status          string   `json:"status"`
-		Rating          int64    `json:"rating"`
-		PlaytimeMinutes int64    `json:"playtime_minutes"`
-		Tags            []string `json:"tags"`
-		Notes           string   `json:"notes"`
-		StartedAt       *string  `json:"started_at"`
-		CompletedAt     *string  `json:"completed_at"`
-	}
+// libraryUpsertRequest is the body of POST/PUT /api/library/{gameID}.
+type libraryUpsertRequest struct {
+	Status          string   `json:"status"`
+	Rating          int64    `json:"rating"`
+	PlaytimeMinutes int64    `json:"playtime_minutes"`
+	Tags            []string `json:"tags"`
+	Notes           string   `json:"notes"`
+	StartedAt       *string  `json:"started_at"`
+	CompletedAt     *string  `json:"completed_at"`
+	Platform        string   `json:"platform"`
+	Medium          string   `json:"medium"`
+}
 
+// libraryPatchRequest is the body of PATCH /api/library/{gameID}. Pointer
+// fields distinguish "absent" (preserve stored value) from zero values, so a
+// patch can both clear a rating (0) and leave one untouched.
+type libraryPatchRequest struct {
+	Status               *string   `json:"status"`
+	Rating               *int64    `json:"rating"`
+	PlaytimeMinutes      *int64    `json:"playtime_minutes"`
+	PlaytimeDeltaMinutes *int64    `json:"playtime_delta_minutes"`
+	Tags                 *[]string `json:"tags"`
+	Notes                *string   `json:"notes"`
+	StartedAt            *string   `json:"started_at"`
+	CompletedAt          *string   `json:"completed_at"`
+	Platform             *string   `json:"platform"`
+	Medium               *string   `json:"medium"`
+}
+
+func (h *LibraryHandler) upsertLibraryItem(w http.ResponseWriter, r *http.Request, userID string, gameID int64) {
+	var req libraryUpsertRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, errResp("invalid_body", "Invalid request body"))
 		return
 	}
 
-	// Validate status
+	h.writeLibraryItem(w, userID, gameID, req)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+}
+
+// patchLibraryItem handles PATCH /api/library/{gameID} — a partial update
+// used by quick actions (mark playing/finished, +time buttons). Unlike the
+// POST upsert (which zeroes omitted fields), absent fields preserve their
+// stored values, so a one-tap status change can never wipe rating/tags/notes.
+// Returns the updated item JSON so clients can refresh cache without a
+// refetch. 404 when the game isn't in the caller's library — adding games
+// still goes through POST.
+func (h *LibraryHandler) patchLibraryItem(w http.ResponseWriter, r *http.Request, userID string, gameID int64) {
+	var req libraryPatchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, errResp("invalid_body", "Invalid request body"))
+		return
+	}
+	if req.PlaytimeMinutes != nil && req.PlaytimeDeltaMinutes != nil {
+		writeJSON(w, http.StatusBadRequest, errResp("invalid_playtime",
+			"Use either playtime_minutes or playtime_delta_minutes, not both"))
+		return
+	}
+
+	existing, err := h.fetchLibraryItem(userID, gameID)
+	if err == sql.ErrNoRows {
+		writeJSON(w, http.StatusNotFound, errResp("not_found", "Game is not in your library"))
+		return
+	}
+	if err != nil {
+		log.Printf("library patch: fetch failed for user %s game %d: %v", userID, gameID, err)
+		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to fetch library item"))
+		return
+	}
+
+	// Start from the stored state, overlay whatever the client sent.
+	merged := libraryUpsertRequest{
+		Status:          existing["status"].(string),
+		Rating:          toInt64(existing["rating"]),
+		PlaytimeMinutes: toInt64(existing["playtime_minutes"]),
+		Notes:           existing["notes"].(string),
+		Tags:            existing["tags"].([]string),
+		Platform:        existing["platform"].(string),
+		Medium:          existing["medium"].(string),
+	}
+
+	if req.Status != nil {
+		merged.Status = *req.Status
+	}
+	if req.Rating != nil {
+		merged.Rating = *req.Rating
+	}
+	switch {
+	case req.PlaytimeDeltaMinutes != nil:
+		delta := *req.PlaytimeDeltaMinutes
+		merged.PlaytimeMinutes += delta
+		if merged.PlaytimeMinutes < 0 {
+			merged.PlaytimeMinutes = 0
+		}
+	case req.PlaytimeMinutes != nil:
+		merged.PlaytimeMinutes = *req.PlaytimeMinutes
+	}
+	if req.Tags != nil {
+		merged.Tags = *req.Tags
+	}
+	if req.Notes != nil {
+		merged.Notes = *req.Notes
+	}
+	if req.Platform != nil {
+		merged.Platform = *req.Platform
+	}
+	if req.Medium != nil {
+		merged.Medium = *req.Medium
+	}
+	// Timestamps keep POST semantics: nil preserves/auto-tracks, "" clears,
+	// a value sets. parseTimestampInput in writeLibraryItem handles all three.
+	merged.StartedAt = req.StartedAt
+	merged.CompletedAt = req.CompletedAt
+
+	if !h.writeLibraryItem(w, userID, gameID, merged) {
+		return
+	}
+
+	updated, err := h.fetchLibraryItem(userID, gameID)
+	if err != nil {
+		// The row was just written by us through the writer pool; a read
+		// hiccup shouldn't turn a successful patch into an error response.
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+// fetchLibraryItem loads one library item via libraryItemSelect, returning the
+// same JSON shape as the list endpoint (scanLibraryItem).
+func (h *LibraryHandler) fetchLibraryItem(userID string, gameID int64) (map[string]interface{}, error) {
+	row := h.db.QueryRow(`SELECT `+libraryItemSelect+`
+		FROM library_items li
+		JOIN games g ON g.id = li.game_id
+		WHERE li.user_id = ? AND li.game_id = ?`, userID, gameID)
+	item, err := scanLibraryItem(row)
+	if err != nil {
+		return nil, err
+	}
+	if item["status"] == nil {
+		return nil, sql.ErrNoRows
+	}
+	return item, nil
+}
+
+func toInt64(v interface{}) int64 {
+	switch n := v.(type) {
+	case int64:
+		return n
+	case int:
+		return int64(n)
+	default:
+		return 0
+	}
+}
+
+// writeLibraryItem validates and persists a full library item state. Both the
+// POST upsert and the PATCH merge funnel through here so validation and
+// timestamp semantics can never diverge. Returns false if it already wrote an
+// error response.
+func (h *LibraryHandler) writeLibraryItem(w http.ResponseWriter, userID string, gameID int64, req libraryUpsertRequest) bool {
 	if !isValidStatus(req.Status) {
 		writeJSON(w, http.StatusBadRequest, errResp("invalid_status",
 			"Status must be wishlist, backlog, playing, completed, or abandoned"))
-		return
+		return false
 	}
 
 	// Validate rating
 	if req.Rating < 0 || req.Rating > 100 {
 		writeJSON(w, http.StatusBadRequest, errResp("invalid_rating", "Rating must be between 0 and 100"))
-		return
+		return false
 	}
 
 	// Validate playtime
 	if req.PlaytimeMinutes < 0 {
 		writeJSON(w, http.StatusBadRequest, errResp("invalid_playtime", "Playtime must be non-negative"))
-		return
+		return false
+	}
+
+	// Validate ownership fields
+	req.Medium = strings.TrimSpace(req.Medium)
+	if req.Medium != "" && req.Medium != "physical" && req.Medium != "digital" {
+		writeJSON(w, http.StatusBadRequest, errResp("invalid_medium", "Medium must be empty, physical, or digital"))
+		return false
+	}
+	req.Platform = strings.TrimSpace(req.Platform)
+	if len(req.Platform) > 64 {
+		writeJSON(w, http.StatusBadRequest, errResp("invalid_platform", "Platform must be at most 64 characters"))
+		return false
 	}
 
 	// Verify game exists
@@ -298,14 +472,14 @@ func (h *LibraryHandler) upsertLibraryItem(w http.ResponseWriter, r *http.Reques
 	err := h.db.QueryRow("SELECT 1 FROM games WHERE id = ?", gameID).Scan(&exists)
 	if err == sql.ErrNoRows {
 		writeJSON(w, http.StatusNotFound, errResp("game_not_found", "Game not found"))
-		return
+		return false
 	}
 	if err != nil {
 		// Previously a transient error here fell through to the INSERT and
 		// surfaced as a confusing FK 500.
 		log.Printf("library upsert: game existence check failed: %v", err)
 		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to save library item"))
-		return
+		return false
 	}
 
 	tagsJSON := "[]"
@@ -322,12 +496,12 @@ func (h *LibraryHandler) upsertLibraryItem(w http.ResponseWriter, r *http.Reques
 	startClear, startVal, err := parseTimestampInput(req.StartedAt)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errResp("invalid_timestamp", err.Error()))
-		return
+		return false
 	}
 	endClear, endVal, err := parseTimestampInput(req.CompletedAt)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, errResp("invalid_timestamp", err.Error()))
-		return
+		return false
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -341,8 +515,8 @@ func (h *LibraryHandler) upsertLibraryItem(w http.ResponseWriter, r *http.Reques
 	// The ON CONFLICT DO UPDATE never writes NULL for an unspecified timestamp
 	// — that's the fix for the data-loss bug where a UI edit (which sends no
 	// timestamps) wiped started_at/completed_at via excluded.<col>.
-	_, err = h.db.Exec(`INSERT INTO library_items (user_id, game_id, status, rating, playtime_minutes, tags_json, notes, started_at, completed_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	_, err = h.db.Exec(`INSERT INTO library_items (user_id, game_id, status, rating, playtime_minutes, tags_json, notes, started_at, completed_at, platform, medium, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(user_id, game_id) DO UPDATE SET
 			status = excluded.status,
 			rating = excluded.rating,
@@ -363,15 +537,17 @@ func (h *LibraryHandler) upsertLibraryItem(w http.ResponseWriter, r *http.Reques
 				WHEN excluded.status = 'completed' THEN excluded.updated_at
 				ELSE NULL
 			END,
+			platform = excluded.platform,
+			medium = excluded.medium,
 			updated_at = excluded.updated_at`,
 		userID, gameID, req.Status, req.Rating, req.PlaytimeMinutes,
-		tagsJSON, req.Notes, insertStarted, insertCompleted, now,
+		tagsJSON, req.Notes, insertStarted, insertCompleted, req.Platform, req.Medium, now,
 		startClear, startVal != "", nullStrOr(startVal),
 		endClear, endVal != "", nullStrOr(endVal))
 	if err != nil {
 		log.Printf("library upsert failed for user %s game %d: %v", userID, gameID, err)
 		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to save library item"))
-		return
+		return false
 	}
 
 	// Enqueue a cover job for this game (best-effort, ignore errors).
@@ -379,7 +555,7 @@ func (h *LibraryHandler) upsertLibraryItem(w http.ResponseWriter, r *http.Reques
 		SELECT id, cover_url FROM games WHERE id = ? AND cover_url != ''
 		ON CONFLICT(game_id) DO NOTHING`, gameID)
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+	return true
 }
 
 func (h *LibraryHandler) deleteLibraryItem(w http.ResponseWriter, r *http.Request, userID string, gameID int64) {
@@ -503,6 +679,7 @@ func (h *LibraryHandler) handleLibraryCounts(w http.ResponseWriter, r *http.Requ
 	for _, s := range []string{"wishlist", "backlog", "playing", "completed", "abandoned"} {
 		counts[s] = 0
 	}
+	var completed, totalMinutes int64
 	for rows.Next() {
 		var status string
 		var n int64
@@ -511,9 +688,250 @@ func (h *LibraryHandler) handleLibraryCounts(w http.ResponseWriter, r *http.Requ
 		}
 		counts[status] = n
 		counts["all"] += n
+		if status == "completed" {
+			completed = n
+		}
 	}
 
+	// Lifetime playtime for stats displays ("~120h logged"). Best-effort —
+	// a failure just leaves the stat out.
+	if err := h.db.QueryRow(`SELECT COALESCE(SUM(playtime_minutes), 0) FROM library_items WHERE user_id = ?`, userID).Scan(&totalMinutes); err != nil {
+		totalMinutes = -1
+	}
+	counts["completed_count"] = completed
+	counts["total_minutes"] = totalMinutes
+
 	writeJSON(w, http.StatusOK, counts)
+}
+
+// handleLibraryExport handles GET /api/library/export — the caller's entire
+// library as a CSV download (spreadsheet-friendly backup). Auth via session
+// cookie, so a plain link works; no CSRF needed for a read-only GET.
+func (h *LibraryHandler) handleLibraryExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, errResp("method_not_allowed", "Method not allowed"))
+		return
+	}
+
+	userID := auth.GetUserID(r.Context())
+	rows, err := h.db.Query(`SELECT li.game_id, li.status, li.rating, li.playtime_minutes,
+			li.platform, li.medium, li.tags_json, li.notes,
+			COALESCE(li.started_at, ''), COALESCE(li.completed_at, ''), COALESCE(li.created_at, ''),
+			g.name
+		FROM library_items li
+		JOIN games g ON g.id = li.game_id
+		WHERE li.user_id = ?
+		ORDER BY g.name`, userID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to export library"))
+		return
+	}
+	defer rows.Close()
+
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition",
+		fmt.Sprintf(`attachment; filename="cato-library-%s.csv"`, time.Now().UTC().Format("2006-01-02")))
+
+	csv := csv.NewWriter(w)
+	_ = csv.Write([]string{"game", "status", "platform", "medium", "rating",
+		"playtime_hours", "started_at", "completed_at", "added_at", "tags", "notes"})
+
+	for rows.Next() {
+		var gameID int64
+		var status, platform, medium, tagsJSON, notes string
+		var rating, playtime int64
+		var startedAt, completedAt, createdAt, name string
+		var tags []string
+		if err := rows.Scan(&gameID, &status, &rating, &playtime, &platform, &medium,
+			&tagsJSON, &notes, &startedAt, &completedAt, &createdAt, &name); err != nil {
+			continue
+		}
+		json.Unmarshal([]byte(tagsJSON), &tags)
+
+		hours := fmt.Sprintf("%.2f", float64(playtime)/60)
+		_ = csv.Write([]string{name, status, platform, medium,
+			strconv.FormatInt(rating, 10), hours,
+			startedAt, completedAt, createdAt,
+			strings.Join(tags, "; "), notes})
+	}
+	csv.Flush()
+}
+
+// handleLibrarySuggestions handles GET /api/library/suggestions?limit=8 —
+// popular catalog games (by popularity_score) the caller doesn't own yet,
+// covers only, for the "start your library" empty state.
+func (h *LibraryHandler) handleLibrarySuggestions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, errResp("method_not_allowed", "Method not allowed"))
+		return
+	}
+
+	userID := auth.GetUserID(r.Context())
+	limit := 8
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= maxLibraryPageSize {
+			limit = l
+		}
+	}
+
+	// Only games with a locally cached cover — a suggestion without art is
+	// just text and won't tempt anyone.
+	rows, err := h.db.Query(`SELECT g.id, g.name, g.cover_url, g.local_cover_path, g.first_release_date
+		FROM games g
+		LEFT JOIN library_items li ON li.game_id = g.id AND li.user_id = ?
+		WHERE li.game_id IS NULL
+		  AND g.local_cover_path != ''
+		ORDER BY g.popularity_score DESC, g.rating_count DESC, g.name
+		LIMIT ?`, userID, limit)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to fetch suggestions"))
+		return
+	}
+	defer rows.Close()
+
+	suggestions := make([]map[string]interface{}, 0)
+	for rows.Next() {
+		var id int64
+		var name, coverURL, localCoverPath string
+		var releaseDate int64
+		if err := rows.Scan(&id, &name, &coverURL, &localCoverPath, &releaseDate); err != nil {
+			continue
+		}
+		suggestions = append(suggestions, map[string]interface{}{
+			"id":                 id,
+			"name":               name,
+			"cover_url":          coverURL,
+			"local_cover_path":   localCoverPath,
+			"first_release_date": releaseDate,
+		})
+	}
+	writeJSON(w, http.StatusOK, suggestions)
+}
+
+// handleLibraryStats handles GET /api/library/stats — the numbers behind the
+// stats dialog: lifetime totals, this-year activity, finished-per-year
+// breakdown, top tags/platforms, and the most recently updated items.
+func (h *LibraryHandler) handleLibraryStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, errResp("method_not_allowed", "Method not allowed"))
+		return
+	}
+
+	userID := auth.GetUserID(r.Context())
+	stats := map[string]interface{}{
+		"total_games":    0,
+		"total_finished": 0,
+		"total_minutes":  0,
+		"avg_rating":     0,
+	}
+
+	var total, finished, minutes int64
+	var avgRating sql.NullFloat64
+	if err := h.db.QueryRow(`SELECT COUNT(*),
+			COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(playtime_minutes), 0),
+			AVG(NULLIF(rating, 0))
+		FROM library_items WHERE user_id = ?`, userID).
+		Scan(&total, &finished, &minutes, &avgRating); err == nil {
+		stats["total_games"] = total
+		stats["total_finished"] = finished
+		stats["total_minutes"] = minutes
+		if avgRating.Valid {
+			stats["avg_rating"] = float64(int64(avgRating.Float64*10+0.5)) / 10 // round to 0.1
+		}
+	}
+
+	var startedThisYear, addedThisYear int64
+	ytd := ` WHERE user_id = ? AND ` + "substr(started_at, 1, 4) = strftime('%Y', 'now')"
+	if err := h.db.QueryRow(`SELECT COUNT(*) FROM library_items`+ytd, userID).Scan(&startedThisYear); err == nil {
+		stats["started_this_year"] = startedThisYear
+	}
+	ytdCreated := ` WHERE user_id = ? AND substr(created_at, 1, 4) = strftime('%Y', 'now')`
+	if err := h.db.QueryRow(`SELECT COUNT(*) FROM library_items`+ytdCreated, userID).Scan(&addedThisYear); err == nil {
+		stats["added_this_year"] = addedThisYear
+	}
+	finishedYTD := ` WHERE user_id = ? AND status = 'completed' AND substr(completed_at, 1, 4) = strftime('%Y', 'now')`
+	var finishedThisYear int64
+	if err := h.db.QueryRow(`SELECT COUNT(*) FROM library_items`+finishedYTD, userID).Scan(&finishedThisYear); err == nil {
+		stats["finished_this_year"] = finishedThisYear
+	}
+
+	// Finished games per year — the spine of the year-in-review view.
+	rows, err := h.db.Query(`SELECT substr(completed_at, 1, 4), COUNT(*)
+		FROM library_items
+		WHERE user_id = ? AND completed_at IS NOT NULL AND completed_at != ''
+		GROUP BY 1 ORDER BY 1 DESC LIMIT 10`, userID)
+	if err == nil {
+		defer rows.Close()
+		byYear := make([]map[string]interface{}, 0)
+		for rows.Next() {
+			var year string
+			var n int64
+			if rows.Scan(&year, &n) == nil {
+				byYear = append(byYear, map[string]interface{}{"year": year, "count": n})
+			}
+		}
+		stats["by_year"] = byYear
+	}
+
+	rows2, err := h.db.Query(`SELECT j.value, COUNT(*) AS c
+		FROM library_items li, json_each(li.tags_json) j
+		WHERE li.user_id = ?
+		GROUP BY j.value ORDER BY c DESC LIMIT 8`, userID)
+	if err == nil {
+		defer rows2.Close()
+		topTags := make([]map[string]interface{}, 0)
+		for rows2.Next() {
+			var tag string
+			var n int64
+			if rows2.Scan(&tag, &n) == nil {
+				topTags = append(topTags, map[string]interface{}{"tag": tag, "count": n})
+			}
+		}
+		stats["top_tags"] = topTags
+	}
+
+	rows3, err := h.db.Query(`SELECT platform, COUNT(*) AS c
+		FROM library_items
+		WHERE user_id = ? AND platform != ''
+		GROUP BY platform ORDER BY c DESC LIMIT 5`, userID)
+	if err == nil {
+		defer rows3.Close()
+		topPlatforms := make([]map[string]interface{}, 0)
+		for rows3.Next() {
+			var p string
+			var n int64
+			if rows3.Scan(&p, &n) == nil {
+				topPlatforms = append(topPlatforms, map[string]interface{}{"platform": p, "count": n})
+			}
+		}
+		stats["top_platforms"] = topPlatforms
+	}
+
+	rows4, err := h.db.Query(`SELECT li.game_id, g.name, li.status, li.updated_at
+		FROM library_items li JOIN games g ON g.id = li.game_id
+		WHERE li.user_id = ?
+		ORDER BY li.updated_at DESC LIMIT 8`, userID)
+	if err == nil {
+		defer rows4.Close()
+		recent := make([]map[string]interface{}, 0)
+		for rows4.Next() {
+			var gameID int64
+			var name, status string
+			var updatedAt string
+			if rows4.Scan(&gameID, &name, &status, &updatedAt) == nil {
+				recent = append(recent, map[string]interface{}{
+					"game_id":    gameID,
+					"game_name":  name,
+					"status":     status,
+					"updated_at": updatedAt,
+				})
+			}
+		}
+		stats["recent"] = recent
+	}
+
+	writeJSON(w, http.StatusOK, stats)
 }
 
 // parseTimestampInput interprets an optional client-supplied timestamp.
