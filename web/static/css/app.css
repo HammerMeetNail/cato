@@ -77,6 +77,27 @@ a { color: var(--accent); text-decoration: none; }
   border-color: var(--accent);
 }
 
+.search-hint {
+  display: none;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  padding: 8px 16px;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+/* Reveal the syntax hint only while the box is focused and empty */
+.search-wrap input:focus:not(:placeholder-shown) ~ .search-hint { display: none; }
+.search-wrap input:focus ~ .search-hint { display: flex; }
+
+.search-hint kbd {
+  font-family: inherit;
+  background: var(--surface2);
+  border-radius: 3px;
+  padding: 1px 5px;
+  color: var(--text);
+}
+
 .search-results {
   position: absolute;
   top: 100%;
