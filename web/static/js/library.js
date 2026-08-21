@@ -125,7 +125,10 @@ export async function loadSearchResults(query) {
     currentStatus: '',
     tagFilter: '',
     offset: 0,
-    loading: false,
+    // Held true across the fetch below so a scroll event landing in this
+    // window can't trigger a concurrent loadMore() that appends the same
+    // page twice. renderPagedItems clears it once rendered.
+    loading: true,
     hasMore: true,
     pageSize: SEARCH_PAGE_SIZE,
     mode: 'search',
@@ -177,6 +180,7 @@ export async function loadSearchResults(query) {
     }
     renderPagedItems(grid, results, true);
   } catch (err) {
+    paginationState.loading = false;
     grid.innerHTML = `<div class="empty-state">Failed to load results: ${err.message}</div>`;
   }
 }
@@ -190,7 +194,10 @@ export async function loadLibrary(status, tag = '') {
     currentStatus: status || '',
     tagFilter: tag || '',
     offset: 0,
-    loading: false,
+    // Held true across the fetch below so a scroll event landing in this
+    // window can't trigger a concurrent loadMore() that appends the same
+    // page twice (duplicated cards). renderPagedItems clears it once done.
+    loading: true,
     hasMore: true,
     pageSize: PAGE_SIZE,
     mode: 'library',
@@ -213,6 +220,7 @@ export async function loadLibrary(status, tag = '') {
     renderPagedItems(grid, items, true, hasMore);
     refreshTabCounts();
   } catch (err) {
+    paginationState.loading = false;
     grid.innerHTML = `<div class="empty-state">Failed to load library: ${err.message}</div>`;
   }
 }
@@ -227,6 +235,7 @@ function renderPagedItems(grid, items, isFirstPage = true, hasMore = null) {
     if (isFirstPage) {
       renderEmptyState(grid, paginationState.mode);
       paginationState.hasMore = false;
+      paginationState.loading = false;
     }
     return;
   }
@@ -787,6 +796,14 @@ export function filterByTag(tag) {
   loadLibrary(activeTab?.dataset?.status || '', newFilter);
 }
 
+// applyTagFilter replaces the active tag filter outright and reloads.
+// Used by the game-form tag menu, where the exact combination (replace,
+// AND, OR) is chosen explicitly rather than always appended.
+export function applyTagFilter(filter) {
+  const activeTab = document.querySelector('.tab.active');
+  loadLibrary(activeTab?.dataset?.status || '', filter);
+}
+
 // clearTagFilter removes the tag filter and reloads.
 export function clearTagFilter() {
   const activeTab = document.querySelector('.tab.active');
@@ -1276,14 +1293,43 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
     dismissTagMenu();
     const tag = chip.dataset.tag;
     if (!tag) return;
+
+    // Build the menu actions relative to any active tag filter. Filters are
+    // rebuilt from parsed tags, never raw-concatenated: parseTagQuery folds
+    // any mix into a single op ('or' wins) and treats spaces after a pipe as
+    // literal tag characters, so naive concatenation would corrupt
+    // multi-word tags like "Switch 2".
+    const { tags: currentTags, op } = parseTagQuery(paginationState.tagFilter);
+    const fmt = formatTagForQuery;
+    // AND/OR on a tag already in the filter would only duplicate it.
+    const dup = currentTags.some(t => t.toLowerCase() === tag.toLowerCase());
+    const actions = [];
+    if (currentTags.length === 0) {
+      actions.push({ label: `Show all games tagged "${tag}"`, filter: fmt(tag) });
+    } else {
+      actions.push({ label: `Show only games tagged "${tag}"`, filter: fmt(tag) });
+      if (!dup) {
+        // Grouped (a|b) AND c isn't expressible in the query grammar (any
+        // pipe forces OR), so AND is offered only on pure-AND filters.
+        if (op !== 'or') {
+          actions.push({ label: `Also require "${tag}" (AND)`, filter: [...currentTags, tag].map(fmt).join(' ') });
+        }
+        actions.push({ label: `Also include "${tag}" (OR)`, filter: [...currentTags, tag].map(fmt).join('|') });
+      }
+    }
+
     tagMenu = document.createElement('div');
     tagMenu.className = 'tag-chip-menu';
     tagMenu.setAttribute('role', 'menu');
-    tagMenu.innerHTML = `<button type="button" class="tag-chip-menu-item" role="menuitem">Show all games tagged "${escapeHTML(tag)}"</button>`;
-    tagMenu.querySelector('.tag-chip-menu-item').addEventListener('click', () => {
-      dismissTagMenu();
-      close();
-      filterByTag(tag);
+    tagMenu.innerHTML = actions.map(a =>
+      `<button type="button" class="tag-chip-menu-item" role="menuitem">${escapeHTML(a.label)}</button>`
+    ).join('');
+    tagMenu.querySelectorAll('.tag-chip-menu-item').forEach((btn, i) => {
+      btn.addEventListener('click', () => {
+        dismissTagMenu();
+        close();
+        applyTagFilter(actions[i].filter);
+      });
     });
     document.body.appendChild(tagMenu);
     // Fixed positioning from the chip's viewport rect; clamp so wide tags
