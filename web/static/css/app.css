@@ -1534,6 +1534,11 @@ body.modal-open {
   cursor: pointer;
 }
 
+.tag-chip-menu-item + .tag-chip-menu-item {
+  border-radius: 0 0 4px 4px;
+  border-top: 1px solid var(--surface2);
+}
+
 .tag-chip-menu-item:hover {
   background: var(--surface2);
 }
