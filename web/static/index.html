@@ -20,7 +20,12 @@
 
     <main class="container">
       <div class="search-wrap">
-        <input type="text" id="searchInput" placeholder="Search games..." autocomplete="off">
+        <input type="text" id="searchInput" placeholder="Search games... ($ for tag filters)" autocomplete="off">
+        <div class="search-hint">
+          <span><kbd>$</kbd> search your library by tag, e.g. <kbd>$rpg</kbd></span>
+          <span>combine tags: space = AND (<kbd>$rpg co-op</kbd>), <kbd>|</kbd> = OR (<kbd>$rpg|fps</kbd>)</span>
+          <span>plain text searches all games</span>
+        </div>
         <div class="search-results" id="searchResults"></div>
       </div>
 
