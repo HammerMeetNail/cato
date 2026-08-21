@@ -13,6 +13,14 @@ type Migration struct {
 
 var migrations = []Migration{
 	{
+		Version: 6,
+		// Ownership modeling: which platform a game is owned on and whether
+		// the copy is physical or digital. Empty string means "not set" —
+		// existing rows keep working unchanged.
+		Up: `ALTER TABLE library_items ADD COLUMN platform TEXT NOT NULL DEFAULT '';
+		     ALTER TABLE library_items ADD COLUMN medium TEXT NOT NULL DEFAULT '';`,
+	},
+	{
 		Version: 5,
 		// FTS5 trigram virtual table over normalized_name for typo-tolerant
 		// search. Trigram tokenizer matches on shared 3-character substrings,

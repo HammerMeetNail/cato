@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Cato - Settings</title>
+  <script>try{var t=localStorage.getItem('cato-theme');if(t)document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/css/app.css">
 </head>
@@ -18,11 +19,40 @@
   <main class="container">
     <div class="settings-page">
       <h2>Settings</h2>
-      <p style="margin-top:16px">Settings panel coming soon.</p>
+
+      <section class="settings-section">
+        <h3>Account</h3>
+        <div class="settings-row"><span class="settings-label">Email</span><span id="accountEmail">…</span></div>
+        <div class="settings-row settings-edit-row">
+          <label for="displayNameInput" class="settings-label">Display name</label>
+          <span class="settings-edit">
+            <input type="text" id="displayNameInput" maxlength="64" autocomplete="nickname">
+            <button type="button" class="btn btn-secondary settings-save-btn" id="saveNameBtn">Save</button>
+          </span>
+        </div>
+        <div class="settings-feedback" id="nameFeedback"></div>
+      </section>
+
+      <section class="settings-section">
+        <h3>Appearance</h3>
+        <div class="settings-row settings-edit-row">
+          <label for="themeSelect" class="settings-label">Theme</label>
+          <select id="themeSelect" class="theme-select">
+            <option value="">Dark (default)</option>
+            <option value="light">Light</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <h3>Library</h3>
+        <div class="settings-row" id="librarySummary">Counting games…</div>
+        <a href="/api/library/export" class="btn btn-secondary settings-btn" download>Export library as CSV</a>
+      </section>
     </div>
   </main>
   <script type="module">
-    import { checkAuth, logout } from '/js/api.js';
+    import { checkAuth, logout, updateMe, library } from '/js/api.js';
     const auth = await checkAuth();
     if (!auth.authenticated) { window.location.href = '/login'; throw new Error(); }
     document.getElementById('logoutLink').addEventListener('click', async (e) => {
@@ -30,6 +60,49 @@
       await logout();
       window.location.href = '/login';
     });
+
+    // Account
+    const nameInput = document.getElementById('displayNameInput');
+    const feedback = document.getElementById('nameFeedback');
+    document.getElementById('accountEmail').textContent = auth.email || '—';
+    nameInput.value = auth.display_name || '';
+
+    document.getElementById('saveNameBtn').addEventListener('click', async () => {
+      feedback.textContent = '';
+      try {
+        const updated = await updateMe({ display_name: nameInput.value });
+        nameInput.value = updated.display_name || '';
+        feedback.textContent = 'Saved';
+        setTimeout(() => { feedback.textContent = ''; }, 2000);
+      } catch (err) {
+        feedback.textContent = err.message || 'Failed to save';
+      }
+    });
+
+    // Theme
+    const themeSelect = document.getElementById('themeSelect');
+    themeSelect.value = localStorage.getItem('cato-theme') || '';
+    themeSelect.addEventListener('change', () => {
+      const v = themeSelect.value;
+      if (v) {
+        localStorage.setItem('cato-theme', v);
+        document.documentElement.setAttribute('data-theme', v);
+      } else {
+        localStorage.removeItem('cato-theme');
+        document.documentElement.removeAttribute('data-theme');
+      }
+    });
+
+    // Library summary
+    const counts = await library.counts();
+    if (counts && counts.all >= 0) {
+      const hours = counts.total_minutes > 0 ? Math.round(counts.total_minutes / 60) : 0;
+      document.getElementById('librarySummary').textContent =
+        `${counts.all} game${counts.all === 1 ? '' : 's'} · ${counts.completed_count || 0} finished` +
+        (hours > 0 ? ` · ~${hours}h logged` : '');
+    } else {
+      document.getElementById('librarySummary').textContent = '—';
+    }
   </script>
 </body>
 </html>

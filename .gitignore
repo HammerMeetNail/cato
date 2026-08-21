@@ -24,3 +24,6 @@ backup/
 
 # Logs
 *.log
+
+# Test artifacts
+.playwright-mcp/

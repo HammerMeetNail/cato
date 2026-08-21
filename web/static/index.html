@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Cato - Game Library</title>
+  <script>try{var t=localStorage.getItem('cato-theme');if(t)document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/css/app.css">
 </head>
@@ -20,12 +21,10 @@
 
     <main class="container">
       <div class="search-wrap">
-        <input type="text" id="searchInput" placeholder="Search games... ($ for tag filters)" autocomplete="off">
+        <input type="text" id="searchInput" placeholder="Search games…" autocomplete="off">
         <div class="search-hint">
-          <span><kbd>$</kbd> search your library by tag, e.g. <kbd>$rpg</kbd></span>
-          <span>multi-word tags need quotes: <kbd>$"Switch 2"</kbd></span>
-          <span>combine tags: space = AND (<kbd>$rpg co-op</kbd>), <kbd>|</kbd> = OR (<kbd>$rpg|fps</kbd>)</span>
-          <span>plain text searches all games</span>
+          <span><kbd>$</kbd> filters your library by tag, e.g. <kbd>$rpg</kbd></span>
+          <span>tags with spaces need quotes: <kbd>$"switch 2"</kbd> · combine with <kbd>|</kbd></span>
         </div>
         <div class="search-results" id="searchResults"></div>
       </div>
@@ -39,16 +38,22 @@
         <button class="tab" data-status="abandoned">Abandoned</button>
       </div>
 
+      <div class="stats-strip" id="statsStrip" style="display:none"></div>
+
       <div class="game-grid" id="gameGrid">
         <div class="loading">Loading library...</div>
       </div>
     </main>
   </div>
 
+  <!-- Mobile add shortcut: jumps to the search box (the add path). -->
+  <button type="button" class="fab-add" id="fabAdd" aria-label="Add a game">+</button>
+
   <script type="module">
     import { checkAuth, logout, library } from '/js/api.js';
     import { initSearch } from '/js/search.js';
-    import { loadLibrary, loadSearchResults, addGameToLibrary, renderLibraryItems, getHashStatus, getHashGameId, getHashSearch, openGameModal, activateStatusTab, openLibraryItemModal, filterByTag, refreshTabCounts } from '/js/library.js';
+    import { loadLibrary, loadSearchResults, addGameToLibrary, renderLibraryItems, getHashStatus, getHashGameId, getHashSearch, openGameModal, activateStatusTab, openLibraryItemModal, filterByTag, refreshTabCounts, loadHero, initHeroActions } from '/js/library.js';
+    import { openStatsDialog } from '/js/stats.js';
 
     const searchInput = document.getElementById('searchInput');
     const searchResults = document.getElementById('searchResults');
@@ -95,6 +100,38 @@
     userDisplay.textContent = auth.display_name || auth.email || '';
     loginLink.style.display = 'none';
     logoutLink.style.display = 'inline';
+
+    // "Playing now" strip: one-tap time logging + finish. Handlers are
+    // delegated inside library.js; this just arms them once.
+    initHeroActions();
+
+    // "/" focuses search from anywhere (unless typing in a field).
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== '/' || e.ctrlKey || e.metaKey) return;
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      e.preventDefault();
+      searchInput.focus();
+    });
+
+    // Mobile "+" jumps to the search box.
+    document.getElementById('fabAdd')?.addEventListener('click', () => {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      searchInput.focus();
+    });
+
+    // The stats strip doubles as the entry point to the stats dialog.
+    const statsStrip = document.getElementById('statsStrip');
+    if (statsStrip) {
+      statsStrip.setAttribute('role', 'button');
+      statsStrip.setAttribute('tabindex', '0');
+      statsStrip.title = 'View detailed stats';
+      const openStats = () => openStatsDialog();
+      statsStrip.addEventListener('click', openStats);
+      statsStrip.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openStats(); }
+      });
+    }
 
     logoutLink.addEventListener('click', async (e) => {
       e.preventDefault();

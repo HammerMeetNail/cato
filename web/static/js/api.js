@@ -55,6 +55,7 @@ function setCSRF(token) {
 export const api = {
   get(path, opts) { return request('GET', path, null, opts); },
   post(path, body) { return request('POST', path, body); },
+  patch(path, body) { return request('PATCH', path, body); },
   del(path) { return request('DELETE', path); },
   getFull(path, opts) { return requestFull('GET', path, null, opts); },
   setCSRF,
@@ -88,6 +89,11 @@ export async function signup(email, password) {
 export async function logout() {
   await api.post('/api/auth/logout');
   api.setCSRF(null);
+}
+
+// updateMe patches the caller's profile (currently display_name only).
+export function updateMe(data) {
+  return api.patch('/api/me', data);
 }
 
 export async function getGame(id) {
@@ -223,8 +229,26 @@ export const library = {
     }
   },
 
+  // suggestions returns popular catalog games not yet in the library,
+  // covers only — used to seed a fresh collection.
+  async suggestions(limit = 8) {
+    try {
+      return await api.get(`/api/library/suggestions?limit=${limit}`);
+    } catch {
+      return [];
+    }
+  },
+
   add(gameID, data) {
     return api.post(`/api/library/${gameID}`, data);
+  },
+
+  // patch partially updates a library item — absent fields keep their stored
+  // values, so quick status changes can't wipe rating/tags/notes. Pass
+  // playtime_delta_minutes to add time without read-modify-write races.
+  // Resolves with the updated item JSON.
+  patch(gameID, data) {
+    return api.patch(`/api/library/${gameID}`, data);
   },
 
   remove(gameID) {
