@@ -46,8 +46,13 @@
     </main>
   </div>
 
-  <!-- Mobile add shortcut: jumps to the search box (the add path). -->
-  <button type="button" class="fab-add" id="fabAdd" aria-label="Add a game">+</button>
+  <!-- Mobile search shortcut: jumps to the search box (the add path). -->
+  <button type="button" class="fab-add" id="fabAdd" aria-label="Search games">
+    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">
+      <circle cx="10.5" cy="10.5" r="6.5"></circle>
+      <line x1="15.5" y1="15.5" x2="21" y2="21"></line>
+    </svg>
+  </button>
 
   <script type="module">
     import { checkAuth, logout, library } from '/js/api.js';
