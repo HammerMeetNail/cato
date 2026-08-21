@@ -1,4 +1,5 @@
 import { library, getCoverURL, getGame, searchGamesFull } from './api.js';
+import { formatDate, formatYear } from './dates.js';
 
 const VALID_STATUSES = ['wishlist', 'backlog', 'playing', 'completed', 'abandoned'];
 
@@ -66,6 +67,11 @@ const itemsById = new Map();
 
 // searchResultsById maps result id to result object for search mode
 const searchResultsById = new Map();
+
+// ownedIds holds game IDs confirmed (via /api/library/check) to be in the
+// user's library while in search mode, so cards can be badged and clicks can
+// open the edit form instead of the destructive add form.
+const ownedIds = new Set();
 
 function indexItems(items, replace = false) {
   if (replace) itemsById.clear();
@@ -152,6 +158,13 @@ export async function loadSearchResults(query) {
       limit: SEARCH_PAGE_SIZE,
       offset: 0,
     });
+    // Learn which results are already in the library so cards get a badge
+    // and clicks open the edit form instead of a destructive "Add" form.
+    ownedIds.clear();
+    const ids = results.map(r => r.id);
+    for (const id of await library.check(ids)) {
+      ownedIds.add(Number(id));
+    }
     renderPagedItems(grid, results, true);
   } catch (err) {
     grid.innerHTML = `<div class="empty-state">Failed to load results: ${err.message}</div>`;
@@ -185,8 +198,9 @@ export async function loadLibrary(status, tag = '') {
   grid.innerHTML = '<div class="loading">Loading library...</div>';
 
   try {
-    const items = await library.list(status || '', PAGE_SIZE, 0, tag || '');
-    renderPagedItems(grid, items, true);
+    const { items, total, hasMore } = await library.list(status || '', PAGE_SIZE, 0, tag || '');
+    renderPagedItems(grid, items, true, hasMore);
+    refreshTabCounts();
   } catch (err) {
     grid.innerHTML = `<div class="empty-state">Failed to load library: ${err.message}</div>`;
   }
@@ -194,7 +208,10 @@ export async function loadLibrary(status, tag = '') {
 
 // renderPagedItems renders library items into the grid, either replacing or appending.
 // isFirstPage=true means clear and replace; false means append.
-function renderPagedItems(grid, items, isFirstPage = true) {
+// hasMore (optional) overrides the "came up one short" heuristic using the
+// server's exact X-Has-More header.
+function renderPagedItems(grid, items, isFirstPage = true, hasMore = null) {
+  removeLoadMoreRetry();
   if (!items || items.length === 0) {
     if (isFirstPage) {
       const emptyMsg = paginationState.mode === 'search'
@@ -232,7 +249,9 @@ function renderPagedItems(grid, items, isFirstPage = true) {
 
   // Update pagination state
   paginationState.offset += items.length;
-  paginationState.hasMore = items.length === paginationState.pageSize;
+  paginationState.hasMore = hasMore === null
+    ? items.length === paginationState.pageSize
+    : hasMore;
   paginationState.loading = false;
 
   // Attach scroll listener on first page
@@ -286,25 +305,78 @@ async function loadMore() {
   if (!grid) return;
 
   try {
-    let items;
     if (paginationState.mode === 'search') {
-      items = await searchGamesFull(paginationState.searchQuery, {
+      const items = await searchGamesFull(paginationState.searchQuery, {
         limit: paginationState.pageSize,
         offset: paginationState.offset,
       });
+      renderPagedItems(grid, items, false); // false = append, not replace
     } else {
-      items = await library.list(
+      const { items, hasMore } = await library.list(
         paginationState.currentStatus,
         paginationState.pageSize,
         paginationState.offset,
         paginationState.tagFilter
       );
+      renderPagedItems(grid, items, false, hasMore);
     }
-    renderPagedItems(grid, items, false); // false = append, not replace
   } catch (err) {
     paginationState.loading = false;
-    console.error('Failed to load more:', err.message);
+    // Scrolling appeared broken with no feedback; surface a visible retry.
+    showLoadMoreRetry();
   }
+}
+
+// showLoadMoreRetry appends a retry button after a failed page load. The
+// next successful render removes it.
+function showLoadMoreRetry() {
+  const grid = document.getElementById('gameGrid');
+  if (!grid) return;
+  let btn = document.getElementById('loadMoreRetry');
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.id = 'loadMoreRetry';
+    btn.type = 'button';
+    btn.className = 'load-more-retry';
+    btn.addEventListener('click', () => loadMore());
+    grid.insertAdjacentElement('afterend', btn);
+  }
+  btn.textContent = 'Failed to load more — click to retry';
+}
+
+function removeLoadMoreRetry() {
+  const btn = document.getElementById('loadMoreRetry');
+  if (btn) btn.remove();
+}
+
+// refreshTabCounts fetches per-status counts and renders them into the tab
+// labels ("Backlog (43)").
+export async function refreshTabCounts() {
+  const statusTabs = document.getElementById('statusTabs');
+  if (!statusTabs) return;
+  const counts = await library.counts();
+  if (!counts) return;
+  statusTabs.querySelectorAll('.tab').forEach(tab => {
+    const status = tab.dataset.status || '';
+    const n = counts[status || 'all'];
+    const label = tab.dataset.label || (tab.dataset.label = tab.textContent);
+    tab.textContent = typeof n === 'number' ? `${label} (${n})` : label;
+  });
+}
+
+// showToast displays a transient confirmation message.
+function showToast(message) {
+  let toast = document.getElementById('toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'toast';
+    toast.setAttribute('role', 'status');
+    document.body.appendChild(toast);
+  }
+  toast.textContent = message;
+  toast.classList.add('visible');
+  clearTimeout(showToast._timer);
+  showToast._timer = setTimeout(() => toast.classList.remove('visible'), 2500);
 }
 
 function attachScrollListener() {
@@ -396,18 +468,27 @@ function updateTagFilterBar() {
 }
 
 function buildCardHTML(items) {
+  const isSearch = paginationState.mode === 'search';
   return items.map((item, index) => {
     // High priority for the first 8 cards
     const priority = index < 8 ? ' fetchpriority="high"' : '';
     const tagsHTML = (item.tags && item.tags.length)
       ? `<div class="card-tags">${item.tags.map(t => `<span class="tag-chip" data-tag="${escapeHTML(t)}">${escapeHTML(t)}</span>`).join('')}</div>`
       : '';
+    const completedBadge = item.completed_at
+      ? `<div class="completion-badge" title="Completed ${escapeHTML(formatDate(item.completed_at))}">✓ ${formatYear(item.completed_at)}</div>`
+      : '';
+    const ownedBadge = isSearch && ownedIds.has(Number(item.game_id))
+      ? '<div class="owned-badge">In library ✓</div>'
+      : '';
     return `
     <div class="game-card" data-game-id="${item.game_id}">
       <img src="${getCoverURL(item)}" alt="${escapeHTML(item.game_name)}" loading="lazy" decoding="async"${priority}>
       <div class="card-title">${escapeHTML(item.game_name)}</div>
       ${tagsHTML}
-      ${item.rating > 0 ? `<div class="rating-display">${item.rating}</div>` : ''}
+      ${completedBadge}
+      ${ownedBadge}
+      ${item.rating > 0 ? `<div class="rating-display">${Number(item.rating)}</div>` : ''}
     </div>
   `}).join('');
 }
@@ -436,13 +517,21 @@ function attachCardEvents(grid, newItems = null, originalSearchResults = null) {
     card.parentNode.replaceChild(newCard, card);
     card = newCard;
 
+    bindCoverFallback(card);
+
     card.addEventListener('click', () => {
       const gameId = card.dataset.gameId;
 
       if (paginationState.mode === 'search') {
         // In search mode, use original search result
         const result = searchResultsById.get(gameId);
-        if (result) addGameToLibrary(result);
+        if (!result) return;
+        if (ownedIds.has(Number(gameId))) {
+          // Already owned — open the edit form (never the destructive Add form).
+          openLibraryItemById(result.id);
+        } else {
+          addGameToLibrary(result);
+        }
       } else {
         // In library mode, use library item
         const item = itemsById.get(gameId);
@@ -452,30 +541,71 @@ function attachCardEvents(grid, newItems = null, originalSearchResults = null) {
   });
 }
 
-// openGameModal opens the routable game popup for a #game/<id> deep link. If the
-// game is already rendered in the library it opens the edit form (pre-filled,
-// with Save/Remove); otherwise it fetches the game metadata and opens the
-// add-to-library form.
+// bindCoverFallback swaps a broken remote cover image for the local
+// /covers/<id>.jpg route, which serves the cached file or the placeholder
+// SVG. Prevents dead remote URLs from rendering as broken images.
+function bindCoverFallback(card) {
+  const img = card.querySelector('img');
+  const gameId = card.dataset.gameId;
+  if (!img || !gameId) return;
+  img.addEventListener('error', () => {
+    if (img.dataset.coverFallback) return;
+    img.dataset.coverFallback = '1';
+    img.src = `/covers/${gameId}.jpg`;
+  });
+}
+
+// openLibraryItemById fetches a single library item and opens its edit modal.
+async function openLibraryItemById(gameID) {
+  try {
+    const item = await library.get(gameID);
+    openLibraryItemModal(item);
+  } catch (err) {
+    console.error('Failed to fetch library item:', err.message);
+  }
+}
+
+// openGameModal opens the routable game popup for a #game/<id> deep link. If
+// the game is in the library (rendered or not) it opens the edit form;
+// otherwise it fetches metadata and opens the add-to-library form.
 export async function openGameModal(gameID) {
   const item = itemsById.get(String(gameID));
   if (item) {
     openLibraryItemModal(item);
     return;
   }
+  // The game may be owned but not on the currently loaded page.
+  try {
+    const existing = await library.get(gameID);
+    openLibraryItemModal(existing);
+    return;
+  } catch {
+    // Not in library — fall through to the add flow.
+  }
   try {
     const game = await getGame(gameID);
-    addGameToLibrary(game);
+    await addGameToLibrary(game);
   } catch (err) {
     console.error('Failed to fetch game:', err.message);
   }
 }
 
-// addGameToLibrary opens a modal pre-filled with the game's info so the user
-// can choose status/rating/playtime/notes before the game is added. The actual
-// POST only happens on "Add to Library"; cancelling dismisses the modal and
-// leaves the library untouched.
-export function addGameToLibrary(game) {
+// addGameToLibrary opens the Add form for a game. If the game turns out to be
+// already in the library, the EDIT form opens instead — saving from the Add
+// form upserts and would have silently reset status/rating/tags/notes.
+export async function addGameToLibrary(game) {
   if (!game || !game.id) return;
+  try {
+    const item = await library.get(game.id);
+    openLibraryItemModal(item);
+    return;
+  } catch {
+    // Not in library — proceed with the add form.
+  }
+  openAddForm(game);
+}
+
+function openAddForm(game) {
   openGameForm({
     id: game.id,
     name: game.name,
@@ -497,11 +627,17 @@ export function openLibraryItemModal(item) {
     id: item.game_id,
     name: item.game_name,
     cover: getCoverURL(item),
+    year: item.first_release_date
+      ? new Date(item.first_release_date * 1000).getFullYear()
+      : '',
     status: item.status,
     rating: item.rating || 0,
     playtime: item.playtime_minutes || 0,
     tags: item.tags || [],
     notes: item.notes || '',
+    createdAt: item.created_at || '',
+    startedAt: item.started_at || null,
+    completedAt: item.completed_at || null,
     inLibrary: true,
   });
 }
@@ -511,13 +647,33 @@ export function openLibraryItemModal(item) {
 // (inLibrary=true) it is pre-filled and offers Save and Remove. Both actions
 // POST to library.add, which upserts.
 function openGameForm({ id, name, cover, year = '', status = 'backlog',
-                        rating = 0, playtime = 0, tags = [], notes = '', inLibrary = false }) {
+                        rating = 0, playtime = 0, tags = [], notes = '',
+                        createdAt = '', startedAt = null, completedAt = null,
+                        inLibrary = false }) {
   // Replace any existing modal (e.g. user clicks a second result).
   const existing = document.getElementById('addGameModal');
   if (existing) existing.remove();
 
   const title = inLibrary ? 'Edit Library Entry' : 'Add to Library';
   const submitLabel = inLibrary ? 'Save' : 'Add to Library';
+  const hours = Math.round((playtime / 60) * 100) / 100;
+
+  // Dates are server-managed (auto-set on entering playing/completed). The
+  // UI shows them read-only with an explicit clear affordance; clearing is
+  // sent as "" on save.
+  const pendingClears = { started: false, completed: false };
+  const dateRow = (label, value, key) => `
+    <div class="modal-date-row">
+      <span class="modal-date-label">${label}</span>
+      <span class="modal-date-value${pendingClears[key] ? ' cleared' : ''}" data-date="${key}">${value ? escapeHTML(formatDate(value)) : '—'}</span>
+      ${value ? `<button type="button" class="modal-date-clear" data-clear="${key}" aria-label="Clear ${label.toLowerCase()} date" title="Clear">&times;</button>` : ''}
+    </div>`;
+  const datesHTML = inLibrary ? `
+        <div class="modal-field modal-dates">
+          ${dateRow('Added', createdAt, 'added')}
+          ${dateRow('Started', startedAt, 'started')}
+          ${dateRow('Completed', completedAt, 'completed')}
+        </div>` : '';
 
   const modal = document.createElement('div');
   modal.id = 'addGameModal';
@@ -536,9 +692,10 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
           <img src="${cover}" alt="${escapeHTML(name)}" decoding="async">
           <div class="modal-game-meta">
             <h3>${escapeHTML(name)}</h3>
-            ${year ? `<div class="modal-year">${year}</div>` : ''}
+            ${year ? `<div class="modal-year">${Number(year)}</div>` : ''}
           </div>
         </div>
+        ${datesHTML}
         <label class="modal-field">Status
           <select class="modal-status">
             ${VALID_STATUSES.map(s => `
@@ -546,11 +703,11 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
             `).join('')}
           </select>
         </label>
-        <label class="modal-field">Rating: <span class="modal-rating-val">${rating}</span>
-          <input type="range" min="0" max="100" value="${rating}" class="modal-rating">
+        <label class="modal-field">Rating: <span class="modal-rating-val">${Number(rating)}</span>
+          <input type="range" min="0" max="100" value="${Number(rating)}" class="modal-rating">
         </label>
-        <label class="modal-field">Hours: <span class="modal-playtime-val">${(playtime / 60).toFixed(1)}</span>
-          <input type="number" min="0" value="${playtime}" class="modal-playtime" step="15">
+        <label class="modal-field">Hours:
+          <input type="number" min="0" step="0.25" value="${hours}" class="modal-playtime" inputmode="decimal">
         </label>
         <label class="modal-field">Tags
           <div class="modal-tags-wrap">
@@ -575,13 +732,40 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
   const prevHashWasGame = prevHash.startsWith('#game/');
   setGameHash(id);
 
-  // Live-update the rating/playtime preview labels.
+  // Live-update the rating preview label. Playtime is entered directly in
+  // hours (converted to minutes on save) — no more "type 2, see 0.0".
   modal.querySelector('.modal-rating').addEventListener('input', (e) => {
     modal.querySelector('.modal-rating-val').textContent = e.target.value;
   });
-  modal.querySelector('.modal-playtime').addEventListener('input', (e) => {
-    modal.querySelector('.modal-playtime-val').textContent =
-      (parseInt(e.target.value || 0) / 60).toFixed(1);
+
+  // Date clear buttons — mark pending clears; actual "" sent on save.
+  modal.querySelectorAll('.modal-date-clear').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.clear;
+      pendingClears[key] = true;
+      const valueEl = modal.querySelector(`[data-date="${key}"]`);
+      if (valueEl) valueEl.textContent = '—';
+      btn.remove();
+    });
+  });
+
+  // Focus trap: keep Tab cycling inside the modal instead of escaping to
+  // the page behind it.
+  modal.addEventListener('keydown', (e) => {
+    if (e.key !== 'Tab') return;
+    const focusables = Array.from(
+      modal.querySelectorAll('button, input, select, textarea')
+    ).filter(el => !el.disabled && el.offsetParent !== null);
+    if (focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
   });
 
   // Tag chip input
@@ -640,7 +824,8 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
   modal.querySelector('.modal-submit').addEventListener('click', async () => {
     const newStatus = modal.querySelector('.modal-status').value;
     const newRating = parseInt(modal.querySelector('.modal-rating').value) || 0;
-    const newPlaytime = parseInt(modal.querySelector('.modal-playtime').value) || 0;
+    const newHours = parseFloat(modal.querySelector('.modal-playtime').value) || 0;
+    const newPlaytime = Math.max(0, Math.round(newHours * 60));
     const newNotes = modal.querySelector('.modal-notes').value;
     const chipEls = modal.querySelectorAll('.modal-tags-chips .tag-chip-removable');
     const newTags = Array.from(chipEls).map(c => c.firstChild.textContent.trim());
@@ -649,13 +834,18 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
     submitBtn.disabled = true;
     submitBtn.textContent = inLibrary ? 'Saving...' : 'Adding...';
     try {
-      await library.add(id, {
+      const payload = {
         status: newStatus,
         rating: newRating,
         playtime_minutes: newPlaytime,
         tags: newTags,
         notes: newNotes,
-      });
+      };
+      // Explicit clears only — omitting the fields preserves existing dates.
+      if (inLibrary && pendingClears.started) payload.started_at = '';
+      if (inLibrary && pendingClears.completed) payload.completed_at = '';
+      await library.add(id, payload);
+      showToast(inLibrary ? 'Saved' : 'Added to library');
       const wasSearch = paginationState.mode === 'search';
       close();
       // Adding from a search results page keeps you on the results (close()
@@ -698,8 +888,16 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
   modal.querySelector('.modal-close').focus();
 }
 
-function escapeHTML(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
+// escapeHTML escapes all five HTML-sensitive characters. The previous
+// implementation (div.textContent = s; return div.innerHTML) left quotes
+// untouched, which allowed attribute injection in data-tag="..."/alt="..."
+// contexts — a verified stored-XSS vector (FINDINGS §1.5).
+export function escapeHTML(str) {
+  return String(str ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[c]));
 }

@@ -1,10 +1,15 @@
 import { searchGames, getCoverThumbnailURL, autocompleteTags } from './api.js';
+import { escapeHTML } from './library.js';
 
 let searchTimer = null;
 let activeController = null;
 let selectedIndex = -1;
 let currentResults = [];
 let currentQuery = '';
+// How many result rows are actually rendered in the dropdown. The games list
+// renders only the first 8 results while ArrowDown used to index into all 10,
+// letting the selection become invisible (FINDINGS §3.6).
+let renderedCount = 0;
 
 export function initSearch(inputEl, resultsEl, onSelect, onSubmit, onTagLookup) {
   inputEl.addEventListener('input', () => {
@@ -101,19 +106,21 @@ function scheduleSearch(query, resultsEl, onSelect, onSubmit, onTagLookup) {
 
 function renderResults(results, resultsEl, onSelect, onSubmit) {
   if (results.length === 0) {
+    renderedCount = 0;
     resultsEl.innerHTML = '<div class="no-results">No games found</div>';
   } else {
     // Slice to first 8 results for dropdown display
     const displayResults = results.slice(0, 8);
+    renderedCount = displayResults.length;
     let html = displayResults.map((g, i) => {
       const year = g.first_release_date
         ? new Date(g.first_release_date * 1000).getFullYear()
         : '';
       return `
         <div class="search-result-item${i === selectedIndex ? ' selected' : ''}"
-             data-index="${i}" data-id="${g.id}">
+             data-index="${i}" data-id="${Number(g.id)}">
           <img src="${getCoverThumbnailURL(g)}"
-               alt="${g.name}" loading="lazy" decoding="async">
+               alt="${escapeHTML(g.name)}" loading="lazy" decoding="async">
           <div class="info">
             <div class="name">${escapeHTML(g.name)}</div>
             <div class="year">${year}</div>
@@ -153,6 +160,7 @@ function renderResults(results, resultsEl, onSelect, onSubmit) {
 
 function renderTagSuggestions(tagSuggestions, items, resultsEl, onSelect, prefix, raw) {
   let html = '';
+  renderedCount = 0;
 
   // Build replacement function: replaces last word in raw with the given tag
   function replaceLastWord(tag) {
@@ -187,6 +195,7 @@ function renderTagSuggestions(tagSuggestions, items, resultsEl, onSelect, prefix
   if (items && items.length > 0) {
     if (html) html += '<div class="search-result-divider"></div>';
     const displayItems = items.slice(0, 8);
+    renderedCount = displayItems.length;
     html += displayItems.map((item, i) => {
       const year = item.first_release_date
         ? new Date(item.first_release_date * 1000).getFullYear()
@@ -254,9 +263,11 @@ function renderTagSuggestions(tagSuggestions, items, resultsEl, onSelect, prefix
 function handleKeyboard(e, inputEl, resultsEl, onSelect, onSubmit, onTagLookup) {
   switch (e.key) {
     case 'ArrowDown':
-      if (!resultsEl.classList.contains('active')) return;
+      if (!resultsEl.classList.contains('active') || renderedCount === 0) return;
       e.preventDefault();
-      selectedIndex = Math.min(selectedIndex + 1, currentResults.length - 1);
+      // Clamp to the RENDERED rows — ArrowDown used to index past the
+      // visible items, producing an invisible selection (FINDINGS §3.6).
+      selectedIndex = Math.min(selectedIndex + 1, renderedCount - 1);
       updateSelection(resultsEl);
       break;
     case 'ArrowUp':
@@ -267,7 +278,7 @@ function handleKeyboard(e, inputEl, resultsEl, onSelect, onSubmit, onTagLookup) 
       break;
     case 'Enter':
       e.preventDefault();
-      if (resultsEl.classList.contains('active') && selectedIndex >= 0 && selectedIndex < currentResults.length) {
+      if (resultsEl.classList.contains('active') && selectedIndex >= 0 && selectedIndex < renderedCount) {
         resultsEl.classList.remove('active');
         if (onSelect) onSelect(currentResults[selectedIndex]);
       } else if (currentQuery && currentQuery.startsWith('$') && onTagLookup) {
@@ -293,10 +304,4 @@ function updateSelection(resultsEl) {
   resultsEl.querySelectorAll('.search-result-item').forEach((item, i) => {
     item.classList.toggle('selected', i === selectedIndex);
   });
-}
-
-function escapeHTML(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
 }

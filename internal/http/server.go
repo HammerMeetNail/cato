@@ -2,8 +2,8 @@ package http
 
 import (
 	"compress/gzip"
+	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -14,9 +14,10 @@ import (
 )
 
 type Server struct {
-	cfg *config.Config
-	db  *db.DB
-	mux *http.ServeMux
+	cfg        *config.Config
+	db         *db.DB
+	mux        *http.ServeMux
+	httpServer *http.Server
 }
 
 func NewServer(cfg *config.Config, db *db.DB) *Server {
@@ -70,37 +71,70 @@ func staticCacheMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// gzipMiddleware wraps the response writer to gzip the body if the client accepts gzip.
+// gzipMiddleware gzips JSON API responses when the client accepts gzip.
+// Static files and covers are excluded: they are served via
+// http.ServeFile/http.FileServer, which implement Range requests — wrapping
+// them produced corrupt responses (206 Partial Content with
+// Content-Encoding: gzip but raw uncompressed bytes). Vary is set whenever
+// content negotiation happens so caches never serve an encoded variant to a
+// client that can't decode it.
 func gzipMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Skip gzip for cover images (already compressed or not worth gzipping).
-		if strings.HasPrefix(r.URL.Path, "/covers/") {
+		isAPI := strings.HasPrefix(r.URL.Path, "/api/")
+		acceptsGzip := strings.Contains(r.Header.Get("Accept-Encoding"), "gzip")
+
+		if !isAPI || !acceptsGzip {
+			if isAPI {
+				w.Header().Add("Vary", "Accept-Encoding")
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		w.Header().Set("Content-Encoding", "gzip")
-		gz := gzip.NewWriter(w)
-		defer gz.Close()
-
-		// Wrap the response writer to gzip writes
-		gzWriter := &gzipResponseWriter{ResponseWriter: w, writer: gz}
-		next.ServeHTTP(gzWriter, r)
+		w.Header().Add("Vary", "Accept-Encoding")
+		gw := &gzipResponseWriter{ResponseWriter: w}
+		defer gw.Close()
+		next.ServeHTTP(gw, r)
 	})
 }
 
+// gzipResponseWriter defers enabling Content-Encoding until a handler
+// actually writes a body, so 204/304 responses and HEAD requests are not
+// tagged with an encoding their (empty) body doesn't have.
 type gzipResponseWriter struct {
 	http.ResponseWriter
-	writer io.Writer
+	gz          *gzip.Writer
+	wroteHeader bool
+}
+
+func (w *gzipResponseWriter) WriteHeader(code int) {
+	if w.wroteHeader {
+		return
+	}
+	w.wroteHeader = true
+	if code == http.StatusNoContent || code == http.StatusNotModified {
+		w.ResponseWriter.WriteHeader(code)
+		return
+	}
+	w.Header().Set("Content-Encoding", "gzip")
+	w.gz = gzip.NewWriter(w.ResponseWriter)
+	w.ResponseWriter.WriteHeader(code)
 }
 
 func (w *gzipResponseWriter) Write(b []byte) (int, error) {
-	return w.writer.Write(b)
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	if w.gz == nil {
+		return w.ResponseWriter.Write(b)
+	}
+	return w.gz.Write(b)
+}
+
+func (w *gzipResponseWriter) Close() {
+	if w.gz != nil {
+		w.gz.Close()
+	}
 }
 
 func (s *Server) servePage(filename string) http.HandlerFunc {
@@ -141,9 +175,18 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) Start() error {
-	server := &http.Server{
+	s.httpServer = &http.Server{
 		Addr:    s.cfg.ListenAddr,
 		Handler: s.Handler(),
 	}
-	return server.ListenAndServe()
+	return s.httpServer.ListenAndServe()
+}
+
+// Shutdown gracefully drains in-flight requests. Previously SIGTERM just
+// killed the process, dropping any request mid-flight (including DB writes).
+func (s *Server) Shutdown(ctx context.Context) error {
+	if s.httpServer == nil {
+		return nil
+	}
+	return s.httpServer.Shutdown(ctx)
 }

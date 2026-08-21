@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -47,9 +48,14 @@ func (rl *RateLimiter) Allow(key string) bool {
 
 func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Key by client IP (host only — RemoteAddr includes the port, which
+		// would give every TCP connection a fresh bucket and make the limit
+		// meaningless). X-Forwarded-For is deliberately NOT trusted: it is
+		// client-controlled and would let anyone rotate identities to bypass
+		// the limit.
 		key := r.RemoteAddr
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			key = xff
+		if host, _, err := net.SplitHostPort(key); err == nil {
+			key = host
 		}
 		if !rl.Allow(key) {
 			writeJSON(w, http.StatusTooManyRequests, errResp("rate_limited", "Too many requests. Please try again later."))

@@ -24,34 +24,45 @@ type Client struct {
 	mu           sync.Mutex
 }
 
+type igdbCover struct {
+	ID      int64  `json:"id"`
+	ImageID string `json:"image_id"`
+}
+
 type igdbGame struct {
-	ID                    int64   `json:"id"`
-	Name                  string  `json:"name"`
-	Slug                  string  `json:"slug"`
-	Summary               string  `json:"summary"`
-	Storyline             string  `json:"storyline"`
-	Cover                 int64   `json:"cover"`
-	FirstReleaseDate      int64   `json:"first_release_date"`
-	AggregatedRating      float64 `json:"aggregated_rating"`
-	AggregatedRatingCount int64   `json:"aggregated_rating_count"`
-	Platforms             []int64 `json:"platforms"`
-	Genres                []int64 `json:"genres"`
-	URL                   string  `json:"url"`
-	UpdatedAt             int64   `json:"updated_at"`
-	Rating                float64 `json:"rating"`
-	RatingCount           int64   `json:"rating_count"`
-	TotalRating           float64 `json:"total_rating"`
-	TotalRatingCount      int64   `json:"total_rating_count"`
-	Follows               int64   `json:"follows"`
-	Hypes                 int64   `json:"hypes"`
-	Category              int64   `json:"category"`
-	Status                int64   `json:"status"`
-	VersionParent         int64   `json:"version_parent"`
+	ID                    int64      `json:"id"`
+	Name                  string     `json:"name"`
+	Slug                  string     `json:"slug"`
+	Summary               string     `json:"summary"`
+	Storyline             string     `json:"storyline"`
+	Cover                 *igdbCover `json:"cover"`
+	FirstReleaseDate      int64      `json:"first_release_date"`
+	AggregatedRating      float64    `json:"aggregated_rating"`
+	AggregatedRatingCount int64      `json:"aggregated_rating_count"`
+	Platforms             []int64    `json:"platforms"`
+	Genres                []int64    `json:"genres"`
+	URL                   string     `json:"url"`
+	UpdatedAt             int64      `json:"updated_at"`
+	Rating                float64    `json:"rating"`
+	RatingCount           int64      `json:"rating_count"`
+	TotalRating           float64    `json:"total_rating"`
+	TotalRatingCount      int64      `json:"total_rating_count"`
+	Follows               int64      `json:"follows"`
+	Hypes                 int64      `json:"hypes"`
+	Category              int64      `json:"category"`
+	Status                int64      `json:"status"`
+	VersionParent         int64      `json:"version_parent"`
 }
 
 // igdbFields is the IGDB API v4 fields clause requested on every games query.
 // Extended to include popularity signals (follows, hypes,
 // total_rating_count, etc.) used to compute Game.PopularityScore.
+//
+// cover.image_id is requested as a nested field: game.cover is an ID into the
+// covers table, and the CDN URL must be built from that record's image_id
+// (e.g. "co213263"), NOT from the numeric ID itself — the two coincide often
+// enough to look correct, but guessing co%05d.jpg from the cover ID produces
+// 404s for a meaningful fraction of games.
 //
 // Note: IGDB's games endpoint does NOT accept a "popularity" field name
 // (returns 400 "Invalid field name"); the raw IGDB popularity score is
@@ -60,7 +71,7 @@ type igdbGame struct {
 // follows, hypes, total_rating_count, category, and status. Do not add
 // `popularity` back to this list without first verifying via the
 // /popularity endpoint integration.
-const igdbFields = "id,name,slug,summary,storyline,cover,first_release_date,aggregated_rating,aggregated_rating_count,platforms,genres,url,updated_at,rating,rating_count,total_rating,total_rating_count,follows,hypes,category,status,version_parent"
+const igdbFields = "id,name,slug,summary,storyline,cover.id,cover.image_id,first_release_date,aggregated_rating,aggregated_rating_count,platforms,genres,url,updated_at,rating,rating_count,total_rating,total_rating_count,follows,hypes,category,status,version_parent"
 
 func NewClient(clientID, clientSecret string) *Client {
 	return &Client{
@@ -116,6 +127,12 @@ func (c *Client) GetGame(ctx context.Context, id int64) (*games.Game, error) {
 }
 
 func (c *Client) toGame(g igdbGame) games.Game {
+	var coverID int64
+	var coverURL string
+	if g.Cover != nil {
+		coverID = g.Cover.ID
+		coverURL = igdbCoverURL(g.Cover.ImageID)
+	}
 	return games.Game{
 		ID:                    g.ID,
 		Name:                  g.Name,
@@ -124,8 +141,8 @@ func (c *Client) toGame(g igdbGame) games.Game {
 		NormalizedName:        games.NormalizeName(g.Name),
 		Summary:               g.Summary,
 		Storyline:             g.Storyline,
-		CoverID:               g.Cover,
-		CoverURL:              igdbCoverURL(g.Cover),
+		CoverID:               coverID,
+		CoverURL:              coverURL,
 		FirstReleaseDate:      g.FirstReleaseDate,
 		AggregatedRating:      int64(g.AggregatedRating),
 		AggregatedRatingCount: g.AggregatedRatingCount,
@@ -249,11 +266,14 @@ func (c *Client) post(ctx context.Context, endpoint, body string) ([]igdbGame, e
 	return games, nil
 }
 
-func igdbCoverURL(coverID int64) string {
-	if coverID == 0 {
+// igdbCoverURL builds the CDN URL for a cover from its covers-table image_id
+// (e.g. "co213263"). The image_id is the authoritative source for the URL —
+// it cannot be derived from the game or cover numeric ID.
+func igdbCoverURL(imageID string) string {
+	if imageID == "" {
 		return ""
 	}
-	return fmt.Sprintf("https://images.igdb.com/igdb/image/upload/t_cover_big/co%05d.jpg", coverID)
+	return fmt.Sprintf("https://images.igdb.com/igdb/image/upload/t_cover_big/%s.jpg", imageID)
 }
 
 func intsToJSON(ints []int64) string {

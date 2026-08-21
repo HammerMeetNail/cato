@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -33,9 +34,18 @@ func NewAuthHandler(db *db.DB, cfg *config.Config) *AuthHandler {
 	}
 
 	if cfg.GoogleKey != "" && cfg.GoogleSecret != "" {
-		redirectURL := "http://" + cfg.ListenAddr + "/api/auth/google/callback"
-		if strings.HasPrefix(cfg.ListenAddr, ":") {
+		// The redirect URL must be reachable by the user's browser, so it
+		// must use the externally visible base URL — not the listen address
+		// (":7080" would produce "http://localhost:7080/...", which breaks
+		// for anyone not on the server itself, e.g. the Docker deployment).
+		var redirectURL string
+		if cfg.BaseURL != "" {
+			redirectURL = strings.TrimSuffix(cfg.BaseURL, "/") + "/api/auth/google/callback"
+		} else {
 			redirectURL = "http://localhost" + cfg.ListenAddr + "/api/auth/google/callback"
+			log.Printf("WARNING: GOOGLE_KEY is set but CATO_BASE_URL is not; " +
+				"Google OAuth redirect will use http://localhost — set CATO_BASE_URL " +
+				"(e.g. http://10.0.0.42:7080) for sign-in to work from other devices")
 		}
 		h.googleCfg = auth.NewGoogleConfig(cfg.GoogleKey, cfg.GoogleSecret, redirectURL)
 	}
@@ -80,7 +90,19 @@ func (h *AuthHandler) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var email, displayName string
-	h.db.QueryRow("SELECT email, display_name FROM users WHERE id = ?", session.UserID).Scan(&email, &displayName)
+	err = h.db.QueryRow("SELECT email, display_name FROM users WHERE id = ?", session.UserID).Scan(&email, &displayName)
+	if err == sql.ErrNoRows {
+		// Session points at a deleted user — treat as unauthenticated.
+		auth.DeleteSession(h.db, sessionID)
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"authenticated": false,
+		})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errResp("internal_error", "Failed to load user"))
+		return
+	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"authenticated": true,
@@ -172,12 +194,12 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var userID, passwordHash string
+	var userID, passwordHash, displayName string
 	var disabled int
 	err := h.db.QueryRow(
-		"SELECT id, password_hash, disabled FROM users WHERE email = ?",
+		"SELECT id, password_hash, COALESCE(display_name, ''), disabled FROM users WHERE email = ?",
 		req.Email,
-	).Scan(&userID, &passwordHash, &disabled)
+	).Scan(&userID, &passwordHash, &displayName, &disabled)
 	if err == sql.ErrNoRows {
 		writeJSON(w, http.StatusUnauthorized, errResp("invalid_credentials", "Invalid email or password"))
 		return
@@ -206,6 +228,8 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	auth.SetSessionCookie(w, session.ID, h.cfg.CookieSecure)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"user_id":       userID,
+		"email":         req.Email,
+		"display_name":  displayName,
 		"authenticated": true,
 		"csrf_token":    session.CSRFToken,
 	})
@@ -235,9 +259,11 @@ func (h *AuthHandler) handleGoogleStart(w http.ResponseWriter, r *http.Request) 
 	}
 
 	state := auth.RandomToken(16)
-	auth.SetSessionCookie(w, state, h.cfg.CookieSecure)
 
-	// Store state temporarily in a cookie for CSRF protection
+	// Store state in a dedicated short-lived cookie for CSRF protection.
+	// (This must NOT touch the cato_session cookie — overwriting it here
+	// used to log out any already signed-in user who clicked the Google
+	// button.)
 	http.SetCookie(w, &http.Cookie{
 		Name:     "cato_oauth_state",
 		Value:    state,

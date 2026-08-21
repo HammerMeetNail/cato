@@ -5,10 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	nethttp "net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"cato/internal/auth"
 	"cato/internal/config"
 	"cato/internal/covers"
 	"cato/internal/db"
@@ -102,20 +105,64 @@ func main() {
 		log.Fatalf("migrate: %v", err)
 	}
 
-	coverWorker := covers.NewWorker(database, cfg.CoverDir)
+		coverWorker := covers.NewWorker(database, cfg.CoverDir)
 	coverWorker.Start()
+
+	// One-time cleanup of cover URLs pointing at the defunct
+	// images.cato.com host (legacy import). Cheap, idempotent SQL —
+	// runs regardless of IGDB configuration.
+	if n, err := games.PurgeDeadCoverSources(database); err != nil {
+		log.Printf("startup: dead cover source purge failed: %v", err)
+	} else if n > 0 {
+		log.Printf("startup: cleared %d games pointing at dead cover host", n)
+	}
 
 	srv := http.NewServer(cfg, database)
 	log.Printf("cato listening on %s", cfg.ListenAddr)
 
+	serverErr := make(chan error, 1)
 	go func() {
-		if err := srv.Start(); err != nil {
-			log.Fatalf("server: %v", err)
+		serverErr <- srv.Start()
+	}()
+
+	// Periodic maintenance: expired sessions and expired IGDB cache entries
+	// are otherwise only removed lazily (or never). Run one sweep at startup,
+	// then daily.
+	maintenance := func() {
+		if n, err := auth.CleanupExpiredSessions(database); err != nil {
+			log.Printf("maintenance: session cleanup failed: %v", err)
+		} else if n > 0 {
+			log.Printf("maintenance: deleted %d expired sessions", n)
+		}
+		if n, err := games.PurgeExpiredQueryCache(database); err != nil {
+			log.Printf("maintenance: query cache purge failed: %v", err)
+		} else if n > 0 {
+			log.Printf("maintenance: purged %d expired cache entries", n)
+		}
+	}
+	maintenance()
+	go func() {
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			maintenance()
 		}
 	}()
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	<-sig
-	log.Println("shutting down")
+
+	select {
+	case err := <-serverErr:
+		if err != nil && err != nethttp.ErrServerClosed {
+			log.Fatalf("server: %v", err)
+		}
+	case s := <-sig:
+		log.Printf("received %v, shutting down", s)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Printf("shutdown: %v", err)
+		}
+	}
 }

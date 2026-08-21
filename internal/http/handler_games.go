@@ -27,6 +27,9 @@ func NewGameHandler(db *db.DB, cfg *config.Config) *GameHandler {
 	svc := games.NewService(store, igdbClient, db)
 	if cfg.IGDBClientID != "" {
 		svc.StartStaleRefresh()
+		// One-shot startup repair of covers broken by the old URL guessing
+		// and the dead cato host (needs a real IGDB client).
+		svc.StartCoverRepair()
 	}
 	return &GameHandler{service: svc}
 }

@@ -1,6 +1,14 @@
 const BASE = '';
 
 async function request(method, path, body = null, opts = {}) {
+  const { data } = await requestFull(method, path, body, opts);
+  return data;
+}
+
+// requestFull returns the parsed body alongside the Response so callers that
+// need headers (e.g. pagination metadata) don't have to duplicate the
+// CSRF/error plumbing.
+async function requestFull(method, path, body = null, opts = {}) {
   const fetchOpts = {
     method,
     credentials: 'include',
@@ -27,28 +35,28 @@ async function request(method, path, body = null, opts = {}) {
     err.status = res.status;
     throw err;
   }
-  return data;
+  return { data, res };
 }
 
+// The CSRF token is kept in memory only. It used to also be mirrored into
+// localStorage, which turned any XSS into a full session takeover (the token
+// authorizes all unsafe requests). In-memory costs nothing: checkAuth()
+// refreshes it on every page load.
 let csrfToken = null;
 
 function getCSRF() {
-  return csrfToken || localStorage.getItem('cato_csrf');
+  return csrfToken;
 }
 
 function setCSRF(token) {
   csrfToken = token;
-  if (token) {
-    localStorage.setItem('cato_csrf', token);
-  } else {
-    localStorage.removeItem('cato_csrf');
-  }
 }
 
 export const api = {
   get(path, opts) { return request('GET', path, null, opts); },
   post(path, body) { return request('POST', path, body); },
   del(path) { return request('DELETE', path); },
+  getFull(path, opts) { return requestFull('GET', path, null, opts); },
   setCSRF,
   getCSRF,
 };
@@ -126,7 +134,10 @@ export function getCoverThumbnailURL(game) {
 }
 
 export const library = {
-  list(status, limit = 60, offset = 0, tag = '') {
+  // list returns { items, total, hasMore }. total/hasMore come from the
+  // X-Total-Count / X-Has-More response headers; hasMore is exact even when
+  // the item count is a multiple of the page size.
+  async list(status, limit = 60, offset = 0, tag = '') {
     const params = new URLSearchParams();
     if (status) params.append('status', status);
     if (tag) {
@@ -142,7 +153,37 @@ export const library = {
     params.append('limit', limit);
     params.append('offset', offset);
     const qs = params.toString() ? `?${params.toString()}` : '';
-    return api.get(`/api/library${qs}`);
+    const { data, res } = await api.getFull(`/api/library${qs}`);
+    return {
+      items: data,
+      total: Number(res.headers.get('X-Total-Count')) || data.length,
+      hasMore: res.headers.get('X-Has-More') === 'true',
+    };
+  },
+
+  // get fetches a single library item by game ID, or throws (404) when the
+  // game is not in the library.
+  get(gameID) {
+    return api.get(`/api/library/${gameID}`);
+  },
+
+  // check returns the subset of the given game IDs that are in the library.
+  async check(ids) {
+    if (!ids || ids.length === 0) return [];
+    try {
+      return await api.get(`/api/library/check?ids=${ids.map(Number).join(',')}`);
+    } catch {
+      return [];
+    }
+  },
+
+  // counts returns per-status item counts, e.g. { all: 43, backlog: 20, ... }.
+  async counts() {
+    try {
+      return await api.get('/api/library/counts');
+    } catch {
+      return null;
+    }
   },
 
   add(gameID, data) {

@@ -89,6 +89,24 @@ func DeleteUserSessions(db Querier, userID string) error {
 	return err
 }
 
+// CleanupExpiredSessions deletes sessions whose expiry has passed. GetSession
+// only removes a session lazily when that exact cookie is presented, so
+// abandoned sessions would otherwise accumulate forever. Call this
+// periodically (e.g. from a background ticker).
+//
+// expires_at is written by CreateSession as RFC3339 in server-local time
+// (matching time.Now().Format(time.RFC3339)), so the cutoff uses the same
+// format — RFC3339 strings with a consistent offset compare correctly
+// lexicographically.
+func CleanupExpiredSessions(db Querier) (int64, error) {
+	res, err := db.Exec("DELETE FROM sessions WHERE expires_at < ?",
+		time.Now().Format(time.RFC3339))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 func RandomToken(length int) string {
 	b := make([]byte, length)
 	rand.Read(b)
