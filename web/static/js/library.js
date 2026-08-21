@@ -1,4 +1,4 @@
-import { library, getCoverURL, getGame, searchGamesFull } from './api.js';
+import { library, getCoverURL, getGame, searchGamesFull, parseTagQuery, formatTagForQuery } from './api.js';
 import { formatDate, formatYear } from './dates.js';
 
 const VALID_STATUSES = ['wishlist', 'backlog', 'playing', 'completed', 'abandoned'];
@@ -411,7 +411,7 @@ function attachScrollListener() {
 export function filterByTag(tag) {
   const activeTab = document.querySelector('.tab.active');
   const current = paginationState.tagFilter;
-  const newFilter = current ? current + ' ' + tag : tag;
+  const newFilter = current ? current + ' ' + formatTagForQuery(tag) : formatTagForQuery(tag);
   loadLibrary(activeTab?.dataset?.status || '', newFilter);
 }
 
@@ -429,10 +429,8 @@ function updateTagFilterBar() {
   const tag = paginationState.tagFilter;
   if (!tag) return;
 
-  const hasPipe = tag.includes('|');
-  const separator = hasPipe ? '|' : ' ';
-  const tagList = tag.split(separator).map(t => t.trim()).filter(t => t.length > 0);
-  const joiner = hasPipe ? ' OR ' : ' AND ';
+  const { tags: tagList, op } = parseTagQuery(tag);
+  const joiner = op === 'or' ? ' OR ' : ' AND ';
   const display = tagList.map(t => `<span class="tag-filter-chip" data-tag="${escapeHTML(t)}">${escapeHTML(t)}<button type="button" class="tag-filter-chip-x" aria-label="Remove ${escapeHTML(t)}">×</button></span>`).join(joiner);
 
   const container = document.querySelector('.container');
@@ -455,7 +453,7 @@ function updateTagFilterBar() {
       if (remaining.length === 0) {
         clearTagFilter();
       } else {
-        const newFilter = hasPipe ? remaining.join('|') : remaining.join(' ');
+        const newFilter = remaining.map(formatTagForQuery).join(op === 'or' ? '|' : ' ');
         const activeTab = document.querySelector('.tab.active');
         loadLibrary(activeTab?.dataset?.status || '', newFilter);
       }
