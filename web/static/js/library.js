@@ -1042,7 +1042,8 @@ function buildCardHTML(items) {
     }
 
     // Ownership info occupies the tag-chip row when there are no tags.
-    const ownBits = [item.platform, item.medium].filter(Boolean).join(' · ');
+    const owned = item.owned_platforms || (item.platform ? [item.platform] : []);
+    const ownBits = [owned.join(' / '), item.medium].filter(Boolean).join(' · ');
     const ownMetaHTML = (!isSearch && !tagsHTML && ownBits)
       ? `<div class="card-tags"><span class="tag-chip own-meta-chip">${escapeHTML(ownBits)}</span></div>`
       : '';
@@ -1234,7 +1235,7 @@ export function openLibraryItemModal(item) {
     createdAt: item.created_at || '',
     startedAt: item.started_at || null,
     completedAt: item.completed_at || null,
-    platform: item.platform || '',
+    platformsOwned: item.owned_platforms || (item.platform ? [item.platform] : []),
     medium: item.medium || '',
     platforms: item.platforms || [],
     inLibrary: true,
@@ -1248,7 +1249,7 @@ export function openLibraryItemModal(item) {
 function openGameForm({ id, name, cover, year = '', status = 'backlog',
                         rating = 0, playtime = 0, tags = [], notes = '',
                         createdAt = '', startedAt = null, completedAt = null,
-                        platform = '', medium = '', platforms = [],
+                        platformsOwned = [], medium = '', platforms = [],
                         inLibrary = false }) {
   // Replace any existing modal (e.g. user clicks a second result).
   const existing = document.getElementById('addGameModal');
@@ -1283,22 +1284,26 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
           <div class="modal-dates-hint">Start/finish dates fill in automatically when you change status.</div>
         </div>` : '';
 
-  // Ownership is chosen directly on the available-platform chips: the
-  // highlighted chip IS the "Owned on" value (tap again to clear). A stored
-  // free-text platform that matches no IGDB chip still shows as its own
-  // selectable chip so existing data stays visible and clearable.
-  let selectedPlatform = String(platform || '').trim();
+  // Ownership is chosen directly on the available-platform chips, which are
+  // MULTI-select: a highlighted chip means you own it there, and a game can
+  // be owned on several. Stored values that match no IGDB chip still show as
+  // their own selected chips so existing data stays visible and clearable.
   const norm = (s) => s.toLowerCase();
+  // Keyed by lowercase name so chip matching is case-insensitive; the value
+  // preserves the stored/original casing for saving.
+  let ownedMap = new Map();
+  (platformsOwned || []).map(p => String(p).trim()).filter(Boolean)
+    .forEach(p => ownedMap.set(norm(p), p));
   const availPlatforms = (platforms || []).map(p => String(p).trim()).filter(Boolean);
-  const chipHTML = (p) => `<button type="button" class="plat-chip${norm(selectedPlatform) === norm(p) ? ' selected' : ''}" data-full="${escapeHTML(p)}" title="${escapeHTML(p)}">${escapeHTML(formatPlatformName(p))}</button>`;
-  const extraOwned = selectedPlatform && !availPlatforms.some(p => norm(p) === norm(selectedPlatform));
-  const availChipsHTML = (availPlatforms.length || extraOwned) ? `
+  const extraOwned = [...ownedMap.keys()].filter(k => !availPlatforms.some(a => norm(a) === k));
+  const chipHTML = (p) => `<button type="button" class="plat-chip${ownedMap.has(norm(p)) ? ' selected' : ''}" data-full="${escapeHTML(p)}" title="${escapeHTML(p)}">${escapeHTML(formatPlatformName(p))}</button>`;
+  const availChipsHTML = (availPlatforms.length || extraOwned.length) ? `
         <div class="modal-avail">
           <span class="modal-avail-label">Available on <span class="modal-avail-hint">(highlighted = owned)</span></span>
           <div class="modal-avail-chips">
             ${availPlatforms.slice(0, 8).map(chipHTML).join('')}
             ${availPlatforms.length > 8 ? `<span class="plat-more" title="${escapeHTML(availPlatforms.join(', '))}">+${availPlatforms.length - 8} more</span>` : ''}
-            ${extraOwned ? chipHTML(selectedPlatform) : ''}
+            ${extraOwned.map(k => chipHTML(ownedMap.get(k))).join('')}
           </div>
         </div>` : '';
 
@@ -1391,7 +1396,8 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
       tags: Array.from(modal.querySelectorAll('.modal-tags-chips .tag-chip-removable'))
         .map(c => c.firstChild.textContent.trim()),
       notes: modal.querySelector('.modal-notes').value,
-      platform: selectedPlatform,
+      platforms: [...ownedMap.values()],
+      platform: [...ownedMap.values()][0] || '',
       medium: modal.querySelector('.modal-medium').value,
     };
     // Explicit date changes only — omitting the fields preserves existing
@@ -1458,16 +1464,16 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
   modal.querySelector('.modal-playtime').addEventListener('input', scheduleSave);
   modal.querySelector('.modal-notes').addEventListener('input', scheduleSave);
 
-  // Tap a platform chip to select it as the owned platform; tap again to
-  // clear. Single-select — the highlighted chip is what gets saved.
+  // Tap a platform chip to toggle owning the game on it — multi-select, so
+  // a game can be owned on several platforms at once.
   modal.querySelectorAll('.plat-chip').forEach(chip => {
     chip.addEventListener('click', () => {
-      if (norm(selectedPlatform) === norm(chip.dataset.full)) {
-        selectedPlatform = '';
+      const key = norm(chip.dataset.full);
+      if (ownedMap.has(key)) {
+        ownedMap.delete(key);
         chip.classList.remove('selected');
       } else {
-        selectedPlatform = chip.dataset.full;
-        modal.querySelectorAll('.plat-chip.selected').forEach(c => c.classList.remove('selected'));
+        ownedMap.set(key, chip.dataset.full);
         chip.classList.add('selected');
       }
       scheduleSave();

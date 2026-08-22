@@ -221,7 +221,7 @@ func libraryFilter(status string, tags []string, tagOp string) (string, []interf
 // edit form without an extra fetch.
 const libraryItemSelect = `li.game_id, li.status, li.rating, li.playtime_minutes, li.tags_json,
 	li.notes, li.started_at, li.completed_at, li.created_at, li.updated_at,
-	li.platform, li.medium,
+	li.platform, li.medium, li.owned_platforms_json,
 	g.name, g.slug, g.cover_url, g.local_cover_path, g.first_release_date,
 	g.platforms_json`
 
@@ -236,13 +236,14 @@ func scanLibraryItem(row interface{ Scan(...interface{}) error }, platformNames 
 	var rating, playtime int64
 	var startedAt, completedAt, createdAt, updatedAt sql.NullString
 	var platform, medium string
+	var ownedPlatformsJSON string
 	var name, slug, coverURL, localCoverPath string
 	var firstReleaseDate int64
 	var platformsJSON string
 
 	if err := row.Scan(&gameID, &liStatus, &rating, &playtime, &tagsJSON, &notes,
 		&startedAt, &completedAt, &createdAt, &updatedAt,
-		&platform, &medium,
+		&platform, &medium, &ownedPlatformsJSON,
 		&name, &slug, &coverURL, &localCoverPath, &firstReleaseDate,
 		&platformsJSON); err != nil {
 		return nil, err
@@ -250,6 +251,9 @@ func scanLibraryItem(row interface{ Scan(...interface{}) error }, platformNames 
 
 	tags := []string{}
 	json.Unmarshal([]byte(tagsJSON), &tags)
+
+	ownedPlatforms := []string{}
+	json.Unmarshal([]byte(ownedPlatformsJSON), &ownedPlatforms)
 
 	platforms := games.ResolvePlatformNames(platformsJSON, platformNames)
 	if platforms == nil {
@@ -276,6 +280,7 @@ func scanLibraryItem(row interface{ Scan(...interface{}) error }, platformNames 
 		"updated_at":         nullOrNil(updatedAt),
 		"platform":           platform,
 		"medium":             medium,
+		"owned_platforms":    ownedPlatforms,
 		"game_name":          name,
 		"game_slug":          slug,
 		"cover_url":          coverURL,
@@ -315,8 +320,12 @@ type libraryUpsertRequest struct {
 	Notes           string   `json:"notes"`
 	StartedAt       *string  `json:"started_at"`
 	CompletedAt     *string  `json:"completed_at"`
-	Platform        string   `json:"platform"`
-	Medium          string   `json:"medium"`
+	// Platforms is the authoritative multi-ownership list ("owned on PS4
+	// AND Switch"); Platform is the legacy singular field, kept working as
+	// a one-element shorthand. When both are sent, Platforms wins.
+	Platforms []string `json:"platforms"`
+	Platform  string   `json:"platform"`
+	Medium    string   `json:"medium"`
 }
 
 // libraryPatchRequest is the body of PATCH /api/library/{gameID}. Pointer
@@ -331,6 +340,7 @@ type libraryPatchRequest struct {
 	Notes                *string   `json:"notes"`
 	StartedAt            *string   `json:"started_at"`
 	CompletedAt          *string   `json:"completed_at"`
+	Platforms            *[]string `json:"platforms"`
 	Platform             *string   `json:"platform"`
 	Medium               *string   `json:"medium"`
 }
@@ -377,12 +387,14 @@ func (h *LibraryHandler) patchLibraryItem(w http.ResponseWriter, r *http.Request
 	}
 
 	// Start from the stored state, overlay whatever the client sent.
+	existingOwned, _ := existing["owned_platforms"].([]string)
 	merged := libraryUpsertRequest{
 		Status:          existing["status"].(string),
 		Rating:          toInt64(existing["rating"]),
 		PlaytimeMinutes: toInt64(existing["playtime_minutes"]),
 		Notes:           existing["notes"].(string),
 		Tags:            existing["tags"].([]string),
+		Platforms:       existingOwned,
 		Platform:        existing["platform"].(string),
 		Medium:          existing["medium"].(string),
 	}
@@ -409,11 +421,28 @@ func (h *LibraryHandler) patchLibraryItem(w http.ResponseWriter, r *http.Request
 	if req.Notes != nil {
 		merged.Notes = *req.Notes
 	}
-	if req.Platform != nil {
-		merged.Platform = *req.Platform
+	switch {
+	case req.Platforms != nil:
+		merged.Platforms = *req.Platforms
+	case req.Platform != nil:
+		// Legacy singular setter — empty clears, a value replaces the list.
+		p := strings.TrimSpace(*req.Platform)
+		if p == "" {
+			merged.Platforms = []string{}
+		} else {
+			merged.Platforms = []string{p}
+		}
 	}
 	if req.Medium != nil {
 		merged.Medium = *req.Medium
+	}
+	// Keep the legacy singular column in step with the authoritative list.
+	if merged.Platforms != nil {
+		if len(merged.Platforms) > 0 {
+			merged.Platform = strings.TrimSpace(merged.Platforms[0])
+		} else {
+			merged.Platform = ""
+		}
 	}
 	// Timestamps keep POST semantics: nil preserves/auto-tracks, "" clears,
 	// a value sets. parseTimestampInput in writeLibraryItem handles all three.
@@ -497,6 +526,42 @@ func (h *LibraryHandler) writeLibraryItem(w http.ResponseWriter, userID string, 
 		return false
 	}
 
+	// Normalize multi-ownership: Platforms is authoritative when present;
+	// otherwise the legacy singular platform acts as a one-element list.
+	// Trimmed, de-duplicated (case-insensitive), capped at 32 entries.
+	ownedPlatforms := make([]string, 0, len(req.Platforms))
+	if req.Platforms != nil || req.Platform != "" {
+		seen := map[string]bool{}
+		list := req.Platforms
+		if req.Platforms == nil {
+			list = []string{req.Platform}
+		}
+		for _, p := range list {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				continue
+			}
+			if len(p) > 64 {
+				writeJSON(w, http.StatusBadRequest, errResp("invalid_platform", "Platform must be at most 64 characters"))
+				return false
+			}
+			key := strings.ToLower(p)
+			if seen[key] {
+				continue
+			}
+			if len(ownedPlatforms) >= 32 {
+				writeJSON(w, http.StatusBadRequest, errResp("invalid_platform", "At most 32 platforms per game"))
+				return false
+			}
+			seen[key] = true
+			ownedPlatforms = append(ownedPlatforms, p)
+		}
+	}
+	platformPrimary := ""
+	if len(ownedPlatforms) > 0 {
+		platformPrimary = ownedPlatforms[0]
+	}
+
 	// Verify game exists
 	var exists int
 	err := h.db.QueryRow("SELECT 1 FROM games WHERE id = ?", gameID).Scan(&exists)
@@ -542,11 +607,17 @@ func (h *LibraryHandler) writeLibraryItem(w http.ResponseWriter, userID string, 
 	insertStarted := insertTimestamp(startClear, startVal, req.Status == "playing", now)
 	insertCompleted := insertTimestamp(endClear, endVal, req.Status == "completed", now)
 
+	ownedPlatformsJSON := "[]"
+	if len(ownedPlatforms) > 0 {
+		b, _ := json.Marshal(ownedPlatforms)
+		ownedPlatformsJSON = string(b)
+	}
+
 	// The ON CONFLICT DO UPDATE never writes NULL for an unspecified timestamp
 	// — that's the fix for the data-loss bug where a UI edit (which sends no
 	// timestamps) wiped started_at/completed_at via excluded.<col>.
-	_, err = h.db.Exec(`INSERT INTO library_items (user_id, game_id, status, rating, playtime_minutes, tags_json, notes, started_at, completed_at, platform, medium, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	_, err = h.db.Exec(`INSERT INTO library_items (user_id, game_id, status, rating, playtime_minutes, tags_json, notes, started_at, completed_at, platform, owned_platforms_json, medium, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(user_id, game_id) DO UPDATE SET
 			status = excluded.status,
 			rating = excluded.rating,
@@ -568,10 +639,11 @@ func (h *LibraryHandler) writeLibraryItem(w http.ResponseWriter, userID string, 
 				ELSE NULL
 			END,
 			platform = excluded.platform,
+			owned_platforms_json = excluded.owned_platforms_json,
 			medium = excluded.medium,
 			updated_at = excluded.updated_at`,
 		userID, gameID, req.Status, req.Rating, req.PlaytimeMinutes,
-		tagsJSON, req.Notes, insertStarted, insertCompleted, req.Platform, req.Medium, now,
+		tagsJSON, req.Notes, insertStarted, insertCompleted, platformPrimary, ownedPlatformsJSON, req.Medium, now,
 		startClear, startVal != "", nullStrOr(startVal),
 		endClear, endVal != "", nullStrOr(endVal))
 	if err != nil {
@@ -664,8 +736,9 @@ func (h *LibraryHandler) handleLibraryPlatforms(w http.ResponseWriter, r *http.R
 		LEFT JOIN platforms p ON p.id = je.value
 		WHERE li.user_id = ?
 		UNION ALL
-		SELECT li.platform AS name, '' AS abbr, '' AS sn FROM library_items li
-		WHERE li.user_id = ? AND li.platform != ''
+		SELECT je.value AS name, '' AS abbr, '' AS sn
+		FROM library_items li, json_each(li.owned_platforms_json) je
+		WHERE li.user_id = ? AND je.value != ''
 	) t
 	WHERE t.name != '' AND (LOWER(t.name) LIKE ? ESCAPE '\'
 	   OR LOWER(t.abbr) LIKE ? ESCAPE '\'
@@ -799,7 +872,7 @@ func (h *LibraryHandler) handleLibraryExport(w http.ResponseWriter, r *http.Requ
 
 	userID := auth.GetUserID(r.Context())
 	rows, err := h.db.Query(`SELECT li.game_id, li.status, li.rating, li.playtime_minutes,
-			li.platform, li.medium, li.tags_json, li.notes,
+			li.platform, li.owned_platforms_json, li.medium, li.tags_json, li.notes,
 			COALESCE(li.started_at, ''), COALESCE(li.completed_at, ''), COALESCE(li.created_at, ''),
 			g.name
 		FROM library_items li
@@ -822,18 +895,20 @@ func (h *LibraryHandler) handleLibraryExport(w http.ResponseWriter, r *http.Requ
 
 	for rows.Next() {
 		var gameID int64
-		var status, platform, medium, tagsJSON, notes string
+		var status, platform, ownedJSON, medium, tagsJSON, notes string
 		var rating, playtime int64
 		var startedAt, completedAt, createdAt, name string
 		var tags []string
-		if err := rows.Scan(&gameID, &status, &rating, &playtime, &platform, &medium,
-			&tagsJSON, &notes, &startedAt, &completedAt, &createdAt, &name); err != nil {
+		if err := rows.Scan(&gameID, &status, &rating, &playtime, &platform, &ownedJSON,
+			&medium, &tagsJSON, &notes, &startedAt, &completedAt, &createdAt, &name); err != nil {
 			continue
 		}
 		json.Unmarshal([]byte(tagsJSON), &tags)
+		ownedPlatforms := []string{}
+		json.Unmarshal([]byte(ownedJSON), &ownedPlatforms)
 
 		hours := fmt.Sprintf("%.2f", float64(playtime)/60)
-		_ = csv.Write([]string{name, status, platform, medium,
+		_ = csv.Write([]string{name, status, strings.Join(ownedPlatforms, "; "), medium,
 			strconv.FormatInt(rating, 10), hours,
 			startedAt, completedAt, createdAt,
 			strings.Join(tags, "; "), notes})
@@ -975,10 +1050,10 @@ func (h *LibraryHandler) handleLibraryStats(w http.ResponseWriter, r *http.Reque
 		stats["top_tags"] = topTags
 	}
 
-	rows3, err := h.db.Query(`SELECT platform, COUNT(*) AS c
-		FROM library_items
-		WHERE user_id = ? AND platform != ''
-		GROUP BY platform ORDER BY c DESC LIMIT 5`, userID)
+	rows3, err := h.db.Query(`SELECT j.value, COUNT(*) AS c
+		FROM library_items li, json_each(li.owned_platforms_json) j
+		WHERE li.user_id = ?
+		GROUP BY j.value ORDER BY c DESC LIMIT 5`, userID)
 	if err == nil {
 		defer rows3.Close()
 		topPlatforms := make([]map[string]interface{}, 0)

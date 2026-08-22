@@ -34,10 +34,10 @@ func TestStatsEndpoint(t *testing.T) {
 	mux := newTestLibraryMux(database)
 
 	database.Exec(`INSERT INTO library_items (user_id, game_id, status, rating, playtime_minutes,
-		tags_json, platform, completed_at, started_at)
+		tags_json, platform, owned_platforms_json, completed_at, started_at)
 		VALUES
-		('user-1', 1, 'completed', 90, 3600, '["rpg","co-op"]', 'PC', '2025-03-01T00:00:00Z', NULL),
-		('user-1', 2, 'completed', 80, 1200, '["rpg"]', 'PC', '2026-02-15T00:00:00Z', '2026-01-10T00:00:00Z')`)
+		('user-1', 1, 'completed', 90, 3600, '["rpg","co-op"]', 'PC', '["PC","Nintendo Switch"]', '2025-03-01T00:00:00Z', NULL),
+		('user-1', 2, 'completed', 80, 1200, '["rpg"]', 'PC', '["PC"]', '2026-02-15T00:00:00Z', '2026-01-10T00:00:00Z')`)
 
 	resp, code := getJSON(t, "/api/library/stats", mux, sessionID)
 	if code != http.StatusOK {
@@ -78,9 +78,19 @@ func TestStatsEndpoint(t *testing.T) {
 		t.Errorf("top tag = %v, want rpg x2", tagEntry)
 	}
 
+	// Multi-ownership: PC is counted across both items, Switch from item 1.
 	platforms, _ := resp["top_platforms"].([]interface{})
-	if len(platforms) != 1 || platforms[0].(map[string]interface{})["platform"] != "PC" {
-		t.Errorf("top_platforms = %v", platforms)
+	if len(platforms) != 2 {
+		t.Errorf("top_platforms = %v, want [PC, Nintendo Switch]", platforms)
+	} else {
+		first := platforms[0].(map[string]interface{})
+		if first["platform"] != "PC" || first["count"].(float64) != 2 {
+			t.Errorf("top platform = %v, want PC x2", first)
+		}
+		second := platforms[1].(map[string]interface{})
+		if second["platform"] != "Nintendo Switch" || second["count"].(float64) != 1 {
+			t.Errorf("second platform = %v, want Nintendo Switch x1", second)
+		}
 	}
 
 	recent, _ := resp["recent"].([]interface{})

@@ -2,6 +2,7 @@ package games
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -127,6 +128,64 @@ func TestSyncPlatforms(t *testing.T) {
 	_, total, err := svc.SearchPagedFull(ctx, "title", 10, 0, "", 0, 0, 0, "sw2")
 	if err != nil || total != 1 {
 		t.Errorf("shortname filter sw2: total=%d err=%v, want 1", total, err)
+	}
+}
+
+func TestMigratePlatformTags(t *testing.T) {
+	database, _ := setupGameDB(t)
+	defer database.Close()
+
+	database.Exec(`INSERT INTO users (id, email) VALUES ('u1', 'u1@test.com')`)
+	for id := 1; id <= 5; id++ {
+		database.Exec(`INSERT INTO games (id, name, slug, normalized_name) VALUES (?, ?, ?, ?)`,
+			id, fmt.Sprintf("Game %d", id), fmt.Sprintf("game-%d", id), fmt.Sprintf("game %d", id))
+	}
+	database.Exec(`INSERT INTO library_items (user_id, game_id, status, tags_json) VALUES
+		('u1', 1, 'backlog', '["Switch","rpg"]'),
+		('u1', 2, 'playing', '["Steam","PS5"]'),
+		('u1', 3, 'backlog', '["PS4","X1"]'),
+		('u1', 4, 'completed', '["GOTY","Nostalgia"]'),
+		('u1', 5, 'wishlist', '[]')`)
+
+	migrated, err := MigratePlatformTags(database)
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if migrated != 3 {
+		t.Fatalf("migrated = %d, want 3", migrated)
+	}
+
+	var platform, tagsJSON, ownedJSON string
+	database.QueryRow(`SELECT platform, tags_json, owned_platforms_json FROM library_items WHERE game_id = 1`).
+		Scan(&platform, &tagsJSON, &ownedJSON)
+	if platform != "Nintendo Switch" || tagsJSON != `["rpg"]` || ownedJSON != `["Nintendo Switch"]` {
+		t.Errorf("item 1: platform=%q tags=%s owned=%s", platform, tagsJSON, ownedJSON)
+	}
+
+	database.QueryRow(`SELECT platform, tags_json, owned_platforms_json FROM library_items WHERE game_id = 2`).
+		Scan(&platform, &tagsJSON, &ownedJSON)
+	if platform != "PlayStation 5" || tagsJSON != `["Steam"]` || ownedJSON != `["PlayStation 5"]` {
+		t.Errorf("item 2: platform=%q tags=%s owned=%s (storefront tag must survive)", platform, tagsJSON, ownedJSON)
+	}
+
+	// Multi-ownership: PS4+X1 both migrate into the owned list; the legacy
+	// singular column keeps the first entry.
+	database.QueryRow(`SELECT platform, tags_json, owned_platforms_json FROM library_items WHERE game_id = 3`).
+		Scan(&platform, &tagsJSON, &ownedJSON)
+	if platform != "PlayStation 4" || tagsJSON != `[]` || ownedJSON != `["PlayStation 4","Xbox One"]` {
+		t.Errorf("item 3: platform=%q tags=%s owned=%s", platform, tagsJSON, ownedJSON)
+	}
+	// Unmapped-only items (GOTY/Nostalgia) stay untouched.
+	var n int
+	database.QueryRow(`SELECT COUNT(*) FROM library_items WHERE platform != ''`).Scan(&n)
+	if n != 3 {
+		t.Errorf("%d items have platform set, want exactly the 3 migrated ones", n)
+	}
+
+	// Idempotent: second run finds nothing left to do.
+	again, err := MigratePlatformTags(database)
+	if err != nil || again != 0 {
+		t.Errorf("second run migrated %d items (err=%v), want 0", again, err)
 	}
 }
 

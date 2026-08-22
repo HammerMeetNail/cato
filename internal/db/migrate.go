@@ -13,6 +13,17 @@ type Migration struct {
 
 var migrations = []Migration{
 	{
+		Version: 11,
+		// Multi-platform ownership: a game can be owned on several consoles,
+		// so ownership becomes an array (same pattern as tags_json). The old
+		// singular platform column stays in sync with the FIRST entry for
+		// compatibility (CSV consumers, stale clients); new reads use
+		// owned_platforms_json. Existing non-empty values are folded in.
+		Up: `ALTER TABLE library_items ADD COLUMN owned_platforms_json TEXT NOT NULL DEFAULT '[]';
+		     UPDATE library_items SET owned_platforms_json = json_array(platform)
+		       WHERE platform != '' AND owned_platforms_json = '[]';`,
+	},
+	{
 		Version: 10,
 		// Curated gamer-style platform codes ("sw2", "xsx", "ps5") that
 		// IGDB's own abbreviations don't cover (upstream calls Switch 2

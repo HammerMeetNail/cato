@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"cato/internal/db"
 )
 
 // Platform is one row of the IGDB platform reference table (migration v9).
@@ -20,17 +22,17 @@ type Platform struct {
 // table on every boot so re-syncs and new rows stay covered. IDs are stable
 // IGDB platform identifiers.
 var platformShortnames = map[int64]string{
-	6:   "win",           // PC (Microsoft Windows) — upstream abbr is just "PC"
-	7:   "ps1 psx",       // PlayStation
-	8:   "ps2",           // PlayStation 2
-	9:   "ps3",           // PlayStation 3
-	12:  "x360 360",      // Xbox 360
-	38:  "psp",           // PlayStation Portable
+	6:   "win",             // PC (Microsoft Windows) — upstream abbr is just "PC"
+	7:   "ps1 psx",         // PlayStation
+	8:   "ps2",             // PlayStation 2
+	9:   "ps3",             // PlayStation 3
+	12:  "x360 360",        // Xbox 360
+	38:  "psp",             // PlayStation Portable
 	46:  "psvita vita psv", // PlayStation Vita
-	48:  "ps4",           // PlayStation 4
-	49:  "xb1 xone",      // Xbox One
-	130: "ns swi switch1", // Nintendo Switch
-	167: "ps5",           // PlayStation 5
+	48:  "ps4",             // PlayStation 4
+	49:  "xb1 xone",        // Xbox One
+	130: "ns swi switch1",  // Nintendo Switch
+	167: "ps5",             // PlayStation 5
 	169: "xsx xss seriesx", // Xbox Series X|S
 	508: "sw2 ns2 switch2", // Nintendo Switch 2
 }
@@ -45,6 +47,127 @@ func (s *Store) ApplyPlatformShortnames(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// platformTagMigration maps ownership tags the operator historically used
+// onto canonical platform values for library_items.platform. Storefront and
+// misc tags (Steam, Epic, GOTY, …) are deliberately absent — they describe
+// where/how a game was bought, not what it runs on.
+var platformTagMigration = map[string]string{
+	"switch":        "Nintendo Switch",
+	"switch 2":      "Nintendo Switch 2",
+	"ps1":           "PlayStation",
+	"ps2":           "PlayStation 2",
+	"ps3":           "PlayStation 3",
+	"ps4":           "PlayStation 4",
+	"ps5":           "PlayStation 5",
+	"psp":           "PlayStation Portable",
+	"xbox":          "Xbox",
+	"x1":            "Xbox One",
+	"xbox one":      "Xbox One",
+	"xsx":           "Xbox Series X|S",
+	"xbox series x": "Xbox Series X|S",
+	"x360":          "Xbox 360",
+	"wii":           "Wii",
+	"wiiu":          "Wii U",
+	"gamecube":      "Nintendo GameCube",
+	"n64":           "Nintendo 64",
+	"3ds":           "Nintendo 3DS",
+	"gba":           "Game Boy Advance",
+	"gb":            "Game Boy",
+	"dreamcast":     "Dreamcast",
+	"ios":           "iOS",
+	"windows":       "PC (Microsoft Windows)",
+}
+
+// MigratePlatformTags is a one-time data fixup: items whose tags encode
+// platform ownership ("Switch", "PS5", …) get those values moved into
+// library_items.owned_platforms_json (multi-ownership — an item tagged on
+// several platforms is owned on several) and the tags are removed
+// afterwards. The legacy singular platform column keeps the first entry.
+// Idempotent by construction — after a successful pass no mappable tags
+// remain. Returns the number of items migrated.
+func MigratePlatformTags(database *db.DB) (int, error) {
+	rows, err := database.Query(`SELECT user_id, game_id, tags_json, platform, owned_platforms_json FROM library_items`)
+	if err != nil {
+		return 0, fmt.Errorf("scan library items: %w", err)
+	}
+
+	type item struct {
+		userID string
+		gameID int64
+		tags   []string
+		owned  []string
+	}
+	var updates []item
+	defer rows.Close()
+	for rows.Next() {
+		var userID, tagsJSON, platform, ownedJSON string
+		var gameID int64
+		if err := rows.Scan(&userID, &gameID, &tagsJSON, &platform, &ownedJSON); err != nil {
+			continue
+		}
+		var tags []string
+		if err := json.Unmarshal([]byte(tagsJSON), &tags); err != nil || len(tags) == 0 {
+			continue
+		}
+
+		owned := []string{}
+		json.Unmarshal([]byte(ownedJSON), &owned)
+		if len(owned) == 0 && strings.TrimSpace(platform) != "" {
+			owned = append(owned, strings.TrimSpace(platform))
+		}
+		have := map[string]bool{}
+		for _, p := range owned {
+			have[strings.ToLower(p)] = true
+		}
+
+		mapped := false
+		var kept []string
+		for _, t := range tags {
+			if p, ok := platformTagMigration[strings.ToLower(strings.TrimSpace(t))]; ok {
+				mapped = true
+				if !have[strings.ToLower(p)] {
+					owned = append(owned, p)
+					have[strings.ToLower(p)] = true
+				}
+				continue // drop from kept list
+			}
+			kept = append(kept, t)
+		}
+		if !mapped {
+			continue
+		}
+
+		updates = append(updates, item{userID: userID, gameID: gameID, tags: kept, owned: owned})
+	}
+	if err := rows.Err(); err != nil {
+		return 0, rows.Err()
+	}
+
+	migrated := 0
+	for _, u := range updates {
+		if u.tags == nil {
+			u.tags = []string{}
+		}
+		tagsJSON, _ := json.Marshal(u.tags)
+		ownedJSON, _ := json.Marshal(u.owned)
+		if _, err := database.Exec(`UPDATE library_items
+			SET tags_json = ?, owned_platforms_json = ?, platform = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE user_id = ? AND game_id = ?`,
+			string(tagsJSON), string(ownedJSON), firstOrEmpty(u.owned), u.userID, u.gameID); err != nil {
+			return migrated, fmt.Errorf("migrate tags for %s/%d: %w", u.userID, u.gameID, err)
+		}
+		migrated++
+	}
+	return migrated, nil
+}
+
+func firstOrEmpty(s []string) string {
+	if len(s) > 0 {
+		return s[0]
+	}
+	return ""
 }
 
 // UpsertPlatforms replaces-or-inserts reference rows in one statement.
