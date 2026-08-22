@@ -46,6 +46,9 @@ func (h *LibraryHandler) Register(mux *http.ServeMux) {
 
 	mux.Handle("/api/library", chain(csrfChain(http.HandlerFunc(h.handleLibrary))))
 	mux.Handle("/api/library/tags", chain(http.HandlerFunc(h.handleLibraryTags)))
+	// Platform suggestions for the @ search prefix: distinct resolved
+	// platform names present in the caller's library.
+	mux.Handle("/api/library/platforms", chain(http.HandlerFunc(h.handleLibraryPlatforms)))
 	// Registered before the /api/library/ prefix so ServeMux picks the
 	// more specific pattern.
 	mux.Handle("/api/library/check", chain(http.HandlerFunc(h.handleLibraryCheck)))
@@ -118,6 +121,14 @@ func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, use
 	}
 
 	where, whereArgs := libraryFilter(status, tags, tagOp)
+
+	// Availability filter ("show games I can play on X"): substring match
+	// against the resolved names of games.platforms_json.
+	if platform := strings.TrimSpace(r.URL.Query().Get("platform")); platform != "" && len(platform) <= 64 {
+		frag, fargs := games.PlatformFilter("g", platform)
+		where += " AND " + frag
+		whereArgs = append(whereArgs, fargs...)
+	}
 
 	// Total matching items for the current filter — surfaced via the
 	// X-Total-Count header so clients can show "N games" per tab and know
@@ -624,6 +635,60 @@ func (h *LibraryHandler) handleLibraryTags(w http.ResponseWriter, r *http.Reques
 	}
 
 	writeJSON(w, http.StatusOK, tags)
+}
+
+// handleLibraryPlatforms serves GET /api/library/platforms?q= — the distinct
+// platform names appearing in the caller's library (both IGDB availability
+// data and manually-set ownership platforms), most-used first. Feeds the
+// @ prefix autocomplete in the search bar, mirroring /api/library/tags.
+func (h *LibraryHandler) handleLibraryPlatforms(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, errResp("method_not_allowed", "Method not allowed"))
+		return
+	}
+
+	userID := auth.GetUserID(r.Context())
+	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	pattern := "%" + games.EscapeLike(q) + "%"
+
+	// Availability names resolve through the lookup table (matched against
+	// name, IGDB abbreviation, and curated shortname); ownership platforms
+	// are literal text. Union keeps all sources suggestable.
+	rows, err := h.db.Query(`SELECT t.name, COUNT(*) AS c FROM (
+		SELECT COALESCE(NULLIF(p.name, ''), CAST(je.value AS TEXT)) AS name,
+		       COALESCE(p.abbreviation, '') AS abbr,
+		       COALESCE(p.shortname, '') AS sn
+		FROM library_items li
+		JOIN games g ON g.id = li.game_id
+		CROSS JOIN json_each(g.platforms_json) je
+		LEFT JOIN platforms p ON p.id = je.value
+		WHERE li.user_id = ?
+		UNION ALL
+		SELECT li.platform AS name, '' AS abbr, '' AS sn FROM library_items li
+		WHERE li.user_id = ? AND li.platform != ''
+	) t
+	WHERE t.name != '' AND (LOWER(t.name) LIKE ? ESCAPE '\'
+	   OR LOWER(t.abbr) LIKE ? ESCAPE '\'
+	   OR LOWER(t.sn) LIKE ? ESCAPE '\')
+	GROUP BY t.name ORDER BY c DESC, name LIMIT 8`,
+		userID, userID, pattern, pattern, pattern)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to fetch platforms"))
+		return
+	}
+	defer rows.Close()
+
+	platforms := make([]string, 0)
+	for rows.Next() {
+		var name string
+		var count int
+		if err := rows.Scan(&name, &count); err != nil {
+			continue
+		}
+		platforms = append(platforms, name)
+	}
+
+	writeJSON(w, http.StatusOK, platforms)
 }
 
 // handleLibraryCheck handles GET /api/library/check?ids=1,2,3 — returns the

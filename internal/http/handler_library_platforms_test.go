@@ -81,6 +81,108 @@ func TestPlatformsEmptyWhenLookupMissing(t *testing.T) {
 	}
 }
 
+// TestLibraryPlatformFilter: GET /api/library?platform= restricts to games
+// available on the named platform (substring, case-insensitive).
+func TestLibraryPlatformFilter(t *testing.T) {
+	database := setupLibraryTestDB(t)
+	defer database.Close()
+	sessionID := createLibrarySession(t, database, "user-1")
+	mux := newTestLibraryMux(database)
+
+	database.Exec(`INSERT INTO platforms (id, name) VALUES (130, 'Nintendo Switch')`)
+	database.Exec(`UPDATE games SET platforms_json = '[6,130]' WHERE id = 1`)
+	database.Exec(`UPDATE games SET platforms_json = '[49]' WHERE id = 2`) // 49 unknown → matches nothing
+
+	postLibraryItem(t, mux, database, sessionID, 1, `{"status":"backlog"}`)
+	postLibraryItem(t, mux, database, sessionID, 2, `{"status":"backlog"}`)
+
+	listWithPlatform := func(platform string) []map[string]interface{} {
+		req := httptest.NewRequest(http.MethodGet, "/api/library?platform="+platform, nil)
+		req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list failed: %d %s", rec.Code, rec.Body.String())
+		}
+		var items []map[string]interface{}
+		if err := json.Unmarshal(rec.Body.Bytes(), &items); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return items
+	}
+
+	if got := listWithPlatform("switch"); len(got) != 1 || got[0]["game_id"].(float64) != 1 {
+		t.Errorf("platform=switch returned %v, want only game 1", got)
+	}
+	if got := listWithPlatform("nintendo"); len(got) != 1 {
+		t.Errorf("platform=nintendo returned %d items, want 1", len(got))
+	}
+	if got := listWithPlatform("xbox"); len(got) != 0 {
+		t.Errorf("platform=xbox returned %d items, want 0", len(got))
+	}
+}
+
+// TestPlatformSuggestions: /api/library/platforms suggests distinct resolved
+// names from the caller's library, most-used first.
+func TestPlatformSuggestions(t *testing.T) {
+	database := setupLibraryTestDB(t)
+	defer database.Close()
+	sessionID := createLibrarySession(t, database, "user-1")
+	mux := newTestLibraryMux(database)
+
+	database.Exec(`INSERT INTO platforms (id, name) VALUES (130, 'Nintendo Switch'), (6, 'PC (Microsoft Windows)')`)
+	database.Exec(`INSERT INTO platforms (id, name, abbreviation, shortname) VALUES (508, 'Nintendo Switch 2', 'Switch 2', 'sw2 ns2')`)
+	database.Exec(`UPDATE games SET platforms_json = '[6,130]' WHERE id = 1`)
+	database.Exec(`UPDATE games SET platforms_json = '[130,508]' WHERE id = 2`)
+
+	postLibraryItem(t, mux, database, sessionID, 1, `{"status":"backlog"}`)
+	postLibraryItem(t, mux, database, sessionID, 2, `{"status":"backlog","platform":"Steam Deck"}`)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/library/platforms?q=swi", nil)
+	req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET platforms failed: %d %s", rec.Code, rec.Body.String())
+	}
+	var got []string
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// "swi" is a substring of both Switch names; most-referenced first.
+	want := []string{"Nintendo Switch", "Nintendo Switch 2"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("suggestions for 'swi' = %v, want %v", got, want)
+	}
+
+	// Ownership-only platform ("Steam Deck") is suggestable too.
+	req = httptest.NewRequest(http.MethodGet, "/api/library/platforms?q=steam", nil)
+	req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	got = nil
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !reflect.DeepEqual(got, []string{"Steam Deck"}) {
+		t.Errorf("suggestions for 'steam' = %v, want [Steam Deck]", got)
+	}
+
+	// Curated shortnames match even though the IGDB abbreviation is
+	// "Switch 2": typing "sw2" suggests "Nintendo Switch 2".
+	req = httptest.NewRequest(http.MethodGet, "/api/library/platforms?q=sw2", nil)
+	req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	got = nil
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !reflect.DeepEqual(got, []string{"Nintendo Switch 2"}) {
+		t.Errorf("suggestions for 'sw2' = %v, want [Nintendo Switch 2]", got)
+	}
+}
+
 func toStringSlice(v interface{}) []string {
 	items, ok := v.([]interface{})
 	if !ok {

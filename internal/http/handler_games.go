@@ -109,11 +109,19 @@ func (h *GameHandler) handleSearchFull(w http.ResponseWriter, r *http.Request, q
 		sort = ""
 	}
 
+	// Availability filter: substring of a platform name/abbreviation
+	// ("switch", "pc", "xbox"). Mirrors the library endpoint's platform param.
+	platform := strings.TrimSpace(r.URL.Query().Get("platform"))
+	if len(platform) > 64 {
+		platform = ""
+	}
+
 	results, total, err := h.service.SearchPagedFull(r.Context(), query,
 		limit, offset, sort,
 		parseYearParam(r.URL.Query().Get("year_from"), false),
 		parseYearParam(r.URL.Query().Get("year_to"), true),
 		parseMinRatingParam(r.URL.Query().Get("min_rating")),
+		platform,
 	)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errResp("search_error", "Search failed"))

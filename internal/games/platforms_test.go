@@ -97,8 +97,8 @@ func TestSyncPlatforms(t *testing.T) {
 		t.Fatalf("sync platforms: %v", err)
 	}
 	n, _ := store.CountPlatforms(ctx)
-	if n != 2 {
-		t.Fatalf("platform count after sync = %d, want 2", n)
+	if n != 3 {
+		t.Fatalf("platform count after sync = %d, want 3", n)
 	}
 
 	// Second sync is a no-op — the reference list is fetched only once.
@@ -110,8 +110,9 @@ func TestSyncPlatforms(t *testing.T) {
 	}
 
 	// Search results carry resolved platform names.
-	database.Exec(`INSERT INTO games (id, name, slug, normalized_name, platforms_json)
-		VALUES (1, 'Hollow Knight', 'hollow-knight', 'hollow knight', '[6,130]')`)
+	database.Exec(`INSERT INTO games (id, name, slug, normalized_name, popularity_score, platforms_json)
+		VALUES (1, 'Hollow Knight', 'hollow-knight', 'hollow knight', 50, '[6,130]'),
+		       (9, 'Switch 2 Launch Title', 'switch-2-launch', 'switch 2 launch title', 50, '[508]')`)
 	results, err := store.SearchLocal(ctx, "hollow", 10)
 	if err != nil || len(results) != 1 {
 		t.Fatalf("search: %d results, %v", len(results), err)
@@ -119,5 +120,79 @@ func TestSyncPlatforms(t *testing.T) {
 	want := []string{"PC (Microsoft Windows)", "Nintendo Switch"}
 	if !reflect.DeepEqual(results[0].Platforms, want) {
 		t.Errorf("search platforms = %v, want %v", results[0].Platforms, want)
+	}
+
+	// Curated shortnames are applied by SyncPlatforms: the Switch 2 game is
+	// findable by "sw2" even though IGDB's abbreviation is "Switch 2".
+	_, total, err := svc.SearchPagedFull(ctx, "title", 10, 0, "", 0, 0, 0, "sw2")
+	if err != nil || total != 1 {
+		t.Errorf("shortname filter sw2: total=%d err=%v, want 1", total, err)
+	}
+}
+
+func TestSearchPlatformFilter(t *testing.T) {
+	database, store := setupGameDB(t)
+	defer database.Close()
+
+	database.Exec(`INSERT INTO games (id, name, slug, normalized_name, popularity_score, platforms_json) VALUES
+		(1, 'Hollow Knight', 'hollow-knight', 'hollow knight', 50, '[6,130]'),
+		(2, 'Celeste', 'celeste', 'celeste', 50, '[6,508,99999]'),
+		(3, 'Super Mario Odyssey', 'super-mario-odyssey', 'super mario odyssey', 50, '[130]'),
+		(4, 'Legacy Entry', 'legacy-entry', 'legacy entry', 50, '["PC (Microsoft Windows)"]'),
+		(5, 'Xbox Exclusive', 'xbox-exclusive', 'xbox exclusive', 50, '[169]')`)
+	database.Exec(`INSERT INTO platforms (id, name, abbreviation) VALUES
+		(6, 'PC (Microsoft Windows)', 'PC'),
+		(508, 'Nintendo Switch 2', 'Switch 2'),
+		(130, 'Nintendo Switch', 'Switch'),
+		(169, 'Xbox Series X|S', 'Series X|S')`)
+
+	svc := NewService(store, &fakeIGDB{}, database)
+	ctx := context.Background()
+	if err := store.ApplyPlatformShortnames(ctx); err != nil {
+		t.Fatalf("apply shortnames: %v", err)
+	}
+
+	// Substring match against resolved names ("switch" hits both Switches).
+	_, total, err := svc.SearchPagedFull(ctx, "mario", 10, 0, "", 0, 0, 0, "switch")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("total = %d, want 1 (Super Mario Odyssey)", total)
+	}
+
+	// Curated shortname match ("win" → PC even though IGDB's abbr is "PC").
+	_, total, err = svc.SearchPagedFull(ctx, "celeste", 10, 0, "", 0, 0, 0, "win")
+	if err != nil || total != 1 {
+		t.Errorf("abbrev filter: total=%d err=%v, want 1", total, err)
+	}
+
+	// Gamer-style codes: sw2/switch2 → Nintendo Switch 2 (Celeste), xsx →
+	// Xbox Series X|S.
+	_, total, err = svc.SearchPagedFull(ctx, "celeste", 10, 0, "", 0, 0, 0, "sw2")
+	if err != nil || total != 1 {
+		t.Errorf("shortname sw2: total=%d err=%v, want 1", total, err)
+	}
+	_, total, err = svc.SearchPagedFull(ctx, "xbox exclusive", 10, 0, "", 0, 0, 0, "xsx")
+	if err != nil || total != 1 {
+		t.Errorf("shortname xsx: total=%d err=%v, want 1", total, err)
+	}
+
+	// Legacy string rows (names instead of IDs) match by text.
+	_, total, err = svc.SearchPagedFull(ctx, "legacy", 10, 0, "", 0, 0, 0, "pc")
+	if err != nil || total != 1 {
+		t.Errorf("legacy row filter: total=%d err=%v, want 1", total, err)
+	}
+
+	// Unknown IDs match nothing even when the raw text would ("99999").
+	_, total, err = svc.SearchPagedFull(ctx, "celeste", 10, 0, "", 0, 0, 0, "99999")
+	if err != nil || total != 0 {
+		t.Errorf("unknown id filter: total=%d err=%v, want 0", total, err)
+	}
+
+	// Empty platform = no filtering.
+	_, total, err = svc.SearchPagedFull(ctx, "celeste", 10, 0, "", 0, 0, 0, "")
+	if err != nil || total != 1 {
+		t.Errorf("no filter: total=%d err=%v, want 1", total, err)
 	}
 }

@@ -48,11 +48,12 @@ var ValidSorts = map[string]bool{
 type searchOptions struct {
 	limit      int
 	offset     int
-	applyFloor bool // hide weak tier-3 substring matches unless popular
+	applyFloor bool  // hide weak tier-3 substring matches unless popular
 	sort       string
 	yearFrom   int64 // unix seconds, inclusive; 0 = unset
 	yearTo     int64 // unix seconds, inclusive; 0 = unset
 	minRating  int64 // aggregated_rating >= minRating with count > 0; 0 = unset
+	platform   string // availability filter: substring of platform name/abbrev
 	withTotal  bool  // also run the COUNT query
 }
 
@@ -199,6 +200,11 @@ func buildFilterWhere(b *strings.Builder, args *[]interface{}, o searchOptions, 
 	if o.minRating > 0 {
 		conds = append(conds, `g.aggregated_rating >= ?`, `g.aggregated_rating_count > 0`)
 		*args = append(*args, o.minRating)
+	}
+	if p := strings.TrimSpace(o.platform); p != "" {
+		frag, fargs := PlatformFilter("g", p)
+		conds = append(conds, frag)
+		*args = append(*args, fargs...)
 	}
 	if len(conds) == 0 {
 		return

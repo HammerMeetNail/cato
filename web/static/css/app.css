@@ -1339,6 +1339,46 @@ a { color: var(--accent); text-decoration: none; }
 
 .modal-ownership input[list] { min-width: 160px; }
 
+/* Available-platform chips in the game form (tap to fill "Owned on") */
+.modal-avail {
+  grid-column: 1 / -1;
+}
+
+.modal-avail-label {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+.modal-avail-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.plat-chip {
+  background: var(--surface2);
+  color: var(--text);
+  border: none;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+}
+
+.plat-chip:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.plat-more {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
 /* Settings page sections */
 .settings-page h2 { margin-bottom: 18px; }
 

@@ -1,4 +1,4 @@
-import { searchGames, getCoverThumbnailURL, autocompleteTags, formatTagForQuery, library } from './api.js';
+import { searchGames, getCoverThumbnailURL, autocompleteTags, autocompletePlatforms, formatTagForQuery, library } from './api.js';
 import { escapeHTML, showToast, formatPlatformName } from './library.js';
 
 // Tuning knobs (SEARCH_IMPROVEMENTS.md §1): 200ms feels responsive without
@@ -315,6 +315,34 @@ function scheduleSearch(query, resultsEl, onSelect, onSubmit, onTagLookup) {
     return;
   }
 
+  // Handle @platform prefix — autocomplete platform names from the user's
+  // library, then filter it (Enter or the footer row). Unlike $tags,
+  // everything after @ is ONE phrase: platforms don't combine with AND/OR,
+  // so multi-word names ("switch 2") need no quoting or segmentation.
+  if (query.startsWith('@')) {
+    const raw = query.slice(1).trim();
+    if (raw.length < 1) {
+      closeDropdown(activeInputEl, resultsEl);
+      currentResults = [];
+      currentQuery = '';
+      return;
+    }
+
+    searchTimer = setTimeout(async () => {
+      renderLoading(resultsEl);
+      try {
+        const suggestions = await autocompletePlatforms(raw);
+        currentResults = [];
+        selectedIndex = -1;
+        renderPlatformSuggestions(suggestions, resultsEl, raw);
+      } catch {
+        currentResults = [];
+        renderPlatformSuggestions([], resultsEl, raw);
+      }
+    }, SEARCH_DEBOUNCE_MS);
+    return;
+  }
+
   if (query.length === 0) {
     renderRecents(resultsEl);
     currentResults = [];
@@ -610,6 +638,55 @@ function renderTagSuggestions(tagSuggestions, items, resultsEl, onSelect, prefix
   }
 }
 
+// renderPlatformSuggestions shows @prefix autocomplete chips plus a footer
+// that applies the library platform filter (mirrors the $tag flow; no live
+// item list — the filtered library view is the feedback). raw is everything
+// after '@' — one phrase, no segmentation.
+function renderPlatformSuggestions(suggestions, resultsEl, raw) {
+  renderedCount = 0;
+  let html = '';
+
+  if (suggestions.length > 0) {
+    html += '<div class="tag-suggestions">';
+    html += suggestions.map(p => {
+      const matchStart = p.toLowerCase().indexOf(raw.toLowerCase());
+      const before = p.slice(0, matchStart);
+      const match = p.slice(matchStart, matchStart + raw.length);
+      const after = p.slice(matchStart + raw.length);
+      return `<span class="tag-suggestion-chip" data-plat="${escapeHTML(p)}">${escapeHTML(before)}<strong>${escapeHTML(match)}</strong>${escapeHTML(after)}</span>`;
+    }).join('');
+    html += '</div>';
+  } else {
+    html += `<div class="no-results">No platforms in your library matching "${escapeHTML(raw)}"</div>`;
+  }
+
+  html += `<div class="search-result-more">Filter library by "@${escapeHTML(raw)}" →</div>`;
+
+  resultsEl.innerHTML = html;
+  openDropdown(activeInputEl, resultsEl);
+
+  // Chip click — swap the typed phrase for the full platform name,
+  // re-triggering autocomplete against the completed name.
+  resultsEl.querySelectorAll('.tag-suggestion-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const inputEl = document.getElementById('searchInput');
+      if (inputEl) {
+        inputEl.value = '@' + chip.dataset.plat;
+        inputEl.focus();
+        inputEl.dispatchEvent(new Event('input'));
+      }
+    });
+  });
+
+  const footerRow = resultsEl.querySelector('.search-result-more');
+  if (footerRow) {
+    footerRow.addEventListener('click', () => {
+      closeDropdown(activeInputEl, resultsEl);
+      resultsEl.dispatchEvent(new CustomEvent('platformfilter', { detail: { platform: raw } }));
+    });
+  }
+}
+
 // --- keyboard -----------------------------------------------------------------
 
 function handleKeyboard(e, inputEl, resultsEl, onSelect, onSubmit, onTagLookup) {
@@ -639,6 +716,14 @@ function handleKeyboard(e, inputEl, resultsEl, onSelect, onSubmit, onTagLookup) 
         if (tag) {
           closeDropdown(inputEl, resultsEl);
           const event = new CustomEvent('tagfilter', { detail: { tag } });
+          resultsEl.dispatchEvent(event);
+        }
+      } else if (currentQuery && currentQuery.startsWith('@')) {
+        // @platform with no selection — filter library by platform
+        const platform = currentQuery.slice(1).trim();
+        if (platform) {
+          closeDropdown(inputEl, resultsEl);
+          const event = new CustomEvent('platformfilter', { detail: { platform } });
           resultsEl.dispatchEvent(event);
         }
       } else if (currentQuery && currentQuery.length >= 2 && onSubmit) {

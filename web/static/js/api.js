@@ -176,6 +176,13 @@ export async function autocompleteTags(prefix) {
   return api.get(`/api/library/tags?q=${encodeURIComponent(prefix)}`);
 }
 
+// autocompletePlatforms suggests platform names present in the caller's
+// library (most-used first) for the @ search prefix.
+export async function autocompletePlatforms(prefix) {
+  if (!prefix || prefix.length < 1) return [];
+  return api.get(`/api/library/platforms?q=${encodeURIComponent(prefix)}`);
+}
+
 export function getCoverURL(game) {
   if (game.local_cover_path) return game.local_cover_path;
   if (game.cover_url) return game.cover_url;
@@ -199,7 +206,7 @@ export const library = {
   // list returns { items, total, hasMore }. total/hasMore come from the
   // X-Total-Count / X-Has-More response headers; hasMore is exact even when
   // the item count is a multiple of the page size.
-  async list(status, limit = 60, offset = 0, tag = '') {
+  async list(status, limit = 60, offset = 0, tag = '', platform = '') {
     const params = new URLSearchParams();
     if (status) params.append('status', status);
     if (tag) {
@@ -209,6 +216,7 @@ export const library = {
         params.append('tag', t);
       }
     }
+    if (platform) params.append('platform', platform);
     params.append('limit', limit);
     params.append('offset', offset);
     const qs = params.toString() ? `?${params.toString()}` : '';

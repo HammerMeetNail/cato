@@ -36,7 +36,7 @@
         </button>
         <div class="search-hint">
           <span><kbd>$</kbd> filters your library by tag, e.g. <kbd>$rpg</kbd></span>
-          <span>tags with spaces need quotes: <kbd>$"switch 2"</kbd> · combine with <kbd>|</kbd></span>
+          <span><kbd>@</kbd> filters by platform, e.g. <kbd>@switch</kbd> · tags with spaces need quotes: <kbd>$"switch 2"</kbd></span>
         </div>
         <div class="search-results" id="searchResults"></div>
       </div>
@@ -69,7 +69,7 @@
   <script type="module">
     import { checkAuth, logout, library } from '/js/api.js';
     import { initSearch, initVoiceSearch, recordRecentSearch } from '/js/search.js';
-    import { loadLibrary, loadSearchResults, addGameToLibrary, renderLibraryItems, getHashStatus, getHashGameId, getHashSearch, openGameModal, activateStatusTab, openLibraryItemModal, filterByTag, refreshTabCounts, loadHero, initHeroActions } from '/js/library.js';
+    import { loadLibrary, loadSearchResults, addGameToLibrary, renderLibraryItems, getHashStatus, getHashGameId, getHashSearch, openGameModal, activateStatusTab, openLibraryItemModal, filterByTag, filterByPlatform, refreshTabCounts, loadHero, initHeroActions } from '/js/library.js';
     import { openStatsDialog } from '/js/stats.js';
 
     const searchInput = document.getElementById('searchInput');
@@ -176,6 +176,14 @@
           return;
         }
       }
+      if (query.startsWith('@')) {
+        const platform = query.slice(1).trim();
+        if (platform) {
+          searchInput.value = '';
+          filterByPlatform(platform);
+          return;
+        }
+      }
       window.location.hash = '#search/' + encodeURIComponent(query);
     }, async (tag) => {
       try {
@@ -201,6 +209,12 @@
     searchResults.addEventListener('tagfilter', (e) => {
       searchInput.value = '';
       filterByTag(e.detail.tag);
+    });
+
+    // Listen for platformfilter events from search.js (@platform Enter or footer)
+    searchResults.addEventListener('platformfilter', (e) => {
+      searchInput.value = '';
+      filterByPlatform(e.detail.platform);
     });
 
     // Status tabs
