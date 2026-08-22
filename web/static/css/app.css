@@ -894,10 +894,9 @@ a { color: var(--accent); text-decoration: none; }
 
 .hero-actions {
   display: flex;
+  align-items: center;
   gap: 5px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  min-width: 0;
+  flex-shrink: 0;
   margin-left: auto;
 }
 
@@ -1699,6 +1698,13 @@ a { color: var(--accent); text-decoration: none; }
   .hero-card {
     min-width: 260px;
     max-width: 86vw;
+  }
+
+  .hero-actions { gap: 4px; }
+
+  .hero-btn {
+    padding: 4px 7px;
+    font-size: 0.68rem;
   }
 
   /* Single-row scrollable tabs instead of wrapping onto two lines */
