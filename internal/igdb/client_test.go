@@ -64,6 +64,32 @@ func TestIgdbFieldsRequestImageID(t *testing.T) {
 	}
 }
 
+// TestDecodePlatforms covers the /platforms reference-list decode used to
+// populate the platform ID→name lookup table.
+func TestDecodePlatforms(t *testing.T) {
+	raw := []byte(`[
+		{"id":6,"name":"PC (Microsoft Windows)","abbreviation":"win"},
+		{"id":169,"name":"Nintendo Switch 2","abbreviation":"swi2"}
+	]`)
+	plats, err := decodePlatforms(raw)
+	if err != nil {
+		t.Fatalf("decodePlatforms: %v", err)
+	}
+	if len(plats) != 2 {
+		t.Fatalf("got %d platforms, want 2", len(plats))
+	}
+	if plats[0].ID != 6 || plats[0].Name != "PC (Microsoft Windows)" || plats[0].Abbreviation != "win" {
+		t.Errorf("plats[0] = %+v", plats[0])
+	}
+	if plats[1].ID != 169 || plats[1].Name != "Nintendo Switch 2" {
+		t.Errorf("plats[1] = %+v", plats[1])
+	}
+
+	if _, err := decodePlatforms([]byte("not json")); err == nil {
+		t.Error("expected error decoding invalid payload")
+	}
+}
+
 func contains(s, sub string) bool {
 	return len(sub) == 0 || (len(s) >= len(sub) && indexOf(s, sub) >= 0)
 }

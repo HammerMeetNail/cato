@@ -248,7 +248,7 @@ func (s *Store) execSearch(ctx context.Context, engine, match, query, prefix, wo
 	whereClause := where.String()
 
 	var sql strings.Builder
-	sql.WriteString(`SELECT g.id, g.name, g.slug, g.cover_url, g.local_cover_path, g.first_release_date`)
+	sql.WriteString(`SELECT g.id, g.name, g.slug, g.cover_url, g.local_cover_path, g.first_release_date, g.platforms_json`)
 	sql.WriteString(" FROM (")
 	sql.WriteString(union.String())
 	sql.WriteString(") x JOIN games g ON g.id = x.id")
@@ -285,12 +285,19 @@ func (s *Store) querySearch(ctx context.Context, sql string, args []interface{})
 	}
 	defer rows.Close()
 
+	// One tiny reference-table load per search (not per row) resolves IGDB
+	// platform IDs to display names. An empty/missing table just yields
+	// empty platform lists — never an error.
+	names, _ := s.PlatformNames(ctx)
+
 	var results []GameResult
 	for rows.Next() {
 		var g GameResult
-		if err := rows.Scan(&g.ID, &g.Name, &g.Slug, &g.CoverURL, &g.LocalCoverPath, &g.FirstReleaseDate); err != nil {
+		var platformsJSON string
+		if err := rows.Scan(&g.ID, &g.Name, &g.Slug, &g.CoverURL, &g.LocalCoverPath, &g.FirstReleaseDate, &platformsJSON); err != nil {
 			return nil, fmt.Errorf("scan game: %w", err)
 		}
+		g.Platforms = ResolvePlatformNames(platformsJSON, names)
 		results = append(results, g)
 	}
 	return results, rows.Err()

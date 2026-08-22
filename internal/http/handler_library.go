@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"database/sql"
 	"encoding/csv"
 	"encoding/json"
@@ -20,11 +21,23 @@ import (
 const maxLibraryPageSize = 200
 
 type LibraryHandler struct {
-	db *db.DB
+	db    *db.DB
+	games *games.Store
 }
 
 func NewLibraryHandler(db *db.DB) *LibraryHandler {
-	return &LibraryHandler{db: db}
+	return &LibraryHandler{db: db, games: games.NewStore(db)}
+}
+
+// platformNames loads the IGDB ID→name lookup once per request; callers pass
+// it down to scanLibraryItem. An empty map (table unfetched / DB error)
+// degrades to omitting unknown IDs rather than failing the request.
+func (h *LibraryHandler) platformNames(ctx context.Context) map[int64]string {
+	names, err := h.games.PlatformNames(ctx)
+	if err != nil {
+		return map[int64]string{}
+	}
+	return names
 }
 
 func (h *LibraryHandler) Register(mux *http.ServeMux) {
@@ -134,10 +147,12 @@ func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, use
 	}
 	defer rows.Close()
 
+	platformNames := h.platformNames(r.Context())
+
 	items := make([]map[string]interface{}, 0)
 	hasMore := false
 	for rows.Next() {
-		item, err := scanLibraryItem(rows)
+		item, err := scanLibraryItem(rows, platformNames)
 		if err != nil {
 			// A schema drift or corrupt row shouldn't silently shrink the
 			// user's library; log it loudly.
@@ -202,7 +217,9 @@ const libraryItemSelect = `li.game_id, li.status, li.rating, li.playtime_minutes
 // scanLibraryItem scans one row of libraryItemSelect into the API's JSON map.
 // Timestamps are emitted as JSON null when unset (previously created_at/
 // updated_at were mapped to "" while started/completed used null).
-func scanLibraryItem(row interface{ Scan(...interface{}) error }) (map[string]interface{}, error) {
+// platformNames resolves games.platforms_json IGDB IDs to display names —
+// load it once per request via platformNames and pass it in.
+func scanLibraryItem(row interface{ Scan(...interface{}) error }, platformNames map[int64]string) (map[string]interface{}, error) {
 	var gameID int64
 	var liStatus, tagsJSON, notes string
 	var rating, playtime int64
@@ -223,8 +240,10 @@ func scanLibraryItem(row interface{ Scan(...interface{}) error }) (map[string]in
 	tags := []string{}
 	json.Unmarshal([]byte(tagsJSON), &tags)
 
-	platforms := []string{}
-	json.Unmarshal([]byte(platformsJSON), &platforms)
+	platforms := games.ResolvePlatformNames(platformsJSON, platformNames)
+	if platforms == nil {
+		platforms = []string{}
+	}
 
 	nullOrNil := func(ns sql.NullString) interface{} {
 		if ns.Valid {
@@ -264,7 +283,7 @@ func (h *LibraryHandler) getLibraryItem(w http.ResponseWriter, r *http.Request, 
 		JOIN games g ON g.id = li.game_id
 		WHERE li.user_id = ? AND li.game_id = ?`, userID, gameID)
 
-	item, err := scanLibraryItem(row)
+	item, err := scanLibraryItem(row, h.platformNames(r.Context()))
 	if err == sql.ErrNoRows || (err == nil && item["status"] == nil) {
 		writeJSON(w, http.StatusNotFound, errResp("not_found", "Game is not in your library"))
 		return
@@ -335,7 +354,7 @@ func (h *LibraryHandler) patchLibraryItem(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	existing, err := h.fetchLibraryItem(userID, gameID)
+	existing, err := h.fetchLibraryItem(userID, gameID, h.platformNames(r.Context()))
 	if err == sql.ErrNoRows {
 		writeJSON(w, http.StatusNotFound, errResp("not_found", "Game is not in your library"))
 		return
@@ -394,7 +413,7 @@ func (h *LibraryHandler) patchLibraryItem(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	updated, err := h.fetchLibraryItem(userID, gameID)
+	updated, err := h.fetchLibraryItem(userID, gameID, h.platformNames(r.Context()))
 	if err != nil {
 		// The row was just written by us through the writer pool; a read
 		// hiccup shouldn't turn a successful patch into an error response.
@@ -406,12 +425,12 @@ func (h *LibraryHandler) patchLibraryItem(w http.ResponseWriter, r *http.Request
 
 // fetchLibraryItem loads one library item via libraryItemSelect, returning the
 // same JSON shape as the list endpoint (scanLibraryItem).
-func (h *LibraryHandler) fetchLibraryItem(userID string, gameID int64) (map[string]interface{}, error) {
+func (h *LibraryHandler) fetchLibraryItem(userID string, gameID int64, platformNames map[int64]string) (map[string]interface{}, error) {
 	row := h.db.QueryRow(`SELECT `+libraryItemSelect+`
 		FROM library_items li
 		JOIN games g ON g.id = li.game_id
 		WHERE li.user_id = ? AND li.game_id = ?`, userID, gameID)
-	item, err := scanLibraryItem(row)
+	item, err := scanLibraryItem(row, platformNames)
 	if err != nil {
 		return nil, err
 	}

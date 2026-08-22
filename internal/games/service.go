@@ -17,6 +17,9 @@ type IGDBClient interface {
 	// GetGamesBatch fetches many games per rate-limited request (IGDB allows
 	// up to 500 ids/query), requesting only id/name/alternative_names.
 	GetGamesBatch(ctx context.Context, ids []int64) ([]Game, error)
+	// GetPlatforms fetches the full platform reference list (id → name) in
+	// a single request; used by SyncPlatforms to populate the lookup table.
+	GetPlatforms(ctx context.Context) ([]Platform, error)
 }
 
 type Service struct {
@@ -124,7 +127,51 @@ func (s *Service) GetGame(ctx context.Context, id int64) (*Game, error) {
 	if err != nil {
 		return nil, err
 	}
+	if game != nil {
+		names, _ := s.store.PlatformNames(ctx)
+		game.Platforms = ResolvePlatformNames(game.PlatformsJSON, names)
+	}
 	return game, nil
+}
+
+// SyncPlatforms populates the platform ID → name lookup table from IGDB's
+// /platforms endpoint — one rate-limited request covering every platform.
+// Idempotent: skipped once the table has rows (the list changes ~yearly;
+// a restart re-runs only if it was never fetched). Without a real IGDB
+// client this is a no-op and platform IDs resolve to nothing (displayed as
+// absent rather than wrong).
+func (s *Service) SyncPlatforms(ctx context.Context) error {
+	if n, err := s.store.CountPlatforms(ctx); err == nil && n > 0 {
+		return nil
+	}
+	plats, err := s.igdb.GetPlatforms(ctx)
+	if err != nil {
+		return fmt.Errorf("fetch platforms: %w", err)
+	}
+	if err := s.store.UpsertPlatforms(ctx, plats); err != nil {
+		return err
+	}
+	log.Printf("platform sync: populated %d platform names", len(plats))
+	return nil
+}
+
+// StartPlatformSync runs SyncPlatforms in the background with bounded
+// retries, so a transient network failure at container start doesn't leave
+// platforms missing until the next deploy.
+func (s *Service) StartPlatformSync() {
+	go func() {
+		ctx := context.Background()
+		var err error
+		for attempt := 0; attempt < 3; attempt++ {
+			if attempt > 0 {
+				time.Sleep(15 * time.Second)
+			}
+			if err = s.SyncPlatforms(ctx); err == nil {
+				return
+			}
+		}
+		log.Printf("platform sync: giving up after retries: %v", err)
+	}()
 }
 
 func (s *Service) StartStaleRefresh() {

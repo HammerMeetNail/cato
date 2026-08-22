@@ -13,6 +13,19 @@ type Migration struct {
 
 var migrations = []Migration{
 	{
+		Version: 9,
+		// IGDB platform ID → name lookup. games.platforms_json stores raw
+		// IGDB platform IDs ([6,130,...]); API responses resolve them to
+		// human names via this table. Populated once from IGDB's /platforms
+		// endpoint (~230 rows) by Service.SyncPlatforms at startup when a
+		// real client is configured.
+		Up: `CREATE TABLE IF NOT EXISTS platforms (
+		     id INTEGER PRIMARY KEY,
+		     name TEXT NOT NULL,
+		     abbreviation TEXT NOT NULL DEFAULT ''
+		     );`,
+	},
+	{
 		Version: 8,
 		// Completion marker for alias backfill (SEARCH_IMPROVEMENTS.md §7).
 		// 0 = this row's alias set has never been fetched from IGDB;
