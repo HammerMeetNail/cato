@@ -200,3 +200,7 @@ func (c *noopIGDBClient) SearchGames(ctx context.Context, query string, limit in
 func (c *noopIGDBClient) GetGame(ctx context.Context, id int64) (*games.Game, error) {
 	return nil, nil
 }
+
+func (c *noopIGDBClient) GetGamesBatch(ctx context.Context, ids []int64) ([]games.Game, error) {
+	return nil, nil
+}

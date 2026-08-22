@@ -324,6 +324,8 @@ func (s *Store) GetByID(ctx context.Context, id int64) (*Game, error) {
 // UpsertIGDBGame inserts or refreshes a game row and replaces its alias set
 // (game_aliases) in one transaction, so a crash can't leave stale aliases for
 // a renamed game. The aliases_fts index is maintained by triggers.
+// aliases_fetched_at is stamped because igdbFields always includes
+// alternative_names.name — every full upsert carries the authoritative set.
 func (s *Store) UpsertIGDBGame(ctx context.Context, g Game) error {
 	now := time.Now().Unix()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -339,8 +341,8 @@ func (s *Store) UpsertIGDBGame(ctx context.Context, g Game) error {
 		igdb_url, source_updated_at,
 		rating, rating_count, total_rating, total_rating_count, follows, hypes,
 		igdb_popularity, category, status, version_parent, popularity_score,
-		popularity_fetched_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		popularity_fetched_at, aliases_fetched_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		name = excluded.name,
 		slug = excluded.slug,
@@ -369,14 +371,15 @@ func (s *Store) UpsertIGDBGame(ctx context.Context, g Game) error {
 		status = excluded.status,
 		version_parent = excluded.version_parent,
 		popularity_score = excluded.popularity_score,
-		popularity_fetched_at = excluded.popularity_fetched_at`,
+		popularity_fetched_at = excluded.popularity_fetched_at,
+		aliases_fetched_at = excluded.aliases_fetched_at`,
 		g.ID, g.Name, g.Slug, g.SafeName, g.NormalizedName,
 		g.Summary, g.Storyline, g.CoverID, g.CoverURL,
 		g.FirstReleaseDate, g.AggregatedRating, g.AggregatedRatingCount,
 		g.PlatformsJSON, g.GenresJSON, g.Trailer, g.IGDBURL, g.SourceUpdatedAt,
 		g.Rating, g.RatingCount, g.TotalRating, g.TotalRatingCount, g.Follows,
 		g.Hypes, g.IGDBPopularity, g.Category, g.Status, g.VersionParent,
-		g.PopularityScore, now,
+		g.PopularityScore, now, now,
 	)
 	if err != nil {
 		return err
@@ -409,6 +412,68 @@ func replaceAliases(ctx context.Context, tx *sql.Tx, gameID int64, normalizedNam
 		}
 	}
 	return nil
+}
+
+// GetAliasBackfillCandidates returns up to `limit` games whose alias set has
+// never been fetched from IGDB. Ordered by id for stable, resumable paging.
+func (s *Store) GetAliasBackfillCandidates(ctx context.Context, limit int) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id FROM games WHERE aliases_fetched_at = 0 ORDER BY id ASC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// CountPendingAliasBackfill reports how many rows still need their aliases
+// fetched (for progress reporting in the backfill subcommand).
+func (s *Store) CountPendingAliasBackfill(ctx context.Context) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM games WHERE aliases_fetched_at = 0`).Scan(&n)
+	return n, err
+}
+
+// MarkAliasesFetched stamps the completion marker without touching aliases —
+// used when IGDB no longer knows a game (deleted upstream), so the backfill
+// queue advances instead of retrying forever.
+func (s *Store) MarkAliasesFetched(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE games SET aliases_fetched_at = ? WHERE id = ?`,
+		time.Now().Unix(), id)
+	return err
+}
+
+// SetAliasesAndMarkFetched writes an authoritative alias set and stamps the
+// marker in one transaction. Used by the alias backfill, which fetches only
+// id/name/alternative_names — unlike UpsertIGDBGame it deliberately leaves
+// all other game columns untouched.
+func (s *Store) SetAliasesAndMarkFetched(ctx context.Context, gameID int64, name string, aliases []string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if err := replaceAliases(ctx, tx, gameID, NormalizeName(name), aliases); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE games SET aliases_fetched_at = ? WHERE id = ?`,
+		time.Now().Unix(), gameID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) GetStaleGames(ctx context.Context, limit int) ([]int64, error) {

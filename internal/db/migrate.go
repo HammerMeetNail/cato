@@ -13,6 +13,17 @@ type Migration struct {
 
 var migrations = []Migration{
 	{
+		Version: 8,
+		// Completion marker for alias backfill (SEARCH_IMPROVEMENTS.md §7).
+		// 0 = this row's alias set has never been fetched from IGDB;
+		// non-zero (unix seconds) = fetched, even when upstream had no
+		// aliases — otherwise zero-alias games would be re-fetched forever.
+		// Set by UpsertIGDBGame (whose igdbFields always include
+		// alternative_names.name) and by the resumable backfill-aliases
+		// subcommand.
+		Up: `ALTER TABLE games ADD COLUMN aliases_fetched_at INTEGER NOT NULL DEFAULT 0;`,
+	},
+	{
 		Version: 7,
 		// Game aliases for search (SEARCH_IMPROVEMENTS.md §4.1). Populated
 		// from IGDB alternative_names by the IGDB refresh paths; lets short

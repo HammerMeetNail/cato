@@ -31,6 +31,10 @@ func main() {
 	backfillBatch := backfillCmd.Int("batch", 500, "rows per IGDB fetch cycle")
 	backfillYears := backfillCmd.Int("recent-years", 2, "also backfill games released within this many years")
 
+	aliasBackfillCmd := flag.NewFlagSet("backfill-aliases", flag.ExitOnError)
+	aliasBackfillDB := aliasBackfillCmd.String("db", "data/cato.db", "SQLite database path")
+	aliasBackfillBatch := aliasBackfillCmd.Int("batch", 500, "game IDs per IGDB request (max 500)")
+
 	if len(os.Args) >= 2 && os.Args[1] == "import-games" {
 		importCmd.Parse(os.Args[2:])
 		if *importInput == "" {
@@ -43,6 +47,46 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("imported %d games\n", count)
+		return
+	}
+
+	if len(os.Args) >= 2 && os.Args[1] == "backfill-aliases" {
+		aliasBackfillCmd.Parse(os.Args[2:])
+		cfg := config.Load()
+		if cfg.IGDBClientID == "" {
+			fmt.Fprintln(os.Stderr, "backfill-aliases requires IGDB_CLIENT_ID (or TWITCH_OAUTH_ID)")
+			os.Exit(1)
+		}
+		database, err := db.Open(*aliasBackfillDB)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "open db: %v\n", err)
+			os.Exit(1)
+		}
+		defer database.Close()
+		if err := db.Migrate(database); err != nil {
+			fmt.Fprintf(os.Stderr, "migrate: %v\n", err)
+			os.Exit(1)
+		}
+		store := games.NewStore(database)
+		igdbClient := igdb.NewClient(cfg.IGDBClientID, cfg.IGDBClientSecret)
+		svc := games.NewService(store, igdbClient, database)
+
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer cancel()
+
+		progress := func(done, total int) {
+			if total == 0 {
+				fmt.Println("backfill: no pending rows")
+				return
+			}
+			log.Printf("backfill: %d/%d (%.1f%%)", done, total, 100*float64(done)/float64(total))
+		}
+		done, err := svc.BackfillAliases(ctx, *aliasBackfillBatch, progress)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "backfill stopped: %v (completed %d — safe to re-run)\n", err, done)
+			os.Exit(1)
+		}
+		fmt.Printf("backfill: fetched aliases for %d games\n", done)
 		return
 	}
 

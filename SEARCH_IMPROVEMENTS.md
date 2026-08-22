@@ -61,7 +61,27 @@ Explicitly out of scope (documented future work):
 - Server-side highlight spans (client-side highlighting is sufficient).
 - Per-user server-side search history (localStorage recents cover it).
 
-## 5. Results page
+## 5.5 Bulk alias backfill (added post-review)
+
+The stale-refresh loop touches ~400 rows/day — far too slow to cover the
+~311k-row catalog. The bottleneck was one IGDB request per game, not API
+bandwidth: IGDB accepts up to **500 ids per request**, and our limiter allows
+~1 req/s, so the whole catalog costs roughly 620 requests ≈ 10–15 minutes.
+
+Design (mirrors `backfill-popularity`):
+
+| Piece | Where |
+|-------|-------|
+| Migration v8: `games.aliases_fetched_at` completion marker (0 = never fetched) | `internal/db/migrate.go` |
+| `GetGamesBatch(ids)` — one rate-limited request per ≤500 ids, fields `id,name,alternative_names.name` only | `internal/igdb/client.go` |
+| Resumable `Service.BackfillAliases(ctx, batchSize, progress)` — stamps every processed row, including ones missing from IGDB's response (deleted upstream), so re-runs skip done work and can't spin | `internal/games/service.go` |
+| Store: candidates/count/mark + `SetAliasesAndMarkFetched` (alias write that deliberately leaves other columns untouched) | `internal/games/store.go` |
+| `UpsertIGDBGame` stamps the marker too — its field list always carries aliases now | `internal/games/store.go` |
+| One-shot CLI: `cato backfill-aliases --db data/cato.db [--batch N]` (SIGINT-safe, prints % progress) | `cmd/cato/main.go` |
+
+Run it once after deploying migration v8; it is safe to interrupt and re-run.
+
+## 6. Verification checklist
 
 | # | Item | Where |
 |---|------|-------|
