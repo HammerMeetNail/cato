@@ -1255,7 +1255,6 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
   if (existing) existing.remove();
 
   const title = inLibrary ? 'Edit Library Entry' : 'Add to Library';
-  const submitLabel = inLibrary ? 'Save' : 'Add to Library';
   const hours = Math.round((playtime / 60) * 100) / 100;
 
   // Dates are server-managed (auto-set on entering playing/completed) but
@@ -1284,15 +1283,22 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
           <div class="modal-dates-hint">Start/finish dates fill in automatically when you change status.</div>
         </div>` : '';
 
-  // Available platforms are shown as tappable chips (datalists alone are
-  // near-invisible on mobile): tapping one fills the "Owned on" input.
+  // Ownership is chosen directly on the available-platform chips: the
+  // highlighted chip IS the "Owned on" value (tap again to clear). A stored
+  // free-text platform that matches no IGDB chip still shows as its own
+  // selectable chip so existing data stays visible and clearable.
+  let selectedPlatform = String(platform || '').trim();
+  const norm = (s) => s.toLowerCase();
   const availPlatforms = (platforms || []).map(p => String(p).trim()).filter(Boolean);
-  const availChipsHTML = availPlatforms.length ? `
+  const chipHTML = (p) => `<button type="button" class="plat-chip${norm(selectedPlatform) === norm(p) ? ' selected' : ''}" data-full="${escapeHTML(p)}" title="${escapeHTML(p)}">${escapeHTML(formatPlatformName(p))}</button>`;
+  const extraOwned = selectedPlatform && !availPlatforms.some(p => norm(p) === norm(selectedPlatform));
+  const availChipsHTML = (availPlatforms.length || extraOwned) ? `
         <div class="modal-avail">
-          <span class="modal-avail-label">Available on</span>
+          <span class="modal-avail-label">Available on <span class="modal-avail-hint">(highlighted = owned)</span></span>
           <div class="modal-avail-chips">
-            ${availPlatforms.slice(0, 8).map(p => `<button type="button" class="plat-chip" data-full="${escapeHTML(p)}" title="${escapeHTML(p)}">${escapeHTML(formatPlatformName(p))}</button>`).join('')}
+            ${availPlatforms.slice(0, 8).map(chipHTML).join('')}
             ${availPlatforms.length > 8 ? `<span class="plat-more" title="${escapeHTML(availPlatforms.join(', '))}">+${availPlatforms.length - 8} more</span>` : ''}
+            ${extraOwned ? chipHTML(selectedPlatform) : ''}
           </div>
         </div>` : '';
 
@@ -1341,12 +1347,6 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
         </label>
         <div class="modal-ownership">
           ${availChipsHTML}
-          <label class="modal-field">Owned on
-            <input type="text" class="modal-platform" list="modalPlatformList" placeholder="e.g. PC, Switch 2…" value="${escapeHTML(platform)}" maxlength="64" autocomplete="off">
-            <datalist id="modalPlatformList">
-              ${platforms.map(p => `<option value="${escapeHTML(p)}">`).join('')}
-            </datalist>
-          </label>
           <label class="modal-field">Format
             <select class="modal-medium">
               <option value=""${!medium ? ' selected' : ''}>—</option>
@@ -1357,9 +1357,9 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary modal-cancel" type="button">Cancel</button>
+        <span class="autosave-status" aria-live="polite"></span>
+        <button class="btn btn-secondary modal-cancel" type="button">Close</button>
         ${inLibrary ? '<button class="btn modal-remove" type="button">Remove</button>' : ''}
-        <button class="btn btn-primary modal-submit" type="button">${submitLabel}</button>
       </div>
     </div>`;
   document.body.appendChild(modal);
@@ -1369,18 +1369,108 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
   const prevHashWasGame = prevHash.startsWith('#game/');
   setGameHash(id);
 
+  // --- auto-save -------------------------------------------------------------
+  // Every change saves itself; there is no submit button. Rapid edits
+  // (slider drags, typing) coalesce through a short debounce, and closing
+  // the form flushes anything still pending. The upsert endpoint means the
+  // first change on an un-owned game creates the library entry.
+  let saveTimer = null;
+  let unsavedChanges = false;
+  let savedAtLeastOnce = false;
+  let createdYet = inLibrary;
+  let removed = false;
+  let lastSnapshot = null;
+  let flashTimer = null;
+
+  const collectPayload = () => {
+    const newHours = parseFloat(modal.querySelector('.modal-playtime').value) || 0;
+    const payload = {
+      status: modal.querySelector('.modal-status').value,
+      rating: parseInt(modal.querySelector('.modal-rating').value) || 0,
+      playtime_minutes: Math.max(0, Math.round(newHours * 60)),
+      tags: Array.from(modal.querySelectorAll('.modal-tags-chips .tag-chip-removable'))
+        .map(c => c.firstChild.textContent.trim()),
+      notes: modal.querySelector('.modal-notes').value,
+      platform: selectedPlatform,
+      medium: modal.querySelector('.modal-medium').value,
+    };
+    // Explicit date changes only — omitting the fields preserves existing
+    // values (and keeps server-side auto-tracking working).
+    if (inLibrary && pendingDateChanges.started !== undefined) payload.started_at = pendingDateChanges.started;
+    if (inLibrary && pendingDateChanges.completed !== undefined) payload.completed_at = pendingDateChanges.completed;
+    return payload;
+  };
+
+  const flashSaveState = (text, sticky = false) => {
+    const el = modal.querySelector('.autosave-status');
+    if (!el) return;
+    el.textContent = text;
+    el.classList.add('visible');
+    clearTimeout(flashTimer);
+    if (!sticky) flashTimer = setTimeout(() => el.classList.remove('visible'), 1600);
+  };
+
+  const runSave = async () => {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    if (removed) return;
+    const payload = collectPayload();
+    const snapshot = JSON.stringify(payload);
+    if (snapshot === lastSnapshot) {
+      unsavedChanges = false;
+      return;
+    }
+    flashSaveState('Saving…', true);
+    try {
+      await library.add(id, payload);
+      lastSnapshot = snapshot;
+      unsavedChanges = false;
+      savedAtLeastOnce = true;
+      if (!createdYet) {
+        createdYet = true;
+        showToast(`Added ${name} to ${STATUS_LABELS[payload.status] || 'library'}`);
+      }
+      flashSaveState('Saved ✓');
+    } catch (err) {
+      // Clear the sticky indicator; unsavedChanges stays true so closing
+      // retries once.
+      const el = modal.querySelector('.autosave-status');
+      if (el) el.classList.remove('visible');
+      showToast(`Failed to auto-save ${name}: ${err.message}`, { type: 'error' });
+    }
+  };
+
+  const scheduleSave = () => {
+    if (removed) return;
+    unsavedChanges = true;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(runSave, 700);
+  };
+
   // Live-update the rating preview label. Playtime is entered directly in
   // hours (converted to minutes on save) — no more "type 2, see 0.0".
   modal.querySelector('.modal-rating').addEventListener('input', (e) => {
     modal.querySelector('.modal-rating-val').textContent = e.target.value;
+    scheduleSave();
   });
+  modal.querySelector('.modal-status').addEventListener('change', scheduleSave);
+  modal.querySelector('.modal-medium').addEventListener('change', scheduleSave);
+  modal.querySelector('.modal-playtime').addEventListener('input', scheduleSave);
+  modal.querySelector('.modal-notes').addEventListener('input', scheduleSave);
 
-  // Tap an available-platform chip to fill the "Owned on" input.
+  // Tap a platform chip to select it as the owned platform; tap again to
+  // clear. Single-select — the highlighted chip is what gets saved.
   modal.querySelectorAll('.plat-chip').forEach(chip => {
     chip.addEventListener('click', () => {
-      const input = modal.querySelector('.modal-platform');
-      input.value = chip.dataset.full;
-      input.focus();
+      if (norm(selectedPlatform) === norm(chip.dataset.full)) {
+        selectedPlatform = '';
+        chip.classList.remove('selected');
+      } else {
+        selectedPlatform = chip.dataset.full;
+        modal.querySelectorAll('.plat-chip.selected').forEach(c => c.classList.remove('selected'));
+        chip.classList.add('selected');
+      }
+      scheduleSave();
     });
   });
 
@@ -1391,6 +1481,7 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
       const key = inp.dataset.datekey;
       pendingDateChanges[key] = inp.value || '';
       inp.classList.toggle('dirty', pendingDateChanges[key] !== initialDates[key]);
+      scheduleSave();
     });
   });
 
@@ -1422,12 +1513,19 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
     chip.className = 'tag-chip tag-chip-removable';
     chip.dataset.tag = text;
     chip.innerHTML = `${escapeHTML(text)}<button type="button" class="tag-chip-x" aria-label="Remove ${escapeHTML(text)}">&times;</button>`;
-    chip.querySelector('.tag-chip-x').addEventListener('click', () => chip.remove());
+    chip.querySelector('.tag-chip-x').addEventListener('click', () => {
+      chip.remove();
+      scheduleSave();
+    });
     chipsContainer.appendChild(chip);
+    scheduleSave();
   }
 
   chipsContainer.querySelectorAll('.tag-chip-x').forEach(btn => {
-    btn.addEventListener('click', () => btn.parentElement.remove());
+    btn.addEventListener('click', () => {
+      btn.parentElement.remove();
+      scheduleSave();
+    });
   });
 
   tagInput.addEventListener('keydown', (e) => {
@@ -1437,7 +1535,10 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
       if (val) { addChip(val); tagInput.value = ''; }
     } else if (e.key === 'Backspace' && !val) {
       const chips = chipsContainer.querySelectorAll('.tag-chip-removable');
-      if (chips.length) chips[chips.length - 1].remove();
+      if (chips.length) {
+        chips[chips.length - 1].remove();
+        scheduleSave();
+      }
     }
   });
 
@@ -1541,8 +1642,12 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
     if (chip && chipsContainer.contains(chip)) showTagMenu(chip);
   });
 
-  const close = () => {
+  const close = async () => {
     dismissTagMenu();
+    // Flush any debounced edit before tearing down — closing must never
+    // lose a change. (After removal, runSave no-ops via the removed flag.)
+    if (unsavedChanges || saveTimer) await runSave();
+    const shouldRefresh = savedAtLeastOnce && paginationState.mode !== 'search';
     modal.remove();
     document.body.classList.remove('modal-open');
     document.removeEventListener('keydown', escHandler);
@@ -1553,6 +1658,11 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
         history.replaceState(null, '', window.location.pathname + window.location.search + prevHash);
       }
     }
+    // Reflect auto-saved edits in the grid/hero once, on the way out.
+    if (shouldRefresh) {
+      const activeTab = document.querySelector('.tab.active');
+      loadLibrary(activeTab?.dataset?.status || '', paginationState.tagFilter, paginationState.platformFilter);
+    }
   };
   modal.querySelector('.modal-close').addEventListener('click', close);
   modal.querySelector('.modal-cancel').addEventListener('click', close);
@@ -1562,57 +1672,17 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
   const escHandler = (e) => { if (e.key === 'Escape') close(); };
   document.addEventListener('keydown', escHandler);
 
-  modal.querySelector('.modal-submit').addEventListener('click', async () => {
-    const newStatus = modal.querySelector('.modal-status').value;
-    const newRating = parseInt(modal.querySelector('.modal-rating').value) || 0;
-    const newHours = parseFloat(modal.querySelector('.modal-playtime').value) || 0;
-    const newPlaytime = Math.max(0, Math.round(newHours * 60));
-    const newNotes = modal.querySelector('.modal-notes').value;
-    const chipEls = modal.querySelectorAll('.modal-tags-chips .tag-chip-removable');
-    const newTags = Array.from(chipEls).map(c => c.firstChild.textContent.trim());
-    const submitBtn = modal.querySelector('.modal-submit');
-
-    submitBtn.disabled = true;
-    submitBtn.textContent = inLibrary ? 'Saving...' : 'Adding...';
-    try {
-      const payload = {
-        status: newStatus,
-        rating: newRating,
-        playtime_minutes: newPlaytime,
-        tags: newTags,
-        notes: newNotes,
-        platform: modal.querySelector('.modal-platform').value.trim(),
-        medium: modal.querySelector('.modal-medium').value,
-      };
-      // Explicit date changes only — omitting the fields preserves existing
-      // values (and keeps server-side auto-tracking working).
-      if (inLibrary && pendingDateChanges.started !== undefined) payload.started_at = pendingDateChanges.started;
-      if (inLibrary && pendingDateChanges.completed !== undefined) payload.completed_at = pendingDateChanges.completed;
-      await library.add(id, payload);
-      showToast(inLibrary ? 'Saved' : 'Added to library');
-      const wasSearch = paginationState.mode === 'search';
-      close();
-      // Adding from a search results page keeps you on the results (close()
-      // already restored the #search hash); only the library view needs a
-      // reload to reflect the change.
-      if (!wasSearch) {
-        const activeTab = document.querySelector('.tab.active');
-        await loadLibrary(activeTab?.dataset?.status || '', paginationState.tagFilter);
-      }
-    } catch (err) {
-      submitBtn.disabled = false;
-      submitBtn.textContent = submitLabel;
-      showToast(`Failed to save game: ${err.message}`, { type: 'error' });
-    } finally {
-      document.removeEventListener('keydown', escHandler);
-    }
-  });
-
   const removeBtn = modal.querySelector('.modal-remove');
   if (removeBtn) {
     removeBtn.addEventListener('click', async () => {
       // No confirm() — removal is undoable via the toast instead, which is
-      // both faster and safer than a modal nag.
+      // both faster and safer than a modal nag. Any pending auto-save is
+      // dropped: the undo snapshot restores the ORIGINAL values, so a queued
+      // save must not resurrect the item with new ones.
+      removed = true;
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      unsavedChanges = false;
       const snapshot = {
         status,
         rating,
@@ -1629,9 +1699,12 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
       removeBtn.textContent = 'Removing...';
       try {
         await library.remove(id);
+        // The handler below refreshes the grid itself; stop close() from
+        // double-reloading.
+        savedAtLeastOnce = false;
         close();
         const activeTab = document.querySelector('.tab.active');
-        await loadLibrary(activeTab?.dataset?.status || '', paginationState.tagFilter);
+        await loadLibrary(activeTab?.dataset?.status || '', paginationState.tagFilter, paginationState.platformFilter);
         loadHero();
         showToast(`Removed ${name}`, {
           action: {
@@ -1644,7 +1717,7 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
                 showToast(`Couldn't restore ${name}: ${err.message}`, { type: 'error' });
               }
               const tab = document.querySelector('.tab.active');
-              await loadLibrary(tab?.dataset?.status || '', paginationState.tagFilter);
+              await loadLibrary(tab?.dataset?.status || '', paginationState.tagFilter, paginationState.platformFilter);
               loadHero();
             },
           },
