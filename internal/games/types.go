@@ -32,6 +32,12 @@ type Game struct {
 	Status                int64   `json:"status"`
 	VersionParent         int64   `json:"version_parent"`
 	PopularityScore       int64   `json:"popularity_score"`
+
+	// Aliases carries IGDB alternative_names (abbreviations, localized
+	// titles) into UpsertIGDBGame, which persists them in game_aliases for
+	// alias-aware search. Never serialized to API clients and never stored
+	// on the games row itself.
+	Aliases []string `json:"-"`
 }
 
 // ComputePopularityScore blends IGDB signals into a single sortable integer.

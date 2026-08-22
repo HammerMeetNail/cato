@@ -13,6 +13,37 @@ type Migration struct {
 
 var migrations = []Migration{
 	{
+		Version: 7,
+		// Game aliases for search (SEARCH_IMPROVEMENTS.md §4.1). Populated
+		// from IGDB alternative_names by the IGDB refresh paths; lets short
+		// abbreviations ("botw") and localized titles find the main game.
+		// aliases_fts is a standalone (content-managed) trigram table kept in
+		// step by triggers on game_aliases. Alias rows always reference an
+		// existing game, so ON DELETE CASCADE keeps both tables consistent.
+		Up: `CREATE TABLE IF NOT EXISTS game_aliases (
+		     game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+		     normalized_alias TEXT NOT NULL,
+		     PRIMARY KEY (game_id, normalized_alias)
+		     );
+		     CREATE INDEX IF NOT EXISTS idx_game_aliases_game ON game_aliases(game_id);
+
+		     CREATE VIRTUAL TABLE IF NOT EXISTS aliases_fts USING fts5(
+		       normalized_alias,
+		       tokenize='trigram'
+		     );
+
+		     CREATE TRIGGER IF NOT EXISTS game_aliases_ai AFTER INSERT ON game_aliases BEGIN
+		       INSERT INTO aliases_fts(rowid, normalized_alias) VALUES (new.rowid, new.normalized_alias);
+		     END;
+		     CREATE TRIGGER IF NOT EXISTS game_aliases_ad AFTER DELETE ON game_aliases BEGIN
+		       DELETE FROM aliases_fts WHERE rowid = old.rowid;
+		     END;
+		     CREATE TRIGGER IF NOT EXISTS game_aliases_au AFTER UPDATE OF normalized_alias ON game_aliases BEGIN
+		       DELETE FROM aliases_fts WHERE rowid = old.rowid;
+		       INSERT INTO aliases_fts(rowid, normalized_alias) VALUES (new.rowid, new.normalized_alias);
+		     END;`,
+	},
+	{
 		Version: 6,
 		// Ownership modeling: which platform a game is owned on and whether
 		// the copy is physical or digital. Empty string means "not set" —

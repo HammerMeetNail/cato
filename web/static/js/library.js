@@ -69,6 +69,20 @@ let paginationState = {
 
 let scrollListenerAttached = false;
 
+// Active sort/filters for search mode (SEARCH_IMPROVEMENTS.md §5). Scoped to
+// one query: switching searches resets them.
+const searchFilters = { sort: '', yearFrom: '', yearTo: '', minRating: '' };
+let searchFiltersQuery = '';
+
+function resetSearchFilters(query) {
+  if (searchFiltersQuery === query) return;
+  searchFiltersQuery = query;
+  searchFilters.sort = '';
+  searchFilters.yearFrom = '';
+  searchFilters.yearTo = '';
+  searchFilters.minRating = '';
+}
+
 // itemsById indexes the currently rendered library items by game_id so that a
 // card click (or a #game/<id> deep link) can open the edit modal with the
 // item's existing status/rating/playtime/notes without an extra API round-trip.
@@ -120,6 +134,8 @@ export async function loadSearchResults(query) {
   const grid = document.getElementById('gameGrid');
   if (!grid) return;
 
+  resetSearchFilters(query);
+
   // Reset pagination state to search mode
   paginationState = {
     currentStatus: '',
@@ -140,7 +156,7 @@ export async function loadSearchResults(query) {
   if (statusTabs) statusTabs.style.display = 'none';
   hideHero();
 
-  // Create and show results header
+  // Create and show results header (+ sort/filter bar + total count)
   const existingHeader = document.getElementById('searchResultsHeader');
   if (existingHeader) existingHeader.remove();
 
@@ -149,14 +165,17 @@ export async function loadSearchResults(query) {
   header.className = 'search-results-header';
   header.innerHTML = `
     <div class="search-results-header-content">
-      <div class="search-results-title">Results for "<span id="searchQueryDisplay">${escapeHTML(query)}</span>"</div>
+      <div class="search-results-title">Results for "<span id="searchQueryDisplay">${escapeHTML(query)}</span>"<span class="search-results-count" id="searchTotal"></span></div>
       <button class="search-results-clear" aria-label="Clear search" type="button">✕</button>
     </div>
+    ${buildSearchFilterBarHTML()}
   `;
 
   const container = document.querySelector('.container');
   const searchWrap = document.querySelector('.search-wrap');
   container.insertBefore(header, searchWrap.nextSibling);
+
+  wireSearchFilterBar(header, query);
 
   const clearBtn = header.querySelector('.search-results-clear');
   clearBtn.addEventListener('click', () => {
@@ -167,10 +186,12 @@ export async function loadSearchResults(query) {
   grid.innerHTML = '<div class="loading">Loading results...</div>';
 
   try {
-    const results = await searchGamesFull(query, {
+    const { results, total } = await searchGamesFull(query, {
       limit: SEARCH_PAGE_SIZE,
       offset: 0,
+      ...filterParams(),
     });
+    updateSearchTotal(total);
     // Learn which results are already in the library so cards get a badge
     // and clicks open the edit form instead of a destructive "Add" form.
     ownedIds.clear();
@@ -183,6 +204,94 @@ export async function loadSearchResults(query) {
     paginationState.loading = false;
     grid.innerHTML = `<div class="empty-state">Failed to load results: ${err.message}</div>`;
   }
+}
+
+// filterParams maps searchFilters onto the API's query params.
+function filterParams() {
+  const p = {};
+  if (searchFilters.sort) p.sort = searchFilters.sort;
+  if (searchFilters.yearFrom) p.yearFrom = Number(searchFilters.yearFrom);
+  if (searchFilters.yearTo) p.yearTo = Number(searchFilters.yearTo);
+  if (searchFilters.minRating) p.minRating = Number(searchFilters.minRating);
+  return p;
+}
+
+function updateSearchTotal(total) {
+  const el = document.getElementById('searchTotal');
+  if (!el || !Number.isFinite(total)) return;
+  el.textContent = total === 1 ? ' · 1 game' : ` · ${total} games`;
+}
+
+// buildSearchFilterBarHTML renders the collapsible sort/filter controls.
+function buildSearchFilterBarHTML() {
+  return `
+    <details class="search-filterbar">
+      <summary>Sort &amp; filter</summary>
+      <div class="sf-controls">
+        <label>Sort
+          <select id="sfSort">
+            <option value="">Relevance</option>
+            <option value="release_new">Newest</option>
+            <option value="release_old">Oldest</option>
+            <option value="rating">Rating</option>
+            <option value="popularity">Popularity</option>
+            <option value="name">Name A–Z</option>
+          </select>
+        </label>
+        <label>Year from
+          <input id="sfYearFrom" type="number" min="1900" max="2100" inputmode="numeric" placeholder="1994">
+        </label>
+        <label>to
+          <input id="sfYearTo" type="number" min="1900" max="2100" inputmode="numeric" placeholder="2024">
+        </label>
+        <label>Min rating
+          <select id="sfMinRating">
+            <option value="">Any</option>
+            <option value="60">60+</option>
+            <option value="75">75+</option>
+            <option value="85">85+</option>
+            <option value="95">95+</option>
+          </select>
+        </label>
+        <button id="sfApply" class="btn btn-primary btn-inline" type="button">Apply</button>
+        <button id="sfClear" class="btn btn-secondary btn-inline" type="button">Clear</button>
+      </div>
+    </details>`;
+}
+
+// wireSearchFilterBar restores control values and applies changes. Applying
+// re-runs the whole search (page 1, fresh totals); Clear resets to defaults.
+function wireSearchFilterBar(header, query) {
+  const sortSel = header.querySelector('#sfSort');
+  const yearFrom = header.querySelector('#sfYearFrom');
+  const yearTo = header.querySelector('#sfYearTo');
+  const minRating = header.querySelector('#sfMinRating');
+  if (!sortSel) return;
+
+  sortSel.value = searchFilters.sort;
+  yearFrom.value = searchFilters.yearFrom;
+  yearTo.value = searchFilters.yearTo;
+  minRating.value = searchFilters.minRating;
+
+  const apply = () => {
+    const clampYear = (v) => {
+      const n = parseInt(v, 10);
+      return Number.isFinite(n) && n >= 1900 && n <= 2100 ? String(n) : '';
+    };
+    searchFilters.sort = sortSel.value;
+    searchFilters.yearFrom = clampYear(yearFrom.value);
+    searchFilters.yearTo = clampYear(yearTo.value);
+    searchFilters.minRating = minRating.value;
+    loadSearchResults(query);
+  };
+  header.querySelector('#sfApply').addEventListener('click', apply);
+  header.querySelector('#sfClear').addEventListener('click', () => {
+    sortSel.value = '';
+    yearFrom.value = '';
+    yearTo.value = '';
+    minRating.value = '';
+    apply();
+  });
 }
 
 export async function loadLibrary(status, tag = '') {
@@ -326,11 +435,12 @@ async function loadMore() {
 
   try {
     if (paginationState.mode === 'search') {
-      const items = await searchGamesFull(paginationState.searchQuery, {
+      const { results } = await searchGamesFull(paginationState.searchQuery, {
         limit: paginationState.pageSize,
         offset: paginationState.offset,
+        ...filterParams(),
       });
-      renderPagedItems(grid, items, false); // false = append, not replace
+      renderPagedItems(grid, results, false); // false = append, not replace
     } else {
       const { items, hasMore } = await library.list(
         paginationState.currentStatus,
@@ -482,7 +592,7 @@ async function loadSuggestions() {
 //   type   'error' renders in the danger color
 //   action { label, fn } renders an inline button (e.g. Undo) — the toast
 //          stays until the action is clicked or the timeout elapses.
-function showToast(message, opts = {}) {
+export function showToast(message, opts = {}) {
   let toast = document.getElementById('toast');
   if (!toast) {
     toast = document.createElement('div');

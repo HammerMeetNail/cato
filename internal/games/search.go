@@ -42,6 +42,35 @@ func BuildFTSMatch(query string) (string, bool) {
 	return `"` + strings.Join(tokens, " ") + `"`, true
 }
 
+// BuildFTSTokenMatch converts a normalized user query into an unquoted FTS5
+// MATCH expression of individually quoted tokens of at least 3 characters.
+// Unquoted terms combine with implicit AND, so token order doesn't matter:
+// "kingdom tears" matches "Tears of the Kingdom", which the strict phrase
+// match in BuildFTSMatch cannot. Tokens shorter than 3 characters produce no
+// trigrams and are dropped; if nothing survives there is no token query.
+// Used as a recall retry when the phrase match returns zero rows — it runs on
+// the same FTS index, so it costs index lookups only, never a table scan.
+func BuildFTSTokenMatch(query string) (string, bool) {
+	query = strings.TrimSpace(query)
+	if len(query) < 3 {
+		return "", false
+	}
+	var out []string
+	seen := make(map[string]bool)
+	for _, tok := range strings.Fields(query) {
+		tok = sanitizeFTSToken(tok)
+		if len(tok) < 3 || seen[tok] {
+			continue
+		}
+		seen[tok] = true
+		out = append(out, `"`+tok+`"`)
+	}
+	if len(out) == 0 {
+		return "", false
+	}
+	return strings.Join(out, " "), true
+}
+
 func sanitizeFTSToken(token string) string {
 	return strings.Map(func(r rune) rune {
 		if strings.ContainsRune(fts5SpecialChars, r) {
