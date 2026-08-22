@@ -1351,6 +1351,8 @@ a { color: var(--accent); text-decoration: none; }
   margin-bottom: 4px;
 }
 
+.modal-avail-hint { opacity: 0.75; }
+
 .modal-avail-chips {
   display: flex;
   flex-wrap: wrap;
@@ -1372,6 +1374,28 @@ a { color: var(--accent); text-decoration: none; }
 .plat-chip:hover {
   background: var(--accent);
   color: #fff;
+}
+
+/* Selected chip = owned platform (single-select; tap again to clear) */
+.plat-chip.selected {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* Auto-save feedback in the modal footer ("Saving…" / "Saved ✓").
+   Occupies the space where the Save button used to live. */
+.autosave-status {
+  margin-right: auto;
+  align-self: center;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  opacity: 0;
+  transition: opacity var(--transition);
+}
+
+.autosave-status.visible {
+  opacity: 1;
 }
 
 .plat-more {
