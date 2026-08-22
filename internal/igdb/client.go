@@ -176,6 +176,39 @@ func (c *Client) GetGamesBatch(ctx context.Context, ids []int64) ([]games.Game, 
 	return result, nil
 }
 
+// GetPlatforms fetches the complete platform reference list (id, name,
+// abbreviation) in a single rate-limited request — the table is small
+// (~230 rows), well under IGDB's page cap.
+func (c *Client) GetPlatforms(ctx context.Context) ([]games.Platform, error) {
+	if c.clientID == "" {
+		return nil, nil
+	}
+
+	c.rateLimiter.Wait()
+
+	raw, err := c.do(ctx, "platforms", "fields id,name,abbreviation; limit 500;")
+	if err != nil {
+		return nil, err
+	}
+	return decodePlatforms(raw)
+}
+
+func decodePlatforms(raw []byte) ([]games.Platform, error) {
+	var plats []struct {
+		ID           int64  `json:"id"`
+		Name         string `json:"name"`
+		Abbreviation string `json:"abbreviation"`
+	}
+	if err := json.Unmarshal(raw, &plats); err != nil {
+		return nil, fmt.Errorf("decode platforms: %w", err)
+	}
+	out := make([]games.Platform, 0, len(plats))
+	for _, p := range plats {
+		out = append(out, games.Platform{ID: p.ID, Name: p.Name, Abbreviation: p.Abbreviation})
+	}
+	return out, nil
+}
+
 func (c *Client) toGame(g igdbGame) games.Game {
 	var coverID int64
 	var coverURL string
@@ -275,7 +308,9 @@ func (c *Client) authenticate(ctx context.Context) error {
 	return nil
 }
 
-func (c *Client) post(ctx context.Context, endpoint, body string) ([]igdbGame, error) {
+// do authenticates, POSTs an APIQL query to one IGDB endpoint, and returns
+// the raw response body. Endpoint-specific wrappers decode it.
+func (c *Client) do(ctx context.Context, endpoint, body string) ([]byte, error) {
 	if err := c.authenticate(ctx); err != nil {
 		return nil, fmt.Errorf("authenticate: %w", err)
 	}
@@ -315,11 +350,18 @@ func (c *Client) post(ctx context.Context, endpoint, body string) ([]igdbGame, e
 		return nil, fmt.Errorf("igdb returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
+	return io.ReadAll(resp.Body)
+}
+
+func (c *Client) post(ctx context.Context, endpoint, body string) ([]igdbGame, error) {
+	raw, err := c.do(ctx, endpoint, body)
+	if err != nil {
+		return nil, err
+	}
 	var games []igdbGame
-	if err := json.NewDecoder(resp.Body).Decode(&games); err != nil {
+	if err := json.Unmarshal(raw, &games); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
-
 	return games, nil
 }
 

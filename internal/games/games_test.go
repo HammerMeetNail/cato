@@ -12,10 +12,11 @@ import (
 )
 
 type fakeIGDB struct {
-	searchCalls int
-	searchFunc  func(ctx context.Context, query string, limit int) ([]Game, error)
-	batchCalls  int
-	batchFunc   func(ctx context.Context, ids []int64) ([]Game, error)
+	searchCalls   int
+	searchFunc    func(ctx context.Context, query string, limit int) ([]Game, error)
+	batchCalls    int
+	batchFunc     func(ctx context.Context, ids []int64) ([]Game, error)
+	platformCalls int
 }
 
 func (f *fakeIGDB) SearchGames(ctx context.Context, query string, limit int) ([]Game, error) {
@@ -36,6 +37,14 @@ func (f *fakeIGDB) GetGamesBatch(ctx context.Context, ids []int64) ([]Game, erro
 		return f.batchFunc(ctx, ids)
 	}
 	return nil, nil
+}
+
+func (f *fakeIGDB) GetPlatforms(ctx context.Context) ([]Platform, error) {
+	f.platformCalls++
+	return []Platform{
+		{ID: 6, Name: "PC (Microsoft Windows)", Abbreviation: "win"},
+		{ID: 130, Name: "Nintendo Switch", Abbreviation: "swi"},
+	}, nil
 }
 
 func setupGameDB(t *testing.T) (*db.DB, *Store) {

@@ -977,6 +977,17 @@ a { color: var(--accent); text-decoration: none; }
   max-height: 24px;
 }
 
+/* Available-platforms line under card titles (IGDB data). Single dim line,
+   ellipsized — the full list is in the title attribute. */
+.card-platforms {
+  padding: 0 10px 4px;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .card-tags .tag-chip {
   cursor: pointer;
   transition: background var(--transition), color var(--transition);

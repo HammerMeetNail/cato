@@ -27,6 +27,9 @@ func NewGameHandler(db *db.DB, cfg *config.Config) *GameHandler {
 	}
 	svc := games.NewService(store, igdbClient, db)
 	if cfg.IGDBClientID != "" {
+		// Populates the platform ID→name lookup table once (single IGDB
+		// request) so game platforms render as names, not bare IDs.
+		svc.StartPlatformSync()
 		svc.StartStaleRefresh()
 		// One-shot startup repair of covers broken by the old URL guessing
 		// and the dead cato host (needs a real IGDB client).
@@ -202,5 +205,9 @@ func (c *noopIGDBClient) GetGame(ctx context.Context, id int64) (*games.Game, er
 }
 
 func (c *noopIGDBClient) GetGamesBatch(ctx context.Context, ids []int64) ([]games.Game, error) {
+	return nil, nil
+}
+
+func (c *noopIGDBClient) GetPlatforms(ctx context.Context) ([]games.Platform, error) {
 	return nil, nil
 }

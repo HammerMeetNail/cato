@@ -38,6 +38,11 @@ type Game struct {
 	// alias-aware search. Never serialized to API clients and never stored
 	// on the games row itself.
 	Aliases []string `json:"-"`
+
+	// Platforms is the display form of PlatformsJSON (IDs resolved to names
+	// via the platforms lookup table). Populated on read paths only —
+	// never persisted.
+	Platforms []string `json:"platforms,omitempty"`
 }
 
 // ComputePopularityScore blends IGDB signals into a single sortable integer.
@@ -55,12 +60,13 @@ func ComputePopularityScore(follows, hypes, totalRatingCount, category, status i
 }
 
 type GameResult struct {
-	ID               int64  `json:"id"`
-	Name             string `json:"name"`
-	Slug             string `json:"slug"`
-	CoverURL         string `json:"cover_url"`
-	LocalCoverPath   string `json:"local_cover_path"`
-	FirstReleaseDate int64  `json:"first_release_date"`
+	ID               int64    `json:"id"`
+	Name             string   `json:"name"`
+	Slug             string   `json:"slug"`
+	CoverURL         string   `json:"cover_url"`
+	LocalCoverPath   string   `json:"local_cover_path"`
+	FirstReleaseDate int64    `json:"first_release_date"`
+	Platforms        []string `json:"platforms,omitempty"`
 }
 
 type IGDBRateLimiter struct {

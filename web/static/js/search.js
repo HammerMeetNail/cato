@@ -1,5 +1,5 @@
 import { searchGames, getCoverThumbnailURL, autocompleteTags, formatTagForQuery, library } from './api.js';
-import { escapeHTML, showToast } from './library.js';
+import { escapeHTML, showToast, formatPlatformName } from './library.js';
 
 // Tuning knobs (SEARCH_IMPROVEMENTS.md §1): 200ms feels responsive without
 // hammering the API; the dropdown renders at most 8 rows; the client-side
@@ -452,6 +452,9 @@ function renderResults(results, resultsEl, onSelect, onSubmit) {
       const action = owned
         ? ownedBadgeHTML()
         : `<button type="button" class="qa-add" data-add-id="${id}" data-add-name="${escapeHTML(g.name)}" aria-label="Add ${escapeHTML(g.name)} to backlog">+</button>`;
+      // Up to three platform names, shortened ("PC (Microsoft Windows)" →
+      // "PC"), so it's obvious what a result can be played on.
+      const plats = (g.platforms || []).map(formatPlatformName).filter(Boolean).slice(0, 3).join(' · ');
       return `
         <div class="search-result-item${i === selectedIndex ? ' selected' : ''}"
              ${optionAttrs(i)} data-index="${i}" data-id="${id}">
@@ -459,7 +462,7 @@ function renderResults(results, resultsEl, onSelect, onSubmit) {
                alt="${escapeHTML(g.name)}" loading="lazy" decoding="async">
           <div class="info">
             <div class="name">${highlightName(g.name, currentQuery)}</div>
-            <div class="year">${year}</div>
+            <div class="year">${[year, plats].filter(Boolean).join(' · ')}</div>
           </div>
           ${action}
         </div>`;

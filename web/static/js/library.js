@@ -964,6 +964,22 @@ function updateTagFilterBar() {
   after.insertAdjacentElement('afterend', bar);
 }
 
+// formatPlatformName shortens IGDB platform names for compact display:
+// "PC (Microsoft Windows)" → "PC", "Xbox Series X|S" unchanged.
+export function formatPlatformName(name) {
+  const raw = String(name || '').trim();
+  const short = raw.replace(/\s*\([^)]*\)/g, '').trim();
+  return short || raw;
+}
+
+function platformsLine(platforms, max = 3) {
+  const names = (platforms || []).map(formatPlatformName).filter(Boolean);
+  if (!names.length) return '';
+  let line = names.slice(0, max).join(' · ');
+  if (names.length > max) line += ` +${names.length - max}`;
+  return line;
+}
+
 function buildCardHTML(items) {
   const isSearch = paginationState.mode === 'search';
   return items.map((item, index) => {
@@ -999,11 +1015,19 @@ function buildCardHTML(items) {
       ? `<div class="card-tags"><span class="tag-chip own-meta-chip">${escapeHTML(ownBits)}</span></div>`
       : '';
 
+    // Available platforms (IGDB data) — shown for library and search cards
+    // so it's clear what a game can be played on before/after logging.
+    const platLine = platformsLine(item.platforms);
+    const platformsHTML = platLine
+      ? `<div class="card-platforms" title="${escapeHTML((item.platforms || []).join(', '))}">${escapeHTML(platLine)}</div>`
+      : '';
+
     return `
     <div class="game-card" data-game-id="${item.game_id}">
       <img src="${getCoverURL(item)}" alt="${escapeHTML(item.game_name)}" loading="lazy" decoding="async"${priority}>
       ${libraryOverlays}
       <div class="card-title">${escapeHTML(item.game_name)}</div>
+      ${platformsHTML}
       ${tagsHTML || ownMetaHTML}
       ${ownedBadge}
       ${item.rating > 0 ? `<div class="rating-display">${Number(item.rating)}</div>` : ''}
@@ -1152,6 +1176,7 @@ function openAddForm(game) {
     year: game.first_release_date
       ? new Date(game.first_release_date * 1000).getFullYear()
       : '',
+    platforms: game.platforms || [],
     inLibrary: false,
   });
 }
