@@ -685,12 +685,21 @@ func (h *LibraryHandler) handleLibraryTags(w http.ResponseWriter, r *http.Reques
 	userID := auth.GetUserID(r.Context())
 	q := r.URL.Query().Get("q")
 
+	// The game-form datalist wants the whole tag vocabulary, search only needs
+	// the top matches; both come through here with an optional capped limit.
+	limit := 10
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 100 {
+			limit = n
+		}
+	}
+
 	// Escape LIKE wildcards so searching "100%" doesn't match "1000 things".
 	rows, err := h.db.Query(`SELECT DISTINCT j.value
 		FROM library_items li, json_each(li.tags_json) j
 		WHERE li.user_id = ? AND j.value LIKE ? ESCAPE '\'
 		ORDER BY j.value
-		LIMIT 10`, userID, games.EscapeLike(q)+"%")
+		LIMIT ?`, userID, games.EscapeLike(q)+"%", limit)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to fetch tags"))
 		return

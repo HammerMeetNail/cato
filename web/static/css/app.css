@@ -727,6 +727,15 @@ a { color: var(--accent); text-decoration: none; }
 
 .qa-btn.qa-play:hover { background: var(--green); }
 
+/* +30m/+1h time pills on playing cards: wider than the round icon buttons */
+.qa-btn.qa-time {
+  width: auto;
+  border-radius: 999px;
+  padding: 0 9px;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
 @media (hover: none) {
   .game-card .qa-bar {
     opacity: 1;
@@ -925,18 +934,10 @@ a { color: var(--accent); text-decoration: none; }
   padding: 0;
 }
 
-/* Added/Started/Completed rows in the edit modal */
-.modal-dates {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px 10px;
-  background: var(--surface2);
-  border-radius: 6px;
-}
-
+/* Completed date row in the edit modal */
 .modal-date-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   font-size: 0.85rem;
@@ -944,27 +945,13 @@ a { color: var(--accent); text-decoration: none; }
 
 .modal-date-label {
   color: var(--text-dim);
-  min-width: 84px;
 }
 
-.modal-date-value.cleared {
-  text-decoration: line-through;
-  opacity: 0.6;
-}
-
-.modal-date-clear {
-  margin-left: auto;
-  background: none;
-  border: none;
+.modal-dates-hint {
+  width: 100%;
+  font-size: 0.72rem;
   color: var(--text-dim);
-  cursor: pointer;
-  font-size: 1rem;
-  line-height: 1;
-  padding: 0 4px;
-}
-
-.modal-date-clear:hover {
-  color: var(--accent);
+  opacity: 0.8;
 }
 
 /* Tag chips on cards */
@@ -1319,25 +1306,12 @@ a { color: var(--accent); text-decoration: none; }
   padding: 8px 22px;
 }
 
-/* Modal ownership row (platform + format side by side) */
+/* Modal platforms + format block */
 .modal-ownership {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
-
-.modal-ownership .modal-field select,
-.modal-ownership .modal-field input[type="text"] {
-  width: 100%;
-  padding: 6px;
-  font-size: 0.85rem;
-  background: var(--surface2);
-  border: 1px solid var(--surface2);
-  border-radius: 4px;
-  color: var(--text);
-}
-
-.modal-ownership input[list] { min-width: 160px; }
 
 /* Available-platform chips in the game form (tap to fill "Owned on") */
 .modal-avail {
@@ -1483,7 +1457,7 @@ a { color: var(--accent); text-decoration: none; }
   color: var(--text);
 }
 
-/* Editable start/completed dates in the modal */
+/* Editable completion date in the modal */
 .modal-date-input {
   margin-left: auto;
   padding: 3px 6px;
@@ -1492,16 +1466,10 @@ a { color: var(--accent); text-decoration: none; }
   border: 1px solid var(--surface2);
   border-radius: 4px;
   color: var(--text);
-  color-scheme: dark;
 }
 
 .modal-date-input.dirty {
   border-color: var(--accent);
-}
-
-.modal-dates-hint {
-  font-size: 0.72rem;
-  color: var(--text-dim);
 }
 
 /* Suggested games in the empty state */
@@ -1695,6 +1663,7 @@ body.modal-open {
   overflow: hidden;
 }
 
+/* Header and footer stay pinned; only the body scrolls. */
 .modal-card {
   background: var(--surface);
   border: 1px solid var(--surface2);
@@ -1702,17 +1671,21 @@ body.modal-open {
   width: 100%;
   max-width: 420px;
   max-height: 90vh;
-  overflow-y: auto;
+  /* dvh tracks mobile browser chrome; ignored (vh above stands) if unsupported */
+  max-height: 90dvh;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
+  animation: modal-pop-in 140ms ease;
 }
 
 .modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 18px;
+  padding: 10px 12px 10px 18px;
   border-bottom: 1px solid var(--surface2);
+  flex-shrink: 0;
 }
 
 .modal-header h2 {
@@ -1727,18 +1700,26 @@ body.modal-open {
   font-size: 1.5rem;
   line-height: 1;
   cursor: pointer;
-  padding: 0 4px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .modal-close:hover {
   color: var(--text);
+  background: var(--surface2);
 }
 
 .modal-body {
   padding: 18px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .modal-game-info {
@@ -1770,27 +1751,194 @@ body.modal-open {
 .modal-field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   font-size: 0.85rem;
   color: var(--text-dim);
 }
 
-.modal-field select,
-.modal-field input[type="range"],
+.field-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
 .modal-field input[type="number"],
 .modal-field textarea {
   width: 100%;
-  padding: 6px;
-  font-size: 0.85rem;
-  background: var(--surface2);
+  padding: 8px 10px;
+  font-size: 0.95rem;
+  background: var(--bg);
   border: 1px solid var(--surface2);
-  border-radius: 4px;
+  border-radius: var(--radius);
   color: var(--text);
 }
 
 .modal-field textarea {
-  height: 60px;
-  resize: vertical;
+  min-height: 60px;
+  resize: none; /* auto-grown by JS */
+}
+
+/* Drag grip for the mobile bottom sheet: swipe it down to dismiss. Hidden
+   where the sheet doesn't exist. */
+.sheet-handle {
+  display: none;
+  padding: 8px 0 2px;
+  touch-action: none;
+  cursor: grab;
+  flex-shrink: 0;
+}
+
+.sheet-handle:active { cursor: grabbing; }
+
+.sheet-grip {
+  display: block;
+  width: 44px;
+  height: 5px;
+  margin: 0 auto;
+  border-radius: 999px;
+  background: var(--surface2);
+}
+
+/* Chip selectors (Status / Format): every option is always visible and
+   thumb-sized — no dropdowns. Single-select; Format can be cleared by
+   re-tapping. */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.opt-chip {
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 9px 16px;
+  min-height: 40px;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition),
+    border-color var(--transition);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.opt-chip:hover {
+  border-color: var(--accent);
+}
+
+.opt-chip.selected {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* Selected status chips take their badge colors, so the form matches the
+   pills on cards at a glance. */
+.chip-row[data-role="status"] .opt-chip.selected[data-value="wishlist"] { background: #2196f3; border-color: #2196f3; }
+.chip-row[data-role="status"] .opt-chip.selected[data-value="backlog"]  { background: #ff9800; border-color: #ff9800; }
+.chip-row[data-role="status"] .opt-chip.selected[data-value="playing"]  { background: var(--green); border-color: var(--green); }
+.chip-row[data-role="status"] .opt-chip.selected[data-value="completed"]{ background: #9c27b0; border-color: #9c27b0; }
+.chip-row[data-role="status"] .opt-chip.selected[data-value="abandoned"]{ background: #f44336; border-color: #f44336; }
+
+/* Rating wheel + hours side by side */
+.modal-duo {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 18px;
+  align-items: start;
+}
+
+/* Color-coded circular rating dial: drag or tap around the ring, arrows to
+   nudge. The SVG arc fills clockwise from 12 o'clock. */
+.rating-wheel {
+  position: relative;
+  width: 108px;
+  height: 108px;
+  touch-action: none;
+  cursor: grab;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.rating-wheel:active { cursor: grabbing; }
+
+.rating-wheel:focus-visible {
+  box-shadow: 0 0 0 3px rgba(233, 69, 96, 0.45);
+  border-radius: 50%;
+}
+
+.rating-wheel svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  transform: rotate(-90deg); /* arc starts at 12 o'clock */
+}
+
+.rating-wheel .wheel-track {
+  fill: none;
+  stroke: var(--surface2);
+  stroke-width: 11;
+}
+
+.rating-wheel .wheel-fill {
+  fill: none;
+  stroke: var(--green);
+  stroke-width: 11;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 80ms linear, stroke 120ms linear;
+}
+
+.wheel-num {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.7rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+/* Hours stepper: ± buttons for keyboard-free tweaks on touch devices */
+.stepper {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 6px;
+}
+
+.step-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius);
+  border: 1px solid var(--surface2);
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: border-color var(--transition), color var(--transition);
+}
+
+.step-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.stepper input[type="number"] {
+  min-width: 0;
+  text-align: center;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.stepper-hint {
+  font-size: 0.72rem;
+  opacity: 0.75;
 }
 
 .modal-tags-wrap {
@@ -1908,6 +2056,7 @@ body.modal-open {
   gap: 10px;
   padding: 14px 18px;
   border-top: 1px solid var(--surface2);
+  flex-shrink: 0;
 }
 
 .modal-footer .btn {
@@ -1922,4 +2071,40 @@ body.modal-open {
 @keyframes modal-fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+
+@keyframes modal-pop-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* Phones: the form becomes a bottom sheet — thumb-reachable actions, full
+   width, and safe-area padding for notched devices. */
+@media (max-width: 560px) {
+  .modal-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .modal-card {
+    max-width: none;
+    max-height: 92vh;
+    max-height: 92dvh;
+    border-radius: 16px 16px 0 0;
+    border-bottom: none;
+    animation: sheet-slide-up 200ms cubic-bezier(0.2, 0.8, 0.3, 1);
+  }
+
+  .sheet-handle {
+    display: block;
+  }
+
+  .modal-body {
+    padding: 16px;
+  }
+}
+
+@keyframes sheet-slide-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
 }

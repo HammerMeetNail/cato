@@ -171,9 +171,14 @@ export function formatTagForQuery(tag) {
   return /[\s|"]/.test(tag) ? `"${tag.replace(/"/g, '')}"` : tag;
 }
 
-export async function autocompleteTags(prefix) {
-  if (!prefix || prefix.length < 1) return [];
-  return api.get(`/api/library/tags?q=${encodeURIComponent(prefix)}`);
+// autocompleteTags suggests distinct tags from the caller's library. An
+// empty prefix returns the whole vocabulary (capped by the server); pass
+// limit to widen the default top-10 for pickers like the game-form datalist.
+export async function autocompleteTags(prefix, limit) {
+  const params = new URLSearchParams();
+  if (prefix) params.set('q', prefix);
+  if (limit) params.set('limit', String(limit));
+  return api.get(`/api/library/tags?${params}`);
 }
 
 // autocompletePlatforms suggests platform names present in the caller's

@@ -1,5 +1,5 @@
-import { library, getCoverURL, getGame, searchGamesFull, parseTagQuery, formatTagForQuery } from './api.js';
-import { formatDate, formatYear } from './dates.js';
+import { library, getCoverURL, getGame, searchGamesFull, parseTagQuery, formatTagForQuery, autocompleteTags } from './api.js';
+import { formatYear } from './dates.js';
 
 const VALID_STATUSES = ['wishlist', 'backlog', 'playing', 'completed', 'abandoned'];
 
@@ -652,8 +652,12 @@ function attachScrollListener() {
         e.stopPropagation();
         e.preventDefault();
         const card = qaBtn.closest('.game-card');
-        if (card && qaBtn.dataset.qa) {
-          quickSetStatus(card.dataset.gameId, qaBtn.dataset.qa, { card });
+        const qa = qaBtn.dataset.qa;
+        if (!card || !qa) return;
+        if (qa === '__t30' || qa === '__t60') {
+          quickLogTime(card.dataset.gameId, qa === '__t30' ? 30 : 60, { btn: qaBtn });
+        } else {
+          quickSetStatus(card.dataset.gameId, qa, { card });
         }
         return;
       }
@@ -1069,7 +1073,8 @@ function buildCardHTML(items) {
 }
 
 // quickActionsFor builds the contextual quick-action buttons for a status.
-// The special value "__bought" moves a wishlist game into the backlog.
+// The special value "__bought" moves a wishlist game into the backlog;
+// "__t30"/"__t60" log playtime without opening the form.
 function quickActionsFor(status) {
   const actions = [];
   if (status === 'wishlist') {
@@ -1080,10 +1085,30 @@ function quickActionsFor(status) {
   } else if (status === 'wishlist') {
     actions.push('<button type="button" class="qa-btn qa-play" data-qa="playing" title="Started playing" aria-label="Start playing">▶</button>');
   }
+  if (status === 'playing') {
+    actions.push('<button type="button" class="qa-btn qa-time" data-qa="__t30" title="Log 30 minutes" aria-label="Log 30 minutes">+30m</button>');
+    actions.push('<button type="button" class="qa-btn qa-time" data-qa="__t60" title="Log 1 hour" aria-label="Log 1 hour">+1h</button>');
+  }
   if (status !== 'completed') {
     actions.push('<button type="button" class="qa-btn qa-done" data-qa="completed" title="Mark as finished" aria-label="Mark as finished">✓</button>');
   }
   return actions;
+}
+
+// quickLogTime patches playtime in place from a card's +30m/+1h button —
+// the same engine as the hero strip, so hours never require the modal.
+async function quickLogTime(gameId, minutes, { btn = null } = {}) {
+  try {
+    if (btn) btn.disabled = true;
+    const updated = await library.patch(gameId, { playtime_delta_minutes: minutes });
+    const item = itemsById.get(String(gameId));
+    if (item) itemsById.set(String(gameId), { ...item, playtime_minutes: updated.playtime_minutes });
+    showToast(`+${fmtDelta(minutes)} logged for ${updated.game_name}`);
+  } catch (err) {
+    showToast(`Couldn't log time: ${err.message}`, { type: 'error' });
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 
@@ -1232,7 +1257,6 @@ export function openLibraryItemModal(item) {
     playtime: item.playtime_minutes || 0,
     tags: item.tags || [],
     notes: item.notes || '',
-    createdAt: item.created_at || '',
     startedAt: item.started_at || null,
     completedAt: item.completed_at || null,
     platformsOwned: item.owned_platforms || (item.platform ? [item.platform] : []),
@@ -1248,7 +1272,7 @@ export function openLibraryItemModal(item) {
 // POST to library.add, which upserts.
 function openGameForm({ id, name, cover, year = '', status = 'backlog',
                         rating = 0, playtime = 0, tags = [], notes = '',
-                        createdAt = '', startedAt = null, completedAt = null,
+                        startedAt = null, completedAt = null,
                         platformsOwned = [], medium = '', platforms = [],
                         inLibrary = false }) {
   // Replace any existing modal (e.g. user clicks a second result).
@@ -1258,30 +1282,19 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
   const title = inLibrary ? 'Edit Library Entry' : 'Add to Library';
   const hours = Math.round((playtime / 60) * 100) / 100;
 
-  // Dates are server-managed (auto-set on entering playing/completed) but
-  // correctable: started/completed are editable and only sent when changed,
-  // so an untouched save never disturbs them. Empty + sent = explicit clear.
+  // Dates are server-managed (auto-set on completion) but correctable: the
+  // finish date is editable and only sent when changed, so an untouched save
+  // never disturbs it. Empty + sent = explicit clear.
   const toInputValue = (iso) => (iso ? String(iso).slice(0, 10) : '');
   const initialDates = {
-    started: toInputValue(startedAt),
     completed: toInputValue(completedAt),
   };
-  const pendingDateChanges = { started: undefined, completed: undefined };
-  const dateRow = (label, value, key, editable) => editable ? `
-    <div class="modal-date-row">
-      <span class="modal-date-label">${label}</span>
-      <input type="date" class="modal-date-input" data-datekey="${key}" value="${escapeHTML(value)}">
-    </div>` : `
-    <div class="modal-date-row">
-      <span class="modal-date-label">${label}</span>
-      <span class="modal-date-value">${value ? escapeHTML(formatDate(value)) : '—'}</span>
-    </div>`;
+  const pendingDateChanges = { completed: undefined };
   const datesHTML = inLibrary ? `
-        <div class="modal-field modal-dates">
-          ${dateRow('Added', createdAt, 'added', false)}
-          ${dateRow('Started', initialDates.started, 'started', true)}
-          ${dateRow('Completed', initialDates.completed, 'completed', true)}
-          <div class="modal-dates-hint">Start/finish dates fill in automatically when you change status.</div>
+        <div class="modal-date-row">
+          <span class="modal-date-label">Completed</span>
+          <input type="date" class="modal-date-input" data-datekey="completed" value="${escapeHTML(initialDates.completed)}">
+          <div class="modal-dates-hint">fills in when you mark it Completed</div>
         </div>` : '';
 
   // Ownership is chosen directly on the available-platform chips, which are
@@ -1315,6 +1328,7 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
   modal.setAttribute('aria-labelledby', 'addGameModalTitle');
   modal.innerHTML = `
     <div class="modal-card">
+      <div class="sheet-handle" aria-hidden="true"><span class="sheet-grip"></span></div>
       <div class="modal-header">
         <h2 id="addGameModalTitle">${title}</h2>
         <button class="modal-close" type="button" aria-label="Close">&times;</button>
@@ -1328,37 +1342,58 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
           </div>
         </div>
         ${datesHTML}
-        <label class="modal-field">Status
-          <select class="modal-status">
+        <div class="modal-field">
+          <span class="field-label">Status</span>
+          <div class="chip-row" data-role="status">
             ${VALID_STATUSES.map(s => `
-              <option value="${s}"${s === status ? ' selected' : ''}>${STATUS_LABELS[s]}</option>
+              <button type="button" class="opt-chip${s === status ? ' selected' : ''}" data-value="${s}">${STATUS_LABELS[s]}</button>
             `).join('')}
-          </select>
-        </label>
-        <label class="modal-field">Rating: <span class="modal-rating-val">${Number(rating)}</span>
-          <input type="range" min="0" max="100" value="${Number(rating)}" class="modal-rating">
-        </label>
-        <label class="modal-field">Hours:
-          <input type="number" min="0" step="0.25" value="${hours}" class="modal-playtime" inputmode="decimal">
-        </label>
-        <div class="modal-field">Tags
-          <div class="modal-tags-wrap">
-            <div class="modal-tags-chips">${tags.map(t => `<span class="tag-chip tag-chip-removable" data-tag="${escapeHTML(t)}">${escapeHTML(t)}<button type="button" class="tag-chip-x" aria-label="Remove ${escapeHTML(t)}">&times;</button></span>`).join('')}</div>
-            <input type="text" class="modal-tags-input" placeholder="Add tag...">
           </div>
         </div>
-        <label class="modal-field">Notes
-          <textarea class="modal-notes" placeholder="Notes...">${escapeHTML(notes)}</textarea>
-        </label>
+        <div class="modal-duo">
+          <div class="modal-field">
+            <span class="field-label">Rating</span>
+            <div class="rating-wheel" role="slider" tabindex="0"
+                 aria-label="Rating" aria-valuemin="0" aria-valuemax="100"
+                 aria-valuenow="${Number(rating)}">
+              <svg viewBox="0 0 120 120" aria-hidden="true">
+                <circle class="wheel-track" cx="60" cy="60" r="52"></circle>
+                <circle class="wheel-fill" cx="60" cy="60" r="52"></circle>
+              </svg>
+              <span class="wheel-num">${Number(rating)}</span>
+            </div>
+          </div>
+          <div class="modal-field">
+            <span class="field-label">Hours</span>
+            <div class="stepper">
+              <button type="button" class="step-btn" data-step="-1" aria-label="Less hours">&minus;</button>
+              <input type="number" min="0" step="0.25" value="${hours}" class="modal-playtime" inputmode="decimal" aria-label="Hours played">
+              <button type="button" class="step-btn" data-step="1" aria-label="More hours">+</button>
+            </div>
+            <div class="stepper-hint">tap ± to adjust without typing</div>
+          </div>
+        </div>
+        <div class="modal-field">
+          <span class="field-label">Tags</span>
+          <div class="modal-tags-wrap">
+            <div class="modal-tags-chips">${tags.map(t => `<span class="tag-chip tag-chip-removable" data-tag="${escapeHTML(t)}">${escapeHTML(t)}<button type="button" class="tag-chip-x" aria-label="Remove ${escapeHTML(t)}">&times;</button></span>`).join('')}</div>
+            <input type="text" class="modal-tags-input" placeholder="Add tag..." list="tagSuggestions">
+            <datalist id="tagSuggestions"></datalist>
+          </div>
+        </div>
+        <div class="modal-field">
+          <span class="field-label">Notes</span>
+          <textarea class="modal-notes notes-autogrow" placeholder="Notes...">${escapeHTML(notes)}</textarea>
+        </div>
         <div class="modal-ownership">
           ${availChipsHTML}
-          <label class="modal-field">Format
-            <select class="modal-medium">
-              <option value=""${!medium ? ' selected' : ''}>—</option>
-              <option value="physical"${medium === 'physical' ? ' selected' : ''}>Physical</option>
-              <option value="digital"${medium === 'digital' ? ' selected' : ''}>Digital</option>
-            </select>
-          </label>
+          <div class="modal-field">
+            <span class="field-label">Format</span>
+            <div class="chip-row" data-role="medium">
+              <button type="button" class="opt-chip${medium === 'physical' ? ' selected' : ''}" data-value="physical">Physical</button>
+              <button type="button" class="opt-chip${medium === 'digital' ? ' selected' : ''}" data-value="digital">Digital</button>
+            </div>
+          </div>
         </div>
       </div>
       <div class="modal-footer">
@@ -1376,7 +1411,7 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
 
   // --- auto-save -------------------------------------------------------------
   // Every change saves itself; there is no submit button. Rapid edits
-  // (slider drags, typing) coalesce through a short debounce, and closing
+  // (wheel drags, typing) coalesce through a short debounce, and closing
   // the form flushes anything still pending. The upsert endpoint means the
   // first change on an un-owned game creates the library entry.
   let saveTimer = null;
@@ -1387,22 +1422,43 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
   let lastSnapshot = null;
   let flashTimer = null;
 
+  // Chip rows are single-select groups of buttons; Format may be cleared by
+  // re-tapping the selected chip, Status always keeps a value.
+  const setupChipRow = (row, initial, allowClear) => {
+    let value = initial;
+    row.addEventListener('click', (e) => {
+      const chip = e.target.closest('.opt-chip');
+      if (!chip || !row.contains(chip)) return;
+      if (chip.dataset.value === value && allowClear) {
+        value = '';
+        chip.classList.remove('selected');
+      } else {
+        value = chip.dataset.value;
+        row.querySelectorAll('.opt-chip').forEach(c =>
+          c.classList.toggle('selected', c === chip));
+      }
+      scheduleSave();
+    });
+    return () => value;
+  };
+  const getStatus = setupChipRow(modal.querySelector('[data-role="status"]'), status, false);
+  const getMedium = setupChipRow(modal.querySelector('[data-role="medium"]'), medium || '', true);
+
   const collectPayload = () => {
     const newHours = parseFloat(modal.querySelector('.modal-playtime').value) || 0;
     const payload = {
-      status: modal.querySelector('.modal-status').value,
-      rating: parseInt(modal.querySelector('.modal-rating').value) || 0,
+      status: getStatus(),
+      rating: ratingValue,
       playtime_minutes: Math.max(0, Math.round(newHours * 60)),
       tags: Array.from(modal.querySelectorAll('.modal-tags-chips .tag-chip-removable'))
         .map(c => c.firstChild.textContent.trim()),
       notes: modal.querySelector('.modal-notes').value,
       platforms: [...ownedMap.values()],
       platform: [...ownedMap.values()][0] || '',
-      medium: modal.querySelector('.modal-medium').value,
+      medium: getMedium(),
     };
     // Explicit date changes only — omitting the fields preserves existing
     // values (and keeps server-side auto-tracking working).
-    if (inLibrary && pendingDateChanges.started !== undefined) payload.started_at = pendingDateChanges.started;
     if (inLibrary && pendingDateChanges.completed !== undefined) payload.completed_at = pendingDateChanges.completed;
     return payload;
   };
@@ -1453,16 +1509,108 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
     saveTimer = setTimeout(runSave, 700);
   };
 
-  // Live-update the rating preview label. Playtime is entered directly in
-  // hours (converted to minutes on save) — no more "type 2, see 0.0".
-  modal.querySelector('.modal-rating').addEventListener('input', (e) => {
-    modal.querySelector('.modal-rating-val').textContent = e.target.value;
+  // --- rating wheel ----------------------------------------------------------
+  // A circular dial instead of a linear slider: drag anywhere around the ring
+  // (pointer events cover touch and mouse), or tap a spot to jump there. The
+  // arc is color-coded red→amber→green across the scale, so score reads at a
+  // glance. Arrow keys nudge by 1 (PageUp/PageDown by 10) for keyboards.
+  let ratingValue = Number(rating) || 0;
+  const wheel = modal.querySelector('.rating-wheel');
+  const wheelFill = wheel.querySelector('.wheel-fill');
+  const wheelNum = modal.querySelector('.wheel-num');
+  const WHEEL_CIRC = 2 * Math.PI * 52;
+
+  const renderWheel = () => {
+    const frac = ratingValue / 100;
+    if (ratingValue > 0) {
+      wheelFill.style.display = '';
+      // Hue 0 (red) at 0 → hue 120 (green) at 100; gray means "unrated".
+      const col = `hsl(${Math.round(ratingValue * 1.2)}, 70%, 52%)`;
+      wheelFill.style.strokeDasharray = `${WHEEL_CIRC * frac} ${WHEEL_CIRC}`;
+      wheelFill.style.stroke = col;
+      wheelNum.style.color = col;
+    } else {
+      // Hidden rather than zero-length: a round linecap would still paint a dot.
+      wheelFill.style.display = 'none';
+      wheelNum.style.color = '';
+    }
+    wheelNum.textContent = String(ratingValue);
+    wheel.setAttribute('aria-valuenow', String(ratingValue));
+  };
+  renderWheel();
+
+  // Haptic tick when a drag crosses a quarter notch (25/50/75). Android
+  // fires it; iOS Safari silently ignores navigator.vibrate.
+  let lastNotch = Math.floor(ratingValue / 25);
+  const buzzOnNotch = () => {
+    const notch = Math.floor(ratingValue / 25);
+    if (notch === lastNotch) return;
+    lastNotch = notch;
+    if (typeof navigator.vibrate === 'function') navigator.vibrate(8);
+  };
+
+  const setWheelFromPointer = (e) => {
+    const r = wheel.getBoundingClientRect();
+    const dx = e.clientX - (r.left + r.width / 2);
+    const dy = e.clientY - (r.top + r.height / 2);
+    if (Math.hypot(dx, dy) < r.width * 0.18) return; // dead zone near the hub
+    let deg = Math.atan2(dy, dx) * 180 / Math.PI + 90; // 0° at 12 o'clock
+    if (deg < 0) deg += 360;
+    ratingValue = Math.min(100, Math.round(deg / 3.6));
+    buzzOnNotch();
+    renderWheel();
+    scheduleSave();
+  };
+  let wheelDragging = false;
+  wheel.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    wheelDragging = true;
+    try { wheel.setPointerCapture(e.pointerId); } catch { /* already released */ }
+    setWheelFromPointer(e);
+  });
+  wheel.addEventListener('pointermove', (e) => {
+    if (wheelDragging) setWheelFromPointer(e);
+  });
+  ['pointerup', 'pointercancel'].forEach(ev =>
+    wheel.addEventListener(ev, () => { wheelDragging = false; }));
+  wheel.addEventListener('keydown', (e) => {
+    let next = null;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') next = Math.min(100, ratingValue + 1);
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') next = Math.max(0, ratingValue - 1);
+    else if (e.key === 'PageUp') next = Math.min(100, ratingValue + 10);
+    else if (e.key === 'PageDown') next = Math.max(0, ratingValue - 10);
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = 100;
+    if (next === null) return;
+    e.preventDefault();
+    ratingValue = next;
+    buzzOnNotch();
+    renderWheel();
     scheduleSave();
   });
-  modal.querySelector('.modal-status').addEventListener('change', scheduleSave);
-  modal.querySelector('.modal-medium').addEventListener('change', scheduleSave);
+
+  // Hours: ± buttons step whole hours so quick tweaks never summon the
+  // keyboard; typing still works for exact values.
+  modal.querySelectorAll('.step-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const inp = modal.querySelector('.modal-playtime');
+      const cur = parseFloat(inp.value);
+      inp.value = Math.max(0, ((isNaN(cur) ? 0 : cur) + Number(btn.dataset.step)).toFixed(2).replace(/\.?0+$/, ''));
+      scheduleSave();
+    });
+  });
   modal.querySelector('.modal-playtime').addEventListener('input', scheduleSave);
   modal.querySelector('.modal-notes').addEventListener('input', scheduleSave);
+
+  // Auto-growing notes: expands with content (up to ~40% of the viewport)
+  // instead of a fixed two-line box with an inner scrollbar.
+  const notesEl = modal.querySelector('.modal-notes');
+  const growNotes = () => {
+    notesEl.style.height = 'auto';
+    notesEl.style.height = `${Math.min(notesEl.scrollHeight + 2, Math.round(window.innerHeight * 0.4))}px`;
+  };
+  notesEl.addEventListener('input', growNotes);
+  growNotes();
 
   // Tap a platform chip to toggle owning the game on it — multi-select, so
   // a game can be owned on several platforms at once.
@@ -1510,9 +1658,48 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
     }
   });
 
+  // Swipe-down-to-close on the mobile bottom sheet: drag the grip under the
+  // title bar; past ~120px the sheet dismisses, otherwise it springs back.
+  const sheetCard = modal.querySelector('.modal-card');
+  const sheetHandle = modal.querySelector('.sheet-handle');
+  let draggingSheet = false;
+  let dragStartY = 0;
+  sheetHandle.addEventListener('pointerdown', (e) => {
+    draggingSheet = true;
+    dragStartY = e.clientY;
+    sheetCard.style.transition = 'none';
+    try { sheetHandle.setPointerCapture(e.pointerId); } catch { /* already gone */ }
+  });
+  sheetHandle.addEventListener('pointermove', (e) => {
+    if (!draggingSheet) return;
+    sheetCard.style.transform = `translateY(${Math.max(0, e.clientY - dragStartY)}px)`;
+  });
+  const endSheetDrag = (e) => {
+    if (!draggingSheet) return;
+    draggingSheet = false;
+    sheetCard.style.transition = '';
+    const dy = Math.max(0, (e.clientY || dragStartY) - dragStartY);
+    if (dy > 120) {
+      close();
+      return;
+    }
+    sheetCard.style.transform = '';
+  };
+  sheetHandle.addEventListener('pointerup', endSheetDrag);
+  sheetHandle.addEventListener('pointercancel', endSheetDrag);
+
   // Tag chip input
   const chipsContainer = modal.querySelector('.modal-tags-chips');
   const tagInput = modal.querySelector('.modal-tags-input');
+
+  // Tag autocomplete: the user's whole tag vocabulary feeds a native datalist,
+  // so typing suggests existing tags and taps a familiar mobile picker UI.
+  autocompleteTags('', 100).then(list => {
+    const dl = modal.querySelector('#tagSuggestions');
+    if (dl && Array.isArray(list)) {
+      dl.innerHTML = list.map(t => `<option value="${escapeHTML(t)}"></option>`).join('');
+    }
+  }).catch(() => { /* suggestions are cosmetic */ });
 
   function addChip(text) {
     const chip = document.createElement('span');
