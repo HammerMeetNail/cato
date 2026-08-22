@@ -183,6 +183,77 @@ func TestPlatformSuggestions(t *testing.T) {
 	}
 }
 
+// TestMultiPlatformOwnership: POST/PATCH accept a platforms array (a game can
+// be owned on several); the legacy singular platform mirrors the first entry;
+// PATCHing platforms replaces the whole list; empty array clears.
+func TestMultiPlatformOwnership(t *testing.T) {
+	database := setupLibraryTestDB(t)
+	defer database.Close()
+	sessionID := createLibrarySession(t, database, "user-1")
+	mux := newTestLibraryMux(database)
+
+	rec, _ := postLibraryItem(t, mux, database, sessionID, 1,
+		`{"status":"backlog","platforms":["Nintendo Switch","Xbox Series X|S"],"medium":"digital"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	resp, code := getLibraryItem(t, mux, database, sessionID, 1)
+	if code != http.StatusOK {
+		t.Fatalf("GET failed: %d", code)
+	}
+	want := []string{"Nintendo Switch", "Xbox Series X|S"}
+	if got := toStringSlice(resp["owned_platforms"]); !reflect.DeepEqual(got, want) {
+		t.Errorf("owned_platforms = %v, want %v", got, want)
+	}
+	if resp["platform"] != "Nintendo Switch" {
+		t.Errorf("legacy platform = %v, want first entry", resp["platform"])
+	}
+
+	var ownedJSON string
+	database.QueryRow(`SELECT owned_platforms_json FROM library_items WHERE user_id='user-1' AND game_id=1`).Scan(&ownedJSON)
+	if ownedJSON != `["Nintendo Switch","Xbox Series X|S"]` {
+		t.Errorf("stored owned json = %s", ownedJSON)
+	}
+
+	// PATCH replacing the list.
+	rec, resp = patchLibraryItem(t, mux, database, sessionID, 1,
+		`{"platforms":["PlayStation 5"]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH failed: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := toStringSlice(resp["owned_platforms"]); !reflect.DeepEqual(got, []string{"PlayStation 5"}) {
+		t.Errorf("patched owned_platforms = %v", got)
+	}
+	if resp["platform"] != "PlayStation 5" {
+		t.Errorf("patched legacy platform = %v, want PlayStation 5", resp["platform"])
+	}
+
+	// PATCH clearing via empty array also clears the legacy column.
+	rec, _ = patchLibraryItem(t, mux, database, sessionID, 1, `{"platforms":[]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH clear failed: %d %s", rec.Code, rec.Body.String())
+	}
+	database.QueryRow(`SELECT platform, owned_platforms_json FROM library_items WHERE user_id='user-1' AND game_id=1`).Scan(&ownedJSON)
+	// reuse scan vars: check platform cleared
+	var platform string
+	database.QueryRow(`SELECT platform FROM library_items WHERE user_id='user-1' AND game_id=1`).Scan(&platform)
+	if platform != "" {
+		t.Errorf("legacy platform after clear = %q, want empty", platform)
+	}
+	_ = ownedJSON
+
+	// Legacy singular field still works as a one-element shorthand.
+	rec, _ = postLibraryItem(t, mux, database, sessionID, 2, `{"status":"backlog","platform":"Steam Deck"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST 2 failed: %d %s", rec.Code, rec.Body.String())
+	}
+	resp, _ = getLibraryItem(t, mux, database, sessionID, 2)
+	if got := toStringSlice(resp["owned_platforms"]); !reflect.DeepEqual(got, []string{"Steam Deck"}) {
+		t.Errorf("legacy shorthand owned = %v", got)
+	}
+}
+
 func toStringSlice(v interface{}) []string {
 	items, ok := v.([]interface{})
 	if !ok {

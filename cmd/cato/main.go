@@ -161,6 +161,15 @@ func main() {
 		log.Printf("startup: cleared %d games pointing at dead cover host", n)
 	}
 
+	// One-time migration: ownership encoded as tags ("Switch", "PS5", …)
+	// moves into library_items.platform, tag removed after the move.
+	// Idempotent — no-ops once every mappable tag is gone.
+	if n, err := games.MigratePlatformTags(database); err != nil {
+		log.Printf("startup: platform tag migration failed: %v", err)
+	} else if n > 0 {
+		log.Printf("startup: migrated %d items from platform tags to ownership field", n)
+	}
+
 	srv := http.NewServer(cfg, database)
 	log.Printf("cato listening on %s", cfg.ListenAddr)
 
