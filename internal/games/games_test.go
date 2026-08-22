@@ -44,6 +44,7 @@ func (f *fakeIGDB) GetPlatforms(ctx context.Context) ([]Platform, error) {
 	return []Platform{
 		{ID: 6, Name: "PC (Microsoft Windows)", Abbreviation: "win"},
 		{ID: 130, Name: "Nintendo Switch", Abbreviation: "swi"},
+		{ID: 508, Name: "Nintendo Switch 2", Abbreviation: "Switch 2"},
 	}, nil
 }
 

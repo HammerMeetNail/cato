@@ -14,6 +14,39 @@ type Platform struct {
 	Abbreviation string `json:"abbreviation"`
 }
 
+// platformShortnames curates gamer-style codes the @platform search should
+// honor but IGDB's abbreviation field lacks (upstream: "Switch 2", "Series
+// X|S", plain "PC"). Space-separated aliases; applied over the reference
+// table on every boot so re-syncs and new rows stay covered. IDs are stable
+// IGDB platform identifiers.
+var platformShortnames = map[int64]string{
+	6:   "win",           // PC (Microsoft Windows) — upstream abbr is just "PC"
+	7:   "ps1 psx",       // PlayStation
+	8:   "ps2",           // PlayStation 2
+	9:   "ps3",           // PlayStation 3
+	12:  "x360 360",      // Xbox 360
+	38:  "psp",           // PlayStation Portable
+	46:  "psvita vita psv", // PlayStation Vita
+	48:  "ps4",           // PlayStation 4
+	49:  "xb1 xone",      // Xbox One
+	130: "ns swi switch1", // Nintendo Switch
+	167: "ps5",           // PlayStation 5
+	169: "xsx xss seriesx", // Xbox Series X|S
+	508: "sw2 ns2 switch2", // Nintendo Switch 2
+}
+
+// ApplyPlatformShortnames stamps the curated codes onto the lookup table.
+// Idempotent, cheap (~13 UPDATEs), and safe on an empty table.
+func (s *Store) ApplyPlatformShortnames(ctx context.Context) error {
+	for id, sn := range platformShortnames {
+		if _, err := s.db.ExecContext(ctx,
+			`UPDATE platforms SET shortname = ? WHERE id = ?`, sn, id); err != nil {
+			return fmt.Errorf("apply shortname for platform %d: %w", id, err)
+		}
+	}
+	return nil
+}
+
 // UpsertPlatforms replaces-or-inserts reference rows in one statement.
 // Called once at startup from IGDB's /platforms endpoint (~230 rows).
 func (s *Store) UpsertPlatforms(ctx context.Context, plats []Platform) error {
@@ -66,6 +99,25 @@ func (s *Store) PlatformNames(ctx context.Context) (map[int64]string, error) {
 		names[id] = name
 	}
 	return names, rows.Err()
+}
+
+// PlatformFilter returns a WHERE fragment (no leading AND/OR) matching games
+// whose platforms_json includes a platform whose name, abbreviation, or
+// curated shortname contains the given text (case-insensitive substring),
+// plus its bind args. Legacy rows storing literal name strings instead of IDs
+// are matched too; numeric IDs missing from the lookup table match nothing
+// (and raw ID text never matches — the interface is names, not numbers).
+// alias is the games table alias used in the caller's query.
+func PlatformFilter(alias, platform string) (string, []interface{}) {
+	pat := "%" + strings.ToLower(EscapeLike(strings.TrimSpace(platform))) + "%"
+	frag := fmt.Sprintf(`EXISTS (
+		SELECT 1 FROM json_each(%s.platforms_json) je
+		LEFT JOIN platforms p ON p.id = je.value
+		WHERE LOWER(COALESCE(p.name, '')) LIKE ? ESCAPE '\'
+		   OR LOWER(COALESCE(p.abbreviation, '')) LIKE ? ESCAPE '\'
+		   OR LOWER(COALESCE(p.shortname, '')) LIKE ? ESCAPE '\'
+		   OR (typeof(je.value) != 'integer' AND LOWER(CAST(je.value AS TEXT)) LIKE ? ESCAPE '\'))`, alias)
+	return frag, []interface{}{pat, pat, pat, pat}
 }
 
 // ResolvePlatformNames translates a games.platforms_json blob into display

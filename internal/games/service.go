@@ -60,15 +60,17 @@ func (s *Service) Search(ctx context.Context, query string) ([]GameResult, error
 // it runs the IGDB live fallback before returning results; on deeper pages,
 // it returns pure local DB results (no IGDB hammering).
 func (s *Service) SearchPaged(ctx context.Context, query string, limit, offset int) ([]GameResult, error) {
-	results, _, err := s.SearchPagedFull(ctx, query, limit, offset, "", 0, 0, 0)
+	results, _, err := s.SearchPagedFull(ctx, query, limit, offset, "", 0, 0, 0, "")
 	return results, err
 }
 
 // SearchPagedFull is the full-results-page search: paginated, floored,
 // optionally sorted/filtered (SEARCH_IMPROVEMENTS.md §4.4), and returning the
-// total match count so the UI can display "N results". As in SearchPaged, the
-// IGDB live fallback runs on page 1 only; deeper pages are pure local queries.
-func (s *Service) SearchPagedFull(ctx context.Context, query string, limit, offset int, sort string, yearFrom, yearTo, minRating int64) ([]GameResult, int64, error) {
+// total match count so the UI can display "N results". platform (substring of
+// a platform name/abbreviation) restricts to games available on it. As in
+// SearchPaged, the IGDB live fallback runs on page 1 only; deeper pages are
+// pure local queries.
+func (s *Service) SearchPagedFull(ctx context.Context, query string, limit, offset int, sort string, yearFrom, yearTo, minRating int64, platform string) ([]GameResult, int64, error) {
 	query = NormalizeName(query)
 	if len(query) < 2 {
 		return nil, 0, nil
@@ -82,6 +84,7 @@ func (s *Service) SearchPagedFull(ctx context.Context, query string, limit, offs
 			yearFrom:  yearFrom,
 			yearTo:    yearTo,
 			minRating: minRating,
+			platform:  platform,
 		}
 	}
 
@@ -136,23 +139,26 @@ func (s *Service) GetGame(ctx context.Context, id int64) (*Game, error) {
 
 // SyncPlatforms populates the platform ID → name lookup table from IGDB's
 // /platforms endpoint — one rate-limited request covering every platform.
-// Idempotent: skipped once the table has rows (the list changes ~yearly;
-// a restart re-runs only if it was never fetched). Without a real IGDB
+// Idempotent: the fetch is skipped once the table has rows (the list changes
+// ~yearly; a restart re-runs only if it was never fetched). Curated
+// shortnames ("sw2", "xsx", …) are re-applied on every run regardless, so
+// tables populated before they existed get stamped too. Without a real IGDB
 // client this is a no-op and platform IDs resolve to nothing (displayed as
 // absent rather than wrong).
 func (s *Service) SyncPlatforms(ctx context.Context) error {
-	if n, err := s.store.CountPlatforms(ctx); err == nil && n > 0 {
-		return nil
-	}
-	plats, err := s.igdb.GetPlatforms(ctx)
-	if err != nil {
-		return fmt.Errorf("fetch platforms: %w", err)
-	}
-	if err := s.store.UpsertPlatforms(ctx, plats); err != nil {
+	if n, err := s.store.CountPlatforms(ctx); err != nil {
 		return err
+	} else if n == 0 {
+		plats, err := s.igdb.GetPlatforms(ctx)
+		if err != nil {
+			return fmt.Errorf("fetch platforms: %w", err)
+		}
+		if err := s.store.UpsertPlatforms(ctx, plats); err != nil {
+			return err
+		}
+		log.Printf("platform sync: populated %d platform names", len(plats))
 	}
-	log.Printf("platform sync: populated %d platform names", len(plats))
-	return nil
+	return s.store.ApplyPlatformShortnames(ctx)
 }
 
 // StartPlatformSync runs SyncPlatforms in the background with bounded

@@ -59,6 +59,7 @@ const SEARCH_PAGE_SIZE = 24;
 let paginationState = {
   currentStatus: '',
   tagFilter: '',
+  platformFilter: '',
   offset: 0,
   loading: false,
   hasMore: true,
@@ -140,6 +141,7 @@ export async function loadSearchResults(query) {
   paginationState = {
     currentStatus: '',
     tagFilter: '',
+    platformFilter: '',
     offset: 0,
     // Held true across the fetch below so a scroll event landing in this
     // window can't trigger a concurrent loadMore() that appends the same
@@ -294,7 +296,7 @@ function wireSearchFilterBar(header, query) {
   });
 }
 
-export async function loadLibrary(status, tag = '') {
+export async function loadLibrary(status, tag = '', platform = '') {
   const grid = document.getElementById('gameGrid');
   if (!grid) return;
 
@@ -302,6 +304,7 @@ export async function loadLibrary(status, tag = '') {
   paginationState = {
     currentStatus: status || '',
     tagFilter: tag || '',
+    platformFilter: platform || '',
     offset: 0,
     // Held true across the fetch below so a scroll event landing in this
     // window can't trigger a concurrent loadMore() that appends the same
@@ -325,7 +328,7 @@ export async function loadLibrary(status, tag = '') {
   grid.innerHTML = '<div class="loading">Loading library...</div>';
 
   try {
-    const { items, total, hasMore } = await library.list(status || '', PAGE_SIZE, 0, tag || '');
+    const { items, total, hasMore } = await library.list(status || '', PAGE_SIZE, 0, tag || '', platform || '');
     renderPagedItems(grid, items, true, hasMore);
     refreshTabCounts();
   } catch (err) {
@@ -361,6 +364,7 @@ function renderPagedItems(grid, items, isFirstPage = true, hasMore = null) {
       game_name: r.name,
       cover_url: r.cover_url,
       local_cover_path: r.local_cover_path,
+      platforms: r.platforms || [],
       rating: 0,
     }));
     indexSearchResults(items, isFirstPage);
@@ -395,6 +399,7 @@ export function renderLibraryItems(items, status = '') {
   paginationState = {
     currentStatus: status || '',
     tagFilter: '',
+    platformFilter: '',
     offset: 0,
     loading: false,
     hasMore: true,
@@ -446,7 +451,8 @@ async function loadMore() {
         paginationState.currentStatus,
         paginationState.pageSize,
         paginationState.offset,
-        paginationState.tagFilter
+        paginationState.tagFilter,
+        paginationState.platformFilter
       );
       renderPagedItems(grid, items, false, hasMore);
     }
@@ -914,23 +920,45 @@ export function applyTagFilter(filter) {
   loadLibrary(activeTab?.dataset?.status || '', filter);
 }
 
-// clearTagFilter removes the tag filter and reloads.
+// clearTagFilter removes the tag filter and reloads (platform filter kept).
 export function clearTagFilter() {
   const activeTab = document.querySelector('.tab.active');
-  loadLibrary(activeTab?.dataset?.status || '', '');
+  loadLibrary(activeTab?.dataset?.status || '', '', paginationState.platformFilter);
 }
 
-// updateTagFilterBar shows or hides the "filtered by tag" bar.
+// clearAllFilters removes both tag and platform filters and reloads.
+export function clearAllFilters() {
+  const activeTab = document.querySelector('.tab.active');
+  loadLibrary(activeTab?.dataset?.status || '', '', '');
+}
+
+// filterByPlatform sets the platform availability filter and reloads.
+// Typing the same platform again clears it (toggle), mirroring tag chips.
+export function filterByPlatform(platform) {
+  const activeTab = document.querySelector('.tab.active');
+  const next = paginationState.platformFilter === platform ? '' : platform;
+  loadLibrary(activeTab?.dataset?.status || '', paginationState.tagFilter, next);
+}
+
+// updateTagFilterBar shows or hides the "filtered by" bar, covering both the
+// tag filter ($ chips) and the platform availability filter (@ chip).
 function updateTagFilterBar() {
   const existing = document.getElementById('tagFilterBar');
   if (existing) existing.remove();
 
   const tag = paginationState.tagFilter;
-  if (!tag) return;
+  const platform = paginationState.platformFilter;
+  if (!tag && !platform) return;
 
-  const { tags: tagList, op } = parseTagQuery(tag);
-  const joiner = op === 'or' ? ' OR ' : ' AND ';
-  const display = tagList.map(t => `<span class="tag-filter-chip" data-tag="${escapeHTML(t)}">${escapeHTML(t)}<button type="button" class="tag-filter-chip-x" aria-label="Remove ${escapeHTML(t)}">×</button></span>`).join(joiner);
+  const { tags: tagList, op } = parseTagQuery(tag || '');
+  let display = '';
+  if (tag) {
+    const joiner = op === 'or' ? ' OR ' : ' AND ';
+    display += tagList.map(t => `<span class="tag-filter-chip" data-tag="${escapeHTML(t)}">${escapeHTML(t)}<button type="button" class="tag-filter-chip-x" aria-label="Remove ${escapeHTML(t)}">×</button></span>`).join(joiner);
+  }
+  if (platform) {
+    display += `<span class="tag-filter-chip tag-filter-platform" data-platform="${escapeHTML(platform)}">@${escapeHTML(platform)}<button type="button" class="tag-filter-chip-x" aria-label="Remove platform filter">×</button></span>`;
+  }
 
   const container = document.querySelector('.container');
   const statusTabs = document.getElementById('statusTabs');
@@ -939,23 +967,27 @@ function updateTagFilterBar() {
   bar.className = 'tag-filter-bar';
   bar.innerHTML = `
     <span class="tag-filter-label">${display}</span>
-    <button class="tag-filter-clear" type="button" aria-label="Clear tag filter">✕</button>
+    <button class="tag-filter-clear" type="button" aria-label="Clear filters">✕</button>
   `;
-  bar.querySelector('.tag-filter-clear').addEventListener('click', clearTagFilter);
+  bar.querySelector('.tag-filter-clear').addEventListener('click', clearAllFilters);
 
-  // Clicking an individual tag chip in the filter bar removes just that tag
+  // Clicking an individual chip's × removes just that filter: a tag chip
+  // drops that tag (keeping others and the platform), the platform chip
+  // toggles the platform off.
   bar.querySelectorAll('.tag-filter-chip-x').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const removeTag = btn.parentElement.dataset.tag;
-      const remaining = tagList.filter(t => t !== removeTag);
-      if (remaining.length === 0) {
-        clearTagFilter();
-      } else {
-        const newFilter = remaining.map(formatTagForQuery).join(op === 'or' ? '|' : ' ');
-        const activeTab = document.querySelector('.tab.active');
-        loadLibrary(activeTab?.dataset?.status || '', newFilter);
+      const chip = btn.parentElement;
+      const activeTab = document.querySelector('.tab.active');
+      const status = activeTab?.dataset?.status || '';
+      if (chip.dataset.platform !== undefined) {
+        loadLibrary(status, paginationState.tagFilter, '');
+        return;
       }
+      const removeTag = chip.dataset.tag;
+      const remaining = tagList.filter(t => t !== removeTag);
+      const newFilter = remaining.map(formatTagForQuery).join(op === 'or' ? '|' : ' ');
+      loadLibrary(status, newFilter, paginationState.platformFilter);
     });
   });
 
@@ -1252,6 +1284,18 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
           <div class="modal-dates-hint">Start/finish dates fill in automatically when you change status.</div>
         </div>` : '';
 
+  // Available platforms are shown as tappable chips (datalists alone are
+  // near-invisible on mobile): tapping one fills the "Owned on" input.
+  const availPlatforms = (platforms || []).map(p => String(p).trim()).filter(Boolean);
+  const availChipsHTML = availPlatforms.length ? `
+        <div class="modal-avail">
+          <span class="modal-avail-label">Available on</span>
+          <div class="modal-avail-chips">
+            ${availPlatforms.slice(0, 8).map(p => `<button type="button" class="plat-chip" data-full="${escapeHTML(p)}" title="${escapeHTML(p)}">${escapeHTML(formatPlatformName(p))}</button>`).join('')}
+            ${availPlatforms.length > 8 ? `<span class="plat-more" title="${escapeHTML(availPlatforms.join(', '))}">+${availPlatforms.length - 8} more</span>` : ''}
+          </div>
+        </div>` : '';
+
   const modal = document.createElement('div');
   modal.id = 'addGameModal';
   modal.className = 'modal-overlay';
@@ -1296,6 +1340,7 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
           <textarea class="modal-notes" placeholder="Notes...">${escapeHTML(notes)}</textarea>
         </label>
         <div class="modal-ownership">
+          ${availChipsHTML}
           <label class="modal-field">Owned on
             <input type="text" class="modal-platform" list="modalPlatformList" placeholder="e.g. PC, Switch 2…" value="${escapeHTML(platform)}" maxlength="64" autocomplete="off">
             <datalist id="modalPlatformList">
@@ -1328,6 +1373,15 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
   // hours (converted to minutes on save) — no more "type 2, see 0.0".
   modal.querySelector('.modal-rating').addEventListener('input', (e) => {
     modal.querySelector('.modal-rating-val').textContent = e.target.value;
+  });
+
+  // Tap an available-platform chip to fill the "Owned on" input.
+  modal.querySelectorAll('.plat-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const input = modal.querySelector('.modal-platform');
+      input.value = chip.dataset.full;
+      input.focus();
+    });
   });
 
   // Date edits are tracked per-field; only changed values are sent (empty =

@@ -13,6 +13,15 @@ type Migration struct {
 
 var migrations = []Migration{
 	{
+		Version: 10,
+		// Curated gamer-style platform codes ("sw2", "xsx", "ps5") that
+		// IGDB's own abbreviations don't cover (upstream calls Switch 2
+		// "Switch 2" and Xbox Series X|S "Series X|S"). Populated by
+		// Store.ApplyPlatformShortnames at startup; matched by the @platform
+		// search filter and autocomplete alongside name/abbreviation.
+		Up: `ALTER TABLE platforms ADD COLUMN shortname TEXT NOT NULL DEFAULT '';`,
+	},
+	{
 		Version: 9,
 		// IGDB platform ID → name lookup. games.platforms_json stores raw
 		// IGDB platform IDs ([6,130,...]); API responses resolve them to
