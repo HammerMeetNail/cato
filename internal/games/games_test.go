@@ -14,6 +14,8 @@ import (
 type fakeIGDB struct {
 	searchCalls int
 	searchFunc  func(ctx context.Context, query string, limit int) ([]Game, error)
+	batchCalls  int
+	batchFunc   func(ctx context.Context, ids []int64) ([]Game, error)
 }
 
 func (f *fakeIGDB) SearchGames(ctx context.Context, query string, limit int) ([]Game, error) {
@@ -25,6 +27,14 @@ func (f *fakeIGDB) SearchGames(ctx context.Context, query string, limit int) ([]
 }
 
 func (f *fakeIGDB) GetGame(ctx context.Context, id int64) (*Game, error) {
+	return nil, nil
+}
+
+func (f *fakeIGDB) GetGamesBatch(ctx context.Context, ids []int64) ([]Game, error) {
+	f.batchCalls++
+	if f.batchFunc != nil {
+		return f.batchFunc(ctx, ids)
+	}
 	return nil, nil
 }
 

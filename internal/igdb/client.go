@@ -7,12 +7,16 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"cato/internal/games"
 )
+
+// maxBatchIDs is IGDB's hard cap on `where id = (...)` tuple size.
+const maxBatchIDs = 500
 
 type Client struct {
 	clientID     string
@@ -133,6 +137,43 @@ func (c *Client) GetGame(ctx context.Context, id int64) (*games.Game, error) {
 
 	g := c.toGame(igdbGames[0])
 	return &g, nil
+}
+
+// GetGamesBatch fetches many games in a single rate-limited request, asking
+// only for the fields the alias backfill needs. IGDB accepts up to 500 IDs
+// per query, so 300k+ rows cost ~1 request per 500 games (~10 min at the
+// ~1 req/s limiter) instead of one request per game.
+func (c *Client) GetGamesBatch(ctx context.Context, ids []int64) ([]games.Game, error) {
+	if c.clientID == "" {
+		return nil, nil
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if len(ids) > maxBatchIDs {
+		return nil, fmt.Errorf("batch size %d exceeds IGDB limit of %d", len(ids), maxBatchIDs)
+	}
+
+	strs := make([]string, len(ids))
+	for i, id := range ids {
+		strs[i] = strconv.FormatInt(id, 10)
+	}
+
+	c.rateLimiter.Wait()
+
+	body := fmt.Sprintf(`where id = (%s); fields id,name,alternative_names.name; limit %d;`,
+		strings.Join(strs, ","), len(ids))
+
+	igdbGames, err := c.post(ctx, "games", body)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]games.Game, 0, len(igdbGames))
+	for _, g := range igdbGames {
+		result = append(result, c.toGame(g))
+	}
+	return result, nil
 }
 
 func (c *Client) toGame(g igdbGame) games.Game {

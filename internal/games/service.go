@@ -14,6 +14,9 @@ import (
 type IGDBClient interface {
 	SearchGames(ctx context.Context, query string, limit int) ([]Game, error)
 	GetGame(ctx context.Context, id int64) (*Game, error)
+	// GetGamesBatch fetches many games per rate-limited request (IGDB allows
+	// up to 500 ids/query), requesting only id/name/alternative_names.
+	GetGamesBatch(ctx context.Context, ids []int64) ([]Game, error)
 }
 
 type Service struct {
@@ -294,6 +297,102 @@ func (s *Service) BackfillPopularity(ctx context.Context, batchSize, recentYears
 				continue
 			}
 			done++
+		}
+		progress(done, total)
+	}
+	return done, nil
+}
+
+// backfillRetryDelays spaces out retries when IGDB rejects a batch (e.g. a
+// 429 caused by another process's requests sharing the API key — the rate
+// limiter is per-process). Bounded so an unattended run either rides out
+// transient throttling or fails fast with progress already saved.
+var backfillRetryDelays = []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second}
+
+func (s *Service) fetchBatchWithRetry(ctx context.Context, ids []int64) ([]Game, error) {
+	for attempt := 0; ; attempt++ {
+		games, err := s.igdb.GetGamesBatch(ctx, ids)
+		if err == nil {
+			return games, nil
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if attempt >= len(backfillRetryDelays) {
+			return nil, err
+		}
+		delay := backfillRetryDelays[attempt]
+		log.Printf("backfill: batch of %d failed (%v) — retrying in %v", len(ids), err, delay)
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+}
+
+// BackfillAliases populates game_aliases for every catalog row in bulk,
+// fetching up to `batchSize` (max 500, IGDB's per-query id cap) games per
+// rate-limited request. Resumable: each processed row gets aliases_fetched_at
+// stamped — including rows IGDB no longer knows — so re-running skips done
+// rows and interrupted runs continue where they left off. Unlike
+// BackfillPopularity this never touches other game columns. `progress` is
+// called after each batch with (done, total) for logging.
+func (s *Service) BackfillAliases(ctx context.Context, batchSize int, progress func(done, total int)) (int, error) {
+	if batchSize <= 0 {
+		batchSize = 500
+	}
+	if batchSize > 500 {
+		batchSize = 500
+	}
+
+	pending, err := s.store.CountPendingAliasBackfill(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("count pending: %w", err)
+	}
+	total := int(pending)
+	done := 0
+	progress(done, total)
+
+	for {
+		if ctx.Err() != nil {
+			return done, ctx.Err()
+		}
+		ids, err := s.store.GetAliasBackfillCandidates(ctx, batchSize)
+		if err != nil {
+			return done, fmt.Errorf("get candidates: %w", err)
+		}
+		if len(ids) == 0 {
+			break
+		}
+
+		games, err := s.fetchBatchWithRetry(ctx, ids)
+		if err != nil {
+			// Persistent failure (retries exhausted): stop and let the
+			// operator re-run — the marker column makes that cheap and
+			// race-free.
+			return done, fmt.Errorf("batch fetch at %d/%d: %w", done, total, err)
+		}
+
+		returned := make(map[int64]bool, len(games))
+		for _, g := range games {
+			if err := s.store.SetAliasesAndMarkFetched(ctx, g.ID, g.Name, g.Aliases); err != nil {
+				log.Printf("backfill: set aliases for %d failed: %v", g.ID, err)
+				continue
+			}
+			returned[g.ID] = true
+			done++
+		}
+		// IDs absent from the response are gone upstream; stamp them so the
+		// queue advances instead of re-selecting the same head rows forever.
+		for _, id := range ids {
+			if !returned[id] {
+				if err := s.store.MarkAliasesFetched(ctx, id); err != nil {
+					log.Printf("backfill: mark %d failed: %v", id, err)
+					continue
+				}
+				done++
+			}
 		}
 		progress(done, total)
 	}
