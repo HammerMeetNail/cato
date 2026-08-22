@@ -837,7 +837,7 @@ function heroCardHTML(item) {
         <button type="button" class="hero-btn" data-hero-time="30" title="Log 30 minutes">+30m</button>
         <button type="button" class="hero-btn" data-hero-time="60" title="Log 1 hour">+1h</button>
         <button type="button" class="hero-btn" data-hero-time="120" title="Log 2 hours">+2h</button>
-        <button type="button" class="hero-btn hero-finish" data-hero-finish title="Mark as finished">✓ Finished</button>
+        <button type="button" class="hero-btn hero-finish" data-hero-finish title="Mark as finished" aria-label="Mark as finished">✓</button>
       </div>
     </div>`;
 }
