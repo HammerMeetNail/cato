@@ -871,9 +871,13 @@ a { color: var(--accent); text-decoration: none; }
   flex-shrink: 0;
 }
 
-.hero-info {
+/* Name on top, sub + time chips below — the name gets the card's full width */
+.hero-body {
+  flex: 1;
   min-width: 0;
-  max-width: 150px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 
 .hero-name {
@@ -884,7 +888,16 @@ a { color: var(--accent); text-decoration: none; }
   text-overflow: ellipsis;
 }
 
+.hero-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .hero-sub {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 0.75rem;
   color: var(--text-dim);
   white-space: nowrap;
@@ -897,7 +910,6 @@ a { color: var(--accent); text-decoration: none; }
   align-items: center;
   gap: 5px;
   flex-shrink: 0;
-  margin-left: auto;
 }
 
 .hero-btn {

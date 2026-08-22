@@ -829,15 +829,17 @@ function heroCardHTML(item) {
   return `
     <div class="hero-card" data-game-id="${item.game_id}">
       <img src="${getCoverURL(item)}" alt="${escapeHTML(item.game_name)}" loading="lazy" decoding="async">
-      <div class="hero-info">
+      <div class="hero-body">
         <div class="hero-name">${escapeHTML(item.game_name)}</div>
-        <div class="hero-sub">${escapeHTML(bits.join(' · '))}</div>
-      </div>
-      <div class="hero-actions">
-        <button type="button" class="hero-btn" data-hero-time="30" title="Log 30 minutes">+30m</button>
-        <button type="button" class="hero-btn" data-hero-time="60" title="Log 1 hour">+1h</button>
-        <button type="button" class="hero-btn" data-hero-time="120" title="Log 2 hours">+2h</button>
-        <button type="button" class="hero-btn hero-finish" data-hero-finish title="Mark as finished" aria-label="Mark as finished">✓</button>
+        <div class="hero-controls">
+          <span class="hero-sub">${escapeHTML(bits.join(' · '))}</span>
+          <div class="hero-actions">
+            <button type="button" class="hero-btn" data-hero-time="30" title="Log 30 minutes">+30m</button>
+            <button type="button" class="hero-btn" data-hero-time="60" title="Log 1 hour">+1h</button>
+            <button type="button" class="hero-btn" data-hero-time="120" title="Log 2 hours">+2h</button>
+            <button type="button" class="hero-btn hero-finish" data-hero-finish title="Mark as finished" aria-label="Mark as finished">✓</button>
+          </div>
+        </div>
       </div>
     </div>`;
 }
