@@ -21,7 +21,19 @@
 
     <main class="container">
       <div class="search-wrap">
-        <input type="text" id="searchInput" placeholder="Search games…" autocomplete="off">
+        <input type="text" id="searchInput" placeholder="Search games…"
+               autocomplete="off" enterkeyhint="search"
+               spellcheck="false" autocapitalize="none" autocorrect="off"
+               role="combobox" aria-expanded="false"
+               aria-autocomplete="list" aria-controls="searchResults">
+        <button type="button" class="search-clear" id="searchClear" aria-label="Clear search">&times;</button>
+        <button type="button" class="voice-btn" id="voiceBtn" aria-label="Search by voice" style="display:none">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <rect x="9" y="3" width="6" height="11" rx="3"></rect>
+            <path d="M5 11a7 7 0 0 0 14 0"></path>
+            <line x1="12" y1="18" x2="12" y2="21"></line>
+          </svg>
+        </button>
         <div class="search-hint">
           <span><kbd>$</kbd> filters your library by tag, e.g. <kbd>$rpg</kbd></span>
           <span>tags with spaces need quotes: <kbd>$"switch 2"</kbd> · combine with <kbd>|</kbd></span>
@@ -56,7 +68,7 @@
 
   <script type="module">
     import { checkAuth, logout, library } from '/js/api.js';
-    import { initSearch } from '/js/search.js';
+    import { initSearch, initVoiceSearch, recordRecentSearch } from '/js/search.js';
     import { loadLibrary, loadSearchResults, addGameToLibrary, renderLibraryItems, getHashStatus, getHashGameId, getHashSearch, openGameModal, activateStatusTab, openLibraryItemModal, filterByTag, refreshTabCounts, loadHero, initHeroActions } from '/js/library.js';
     import { openStatsDialog } from '/js/stats.js';
 
@@ -71,6 +83,7 @@
       const searchQuery = getHashSearch();
       if (searchQuery) {
         searchInput.value = searchQuery;
+        recordRecentSearch(searchQuery);
         await loadSearchResults(searchQuery);
         return;
       }
@@ -170,6 +183,18 @@
       } catch {
         return [];
       }
+    });
+
+    // Voice search (progressive enhancement — button removes itself when the
+    // Web Speech API is unavailable).
+    initVoiceSearch(document.getElementById('voiceBtn'), searchInput);
+
+    // In-input clear button: empties the box, refocuses, and re-shows the
+    // recent searches panel.
+    document.getElementById('searchClear')?.addEventListener('click', () => {
+      searchInput.value = '';
+      searchInput.focus();
+      searchInput.dispatchEvent(new Event('input'));
     });
 
     // Listen for tagfilter events from search.js ($tag Enter or "Filter library" click)

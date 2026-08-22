@@ -54,25 +54,45 @@ func (s *Service) Search(ctx context.Context, query string) ([]GameResult, error
 // it runs the IGDB live fallback before returning results; on deeper pages,
 // it returns pure local DB results (no IGDB hammering).
 func (s *Service) SearchPaged(ctx context.Context, query string, limit, offset int) ([]GameResult, error) {
+	results, _, err := s.SearchPagedFull(ctx, query, limit, offset, "", 0, 0, 0)
+	return results, err
+}
+
+// SearchPagedFull is the full-results-page search: paginated, floored,
+// optionally sorted/filtered (SEARCH_IMPROVEMENTS.md §4.4), and returning the
+// total match count so the UI can display "N results". As in SearchPaged, the
+// IGDB live fallback runs on page 1 only; deeper pages are pure local queries.
+func (s *Service) SearchPagedFull(ctx context.Context, query string, limit, offset int, sort string, yearFrom, yearTo, minRating int64) ([]GameResult, int64, error) {
 	query = NormalizeName(query)
 	if len(query) < 2 {
-		return nil, nil
+		return nil, 0, nil
 	}
 
-	local, err := s.store.SearchLocalPaged(ctx, query, limit, offset, true)
+	opts := func() searchOptions {
+		return searchOptions{
+			limit:     limit,
+			offset:    offset,
+			sort:      sort,
+			yearFrom:  yearFrom,
+			yearTo:    yearTo,
+			minRating: minRating,
+		}
+	}
+
+	local, total, err := s.store.SearchGamesPaged(ctx, query, opts())
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	// Only ask IGDB on page 1 and only if the query is long enough and not cached.
 	if offset > 0 || !s.shouldAskIGDB(query) {
-		return local, nil
+		return local, total, nil
 	}
 
 	// Page 1: refresh from IGDB, then re-query locally.
 	s.refreshFromIGDB(ctx, query)
 
-	return s.store.SearchLocalPaged(ctx, query, limit, offset, true)
+	return s.store.SearchGamesPaged(ctx, query, opts())
 }
 
 // refreshFromIGDB fetches a query from IGDB, upserts all results, and records

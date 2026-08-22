@@ -49,8 +49,10 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	if err := database.QueryRow("SELECT COALESCE(MAX(version), 0) FROM schema_migrations").Scan(&version); err != nil {
 		t.Fatalf("failed to get version: %v", err)
 	}
-	if version != 6 {
-		t.Errorf("expected version 6, got %d", version)
+	// Track len(migrations) rather than a hardcoded number so adding
+	// migration N+1 can't silently leave this assertion stale.
+	if version != len(migrations) {
+		t.Errorf("expected version %d, got %d", len(migrations), version)
 	}
 }
 

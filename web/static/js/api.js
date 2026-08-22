@@ -105,14 +105,30 @@ export async function searchGames(query, signal) {
   return api.get(`/api/games/search?q=${encodeURIComponent(query)}`, { signal });
 }
 
-export async function searchGamesFull(query, { limit = 24, offset = 0, signal } = {}) {
-  if (!query || query.length < 2) return [];
+// searchGamesFull fetches a page of full search results plus the total match
+// count (X-Total-Count header). opts: limit, offset, sort ('relevance' |
+// 'release_new' | 'release_old' | 'rating' | 'popularity' | 'name'),
+// yearFrom/yearTo (numbers), minRating (number).
+export async function searchGamesFull(query, {
+  limit = 24, offset = 0,
+  sort = '', yearFrom = null, yearTo = null, minRating = null,
+  signal,
+} = {}) {
+  if (!query || query.length < 2) return { results: [], total: 0 };
   const params = new URLSearchParams();
   params.append('q', query);
   params.append('full', '1');
   params.append('limit', limit);
   params.append('offset', offset);
-  return api.get(`/api/games/search?${params.toString()}`, { signal });
+  if (sort && sort !== 'relevance') params.append('sort', sort);
+  if (yearFrom) params.append('year_from', yearFrom);
+  if (yearTo) params.append('year_to', yearTo);
+  if (minRating) params.append('min_rating', minRating);
+  const { data, res } = await api.getFull(`/api/games/search?${params.toString()}`, { signal });
+  return {
+    results: data,
+    total: Number(res.headers.get('X-Total-Count')) || data.length,
+  };
 }
 
 // parseTagQuery parses a raw tag filter string into { tags, op }.

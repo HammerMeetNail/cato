@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"cato/internal/config"
 	"cato/internal/db"
@@ -71,6 +72,9 @@ func (h *GameHandler) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 // handleSearchFull handles paginated full-results search with the relevance floor.
 // Parses limit (default 24, clamped [1,60]) and offset (default 0, clamped >=0).
+// Optional sort/year_from/year_to/min_rating filters are applied server-side
+// (SEARCH_IMPROVEMENTS.md §4.4); the total match count is returned in
+// X-Total-Count, mirroring the library list endpoint's convention.
 func (h *GameHandler) handleSearchFull(w http.ResponseWriter, r *http.Request, query string) {
 	limit := 24
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
@@ -97,7 +101,17 @@ func (h *GameHandler) handleSearchFull(w http.ResponseWriter, r *http.Request, q
 		offset = 0
 	}
 
-	results, err := h.service.SearchPaged(r.Context(), query, limit, offset)
+	sort := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("sort")))
+	if !games.ValidSorts[sort] {
+		sort = ""
+	}
+
+	results, total, err := h.service.SearchPagedFull(r.Context(), query,
+		limit, offset, sort,
+		parseYearParam(r.URL.Query().Get("year_from"), false),
+		parseYearParam(r.URL.Query().Get("year_to"), true),
+		parseMinRatingParam(r.URL.Query().Get("min_rating")),
+	)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errResp("search_error", "Search failed"))
 		return
@@ -106,7 +120,43 @@ func (h *GameHandler) handleSearchFull(w http.ResponseWriter, r *http.Request, q
 	if results == nil {
 		results = []games.GameResult{}
 	}
+	w.Header().Set("X-Total-Count", strconv.FormatInt(total, 10))
 	writeJSON(w, http.StatusOK, results)
+}
+
+// parseYearParam converts a year (e.g. "1998") to unix seconds: start of that
+// year for from-bounds, end of it for to-bounds. Returns 0 (= unset) for
+// empty or out-of-range input.
+func parseYearParam(raw string, end bool) int64 {
+	if raw == "" {
+		return 0
+	}
+	y, err := strconv.Atoi(raw)
+	if err != nil || y < 1900 || y > 2100 {
+		return 0
+	}
+	if !end {
+		return time.Date(y, time.January, 1, 0, 0, 0, 0, time.UTC).Unix()
+	}
+	return time.Date(y+1, time.January, 1, 0, 0, 0, 0, time.UTC).Unix() - 1
+}
+
+// parseMinRatingParam clamps to [0, 100]; 0 means unset.
+func parseMinRatingParam(raw string) int64 {
+	if raw == "" {
+		return 0
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0
+	}
+	if n < 0 {
+		n = 0
+	}
+	if n > 100 {
+		n = 100
+	}
+	return n
 }
 
 func (h *GameHandler) handleGameByID(w http.ResponseWriter, r *http.Request) {

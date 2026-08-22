@@ -29,34 +29,43 @@ type igdbCover struct {
 	ImageID string `json:"image_id"`
 }
 
+// igdbAltName is one entry of the games.alternative_names expansion
+// (abbreviations like "botw", localized titles, etc.).
+type igdbAltName struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
 type igdbGame struct {
-	ID                    int64      `json:"id"`
-	Name                  string     `json:"name"`
-	Slug                  string     `json:"slug"`
-	Summary               string     `json:"summary"`
-	Storyline             string     `json:"storyline"`
-	Cover                 *igdbCover `json:"cover"`
-	FirstReleaseDate      int64      `json:"first_release_date"`
-	AggregatedRating      float64    `json:"aggregated_rating"`
-	AggregatedRatingCount int64      `json:"aggregated_rating_count"`
-	Platforms             []int64    `json:"platforms"`
-	Genres                []int64    `json:"genres"`
-	URL                   string     `json:"url"`
-	UpdatedAt             int64      `json:"updated_at"`
-	Rating                float64    `json:"rating"`
-	RatingCount           int64      `json:"rating_count"`
-	TotalRating           float64    `json:"total_rating"`
-	TotalRatingCount      int64      `json:"total_rating_count"`
-	Follows               int64      `json:"follows"`
-	Hypes                 int64      `json:"hypes"`
-	Category              int64      `json:"category"`
-	Status                int64      `json:"status"`
-	VersionParent         int64      `json:"version_parent"`
+	ID                    int64         `json:"id"`
+	Name                  string        `json:"name"`
+	Slug                  string        `json:"slug"`
+	Summary               string        `json:"summary"`
+	Storyline             string        `json:"storyline"`
+	Cover                 *igdbCover    `json:"cover"`
+	AlternativeNames      []igdbAltName `json:"alternative_names"`
+	FirstReleaseDate      int64         `json:"first_release_date"`
+	AggregatedRating      float64       `json:"aggregated_rating"`
+	AggregatedRatingCount int64         `json:"aggregated_rating_count"`
+	Platforms             []int64       `json:"platforms"`
+	Genres                []int64       `json:"genres"`
+	URL                   string        `json:"url"`
+	UpdatedAt             int64         `json:"updated_at"`
+	Rating                float64       `json:"rating"`
+	RatingCount           int64         `json:"rating_count"`
+	TotalRating           float64       `json:"total_rating"`
+	TotalRatingCount      int64         `json:"total_rating_count"`
+	Follows               int64         `json:"follows"`
+	Hypes                 int64         `json:"hypes"`
+	Category              int64         `json:"category"`
+	Status                int64         `json:"status"`
+	VersionParent         int64         `json:"version_parent"`
 }
 
 // igdbFields is the IGDB API v4 fields clause requested on every games query.
 // Extended to include popularity signals (follows, hypes,
-// total_rating_count, etc.) used to compute Game.PopularityScore.
+// total_rating_count, etc.) used to compute Game.PopularityScore, and
+// alternative_names.name for alias-aware search (SEARCH_IMPROVEMENTS.md §4.1).
 //
 // cover.image_id is requested as a nested field: game.cover is an ID into the
 // covers table, and the CDN URL must be built from that record's image_id
@@ -71,7 +80,7 @@ type igdbGame struct {
 // follows, hypes, total_rating_count, category, and status. Do not add
 // `popularity` back to this list without first verifying via the
 // /popularity endpoint integration.
-const igdbFields = "id,name,slug,summary,storyline,cover.id,cover.image_id,first_release_date,aggregated_rating,aggregated_rating_count,platforms,genres,url,updated_at,rating,rating_count,total_rating,total_rating_count,follows,hypes,category,status,version_parent"
+const igdbFields = "id,name,slug,summary,storyline,cover.id,cover.image_id,alternative_names.name,first_release_date,aggregated_rating,aggregated_rating_count,platforms,genres,url,updated_at,rating,rating_count,total_rating,total_rating_count,follows,hypes,category,status,version_parent"
 
 func NewClient(clientID, clientSecret string) *Client {
 	return &Client{
@@ -133,6 +142,12 @@ func (c *Client) toGame(g igdbGame) games.Game {
 		coverID = g.Cover.ID
 		coverURL = igdbCoverURL(g.Cover.ImageID)
 	}
+	var aliases []string
+	for _, a := range g.AlternativeNames {
+		if a.Name != "" {
+			aliases = append(aliases, a.Name)
+		}
+	}
 	return games.Game{
 		ID:                    g.ID,
 		Name:                  g.Name,
@@ -143,6 +158,7 @@ func (c *Client) toGame(g igdbGame) games.Game {
 		Storyline:             g.Storyline,
 		CoverID:               coverID,
 		CoverURL:              coverURL,
+		Aliases:               aliases,
 		FirstReleaseDate:      g.FirstReleaseDate,
 		AggregatedRating:      int64(g.AggregatedRating),
 		AggregatedRatingCount: g.AggregatedRatingCount,

@@ -18,26 +18,10 @@ func NewStore(db *db.DB) *Store {
 	return &Store{db: db}
 }
 
-// searchSQL is the primary search path: FTS5 trigram MATCH on normalized_name,
-// joined back to the games rowid, ranked by (name-match tier, main-game vs
-// DLC, popularity_score, then existing tie-breakers). See SEARCH_PLAN.md §3.
-const searchSQL = `SELECT g.id, g.name, g.slug, g.cover_url, g.local_cover_path, g.first_release_date
-FROM games g
-JOIN games_fts f ON f.rowid = g.id
-WHERE f.normalized_name MATCH ?1
-ORDER BY
-  CASE
-    WHEN g.normalized_name = ?2 THEN 0
-    WHEN g.normalized_name LIKE ?3 ESCAPE '\' THEN 1
-    WHEN g.normalized_name LIKE ?4 ESCAPE '\' THEN 2
-    ELSE 3
-  END,
-  CASE WHEN g.category = 0 THEN 0 ELSE 1 END,
-  g.popularity_score DESC,
-  g.aggregated_rating_count DESC,
-  g.aggregated_rating DESC,
-  g.first_release_date DESC
-LIMIT ?5`
+// Search is composed at query time (buildSearchUnion + buildFilterWhere)
+// rather than from fixed templates: the name branch and the alias branch
+// (SEARCH_IMPROVEMENTS.md §4.1) share the ranking/floor/filter plumbing, and
+// both a results query and a COUNT query are produced from identical pieces.
 
 // EscapeLike escapes SQL LIKE wildcards in user input so that a query like
 // "100%" matches the literal string "100%" rather than "100<anything>".
@@ -49,104 +33,249 @@ func EscapeLike(s string) string {
 	return s
 }
 
-// searchLikeFallback preserves the pre-FTS behavior for queries too short for
-// the trigram tokenizer (< 3 chars) or if the FTS table is unavailable.
-// All LIKE comparisons use ESCAPE '\' because the patterns are built from
-// user input passed through EscapeLike.
-const searchLikeFallback = `SELECT id, name, slug, cover_url, local_cover_path, first_release_date
-FROM games
-WHERE normalized_name LIKE ?1 ESCAPE '\'
-ORDER BY
-  CASE
-    WHEN normalized_name = ?2 THEN 0
-    WHEN normalized_name LIKE ?3 ESCAPE '\' THEN 1
-    WHEN normalized_name LIKE ?4 ESCAPE '\' THEN 2
-    ELSE 3
-  END,
-  CASE WHEN category = 0 THEN 0 ELSE 1 END,
-  popularity_score DESC,
-  aggregated_rating_count DESC,
-  aggregated_rating DESC,
-  first_release_date DESC
-LIMIT ?5`
+// ValidSorts whitelists the sort= values accepted on the search endpoint.
+var ValidSorts = map[string]bool{
+	"":            true, // relevance (default)
+	"relevance":   true,
+	"release_new": true,
+	"release_old": true,
+	"rating":      true,
+	"popularity":  true,
+	"name":        true,
+}
+
+// searchOptions controls one search execution.
+type searchOptions struct {
+	limit      int
+	offset     int
+	applyFloor bool // hide weak tier-3 substring matches unless popular
+	sort       string
+	yearFrom   int64 // unix seconds, inclusive; 0 = unset
+	yearTo     int64 // unix seconds, inclusive; 0 = unset
+	minRating  int64 // aggregated_rating >= minRating with count > 0; 0 = unset
+	withTotal  bool  // also run the COUNT query
+}
 
 func (s *Store) SearchLocal(ctx context.Context, query string, limit int) ([]GameResult, error) {
-	return s.SearchLocalPaged(ctx, query, limit, 0, false)
+	results, _, err := s.search(ctx, query, searchOptions{limit: limit})
+	return results, err
 }
 
 // SearchLocalPaged performs a paginated search with optional relevance floor.
 // When applyFloor is true, weak (tier-3 substring) matches are hidden unless
-// they have popularity_score > 0, keeping obvious junk off the full results
-// page. When false, all matches are returned (original dropdown behavior).
+// they have popularity_score > 0. Alias matches always pass the floor — an
+// alias hit is a strong signal regardless of the game's popularity.
 func (s *Store) SearchLocalPaged(ctx context.Context, query string, limit, offset int, applyFloor bool) ([]GameResult, error) {
-	if limit <= 0 {
-		limit = 10
-	}
-	if offset < 0 {
-		offset = 0
-	}
-
-	like := "%" + EscapeLike(query) + "%"
-	prefix := EscapeLike(query) + "%"
-	wordPrefix := "% " + EscapeLike(query) + "%"
-
-	if match, ok := BuildFTSMatch(query); ok {
-		sql, args := s.buildSearchSQL(searchSQL, match, query, prefix, wordPrefix, limit, offset, applyFloor)
-		results, err := s.querySearch(ctx, sql, args)
-		if err == nil {
-			return results, nil
-		}
-		// FTS table missing or query error: fall through to the LIKE path.
-		// This keeps search working on databases migrated before v5 or if
-		// the FTS virtual table is ever dropped.
-	}
-	sql, args := s.buildSearchSQL(searchLikeFallback, like, query, prefix, wordPrefix, limit, offset, applyFloor)
-	return s.querySearch(ctx, sql, args)
+	results, _, err := s.search(ctx, query, searchOptions{
+		limit:      limit,
+		offset:     offset,
+		applyFloor: applyFloor,
+	})
+	return results, err
 }
 
-// buildSearchSQL constructs the SQL and args for a search query with optional
-// offset and floor predicate. When applyFloor is true, adds a WHERE condition
-// that keeps exact/prefix/word-prefix matches always, but weak tier-3 substring
-// matches only if popularity_score > 0. OFFSET is appended to the query.
-func (s *Store) buildSearchSQL(template string, ftsMgLike string, query string, prefix string, wordPrefix string, limit int, offset int, applyFloor bool) (string, []interface{}) {
-	isFTS := strings.Contains(template, "games_fts")
+// SearchGamesPaged is the full-results-page entry point: paginated, floored,
+// sorted/filtered per options, and returning the total match count so the UI
+// can display "N games".
+func (s *Store) SearchGamesPaged(ctx context.Context, query string, o searchOptions) ([]GameResult, int64, error) {
+	o.applyFloor = true
+	o.withTotal = true
+	return s.search(ctx, query, o)
+}
 
-	// Start with base args.
-	args := []interface{}{ftsMgLike, query, prefix, wordPrefix, limit}
+// search runs the engine cascade: FTS phrase → (on zero rows) FTS token-AND →
+// LIKE fallback (short queries or missing FTS tables). A healthy FTS path is
+// authoritative even when it returns zero rows; falling through to LIKE on
+// every empty result would turn each miss into a full-table scan.
+func (s *Store) search(ctx context.Context, query string, o searchOptions) ([]GameResult, int64, error) {
+	if o.limit <= 0 {
+		o.limit = 10
+	}
+	if o.offset < 0 {
+		o.offset = 0
+	}
+	if !ValidSorts[o.sort] {
+		o.sort = ""
+	}
 
-	var sql string
-	if applyFloor {
-		// Add floor clause. The floor allows exact/prefix/word-prefix matches
-		// always, and tier-3 (neither of the above) matches only if popular.
-		args = append(args, query, prefix, wordPrefix) // ?6, ?7, ?8 for the floor
+	prefix := EscapeLike(query) + "%"
+	wordPrefix := "% " + EscapeLike(query) + "%"
+	like := "%" + EscapeLike(query) + "%"
 
-		if isFTS {
-			sql = strings.Replace(
-				template,
-				"WHERE f.normalized_name MATCH ?1",
-				"WHERE f.normalized_name MATCH ?1 AND ( g.normalized_name = ?6 OR g.normalized_name LIKE ?7 ESCAPE '\\' OR g.normalized_name LIKE ?8 ESCAPE '\\' OR g.popularity_score > 0 )",
-				1,
-			)
+	run := func(engine, match string) ([]GameResult, int64, error) {
+		return s.execSearch(ctx, engine, match, query, prefix, wordPrefix, like, o)
+	}
+
+	if match, ok := BuildFTSMatch(query); ok {
+		results, total, err := run("fts", match)
+		if err != nil {
+			// FTS table missing or query error: fall through to the LIKE
+			// path below. Keeps search working on databases migrated before
+			// v5/v7 or if a virtual table is ever dropped.
+		} else if len(results) == 0 {
+			// Word-order retry: same index, order-insensitive AND of tokens.
+			// Skipped when identical to the phrase (single-token queries).
+			if tok, ok2 := BuildFTSTokenMatch(query); ok2 && tok != match {
+				results, total, err = run("fts", tok)
+				if err == nil {
+					return results, total, nil
+				}
+			} else {
+				return results, total, nil
+			}
 		} else {
-			sql = strings.Replace(
-				template,
-				"WHERE normalized_name LIKE ?1 ESCAPE '\\'",
-				"WHERE normalized_name LIKE ?1 ESCAPE '\\' AND ( normalized_name = ?6 OR normalized_name LIKE ?7 ESCAPE '\\' OR normalized_name LIKE ?8 ESCAPE '\\' OR popularity_score > 0 )",
-				1,
-			)
+			return results, total, nil
 		}
-	} else {
-		sql = template
+	}
+	return run("like", "")
+}
+
+// buildSearchUnion composes the inner subquery listing matching game IDs:
+// the name branch (tier 0-3 by match strength) plus the alias branch
+// (tier 3, src 1). args is appended in positional order.
+func buildSearchUnion(b *strings.Builder, args *[]interface{}, engine, match, query, prefix, wordPrefix, like string) {
+	switch engine {
+	case "fts":
+		b.WriteString(`SELECT g0.id,
+		       CASE WHEN g0.normalized_name = ? THEN 0
+		            WHEN g0.normalized_name LIKE ? ESCAPE '\' THEN 1
+		            WHEN g0.normalized_name LIKE ? ESCAPE '\' THEN 2
+		            ELSE 3 END AS tier,
+		       0 AS src
+		     FROM games g0
+		     JOIN games_fts f ON f.rowid = g0.id
+		     WHERE f.normalized_name MATCH ?`)
+		*args = append(*args, query, prefix, wordPrefix, match)
+
+		b.WriteString(`
+		     UNION ALL
+		     SELECT a.game_id, 3 AS tier, 1 AS src
+		     FROM game_aliases a
+		     JOIN aliases_fts af ON af.rowid = a.rowid
+		     WHERE af.normalized_alias MATCH ?
+		       AND a.game_id NOT IN (
+		         SELECT g1.id FROM games g1 JOIN games_fts f1 ON f1.rowid = g1.id
+		         WHERE f1.normalized_name MATCH ?)`)
+		*args = append(*args, match, match)
+	default: // "like"
+		b.WriteString(`SELECT g0.id,
+		       CASE WHEN g0.normalized_name = ? THEN 0
+		            WHEN g0.normalized_name LIKE ? ESCAPE '\' THEN 1
+		            WHEN g0.normalized_name LIKE ? ESCAPE '\' THEN 2
+		            ELSE 3 END AS tier,
+		       0 AS src
+		     FROM games g0
+		     WHERE g0.normalized_name LIKE ? ESCAPE '\'`)
+		*args = append(*args, query, prefix, wordPrefix, like)
+
+		b.WriteString(`
+		     UNION ALL
+		     SELECT a.game_id, 3 AS tier, 1 AS src
+		     FROM game_aliases a
+		     WHERE a.normalized_alias LIKE ? ESCAPE '\'
+		       AND a.game_id NOT IN (
+		         SELECT g1.id FROM games g1 WHERE g1.normalized_name LIKE ? ESCAPE '\')`)
+		*args = append(*args, like, like)
+	}
+}
+
+// buildFilterWhere emits the WHERE clause shared by results and COUNT queries
+// (relevance floor + year/rating filters), or "" when nothing applies.
+func buildFilterWhere(b *strings.Builder, args *[]interface{}, o searchOptions, query, prefix, wordPrefix string) {
+	var conds []string
+	if o.applyFloor {
+		conds = append(conds,
+			`(x.src = 1 OR g.normalized_name = ? OR g.normalized_name LIKE ? ESCAPE '\' OR g.normalized_name LIKE ? ESCAPE '\' OR g.popularity_score > 0)`)
+		*args = append(*args, query, prefix, wordPrefix)
+	}
+	if o.yearFrom > 0 {
+		conds = append(conds, `g.first_release_date >= ?`)
+		*args = append(*args, o.yearFrom)
+	}
+	if o.yearTo > 0 {
+		conds = append(conds, `g.first_release_date <= ?`)
+		*args = append(*args, o.yearTo)
+	}
+	if o.minRating > 0 {
+		conds = append(conds, `g.aggregated_rating >= ?`, `g.aggregated_rating_count > 0`)
+		*args = append(*args, o.minRating)
+	}
+	if len(conds) == 0 {
+		return
+	}
+	b.WriteString(" WHERE ")
+	b.WriteString(strings.Join(conds, " AND "))
+}
+
+// sortOrder maps the whitelisted sort key to its ORDER BY expression. The
+// default ("" / "relevance") preserves the historical ranking: match tier,
+// then main-game-over-DLC, then popularity tie-breakers.
+func sortOrder(sort string) string {
+	switch sort {
+	case "release_new":
+		return `CASE WHEN g.first_release_date = 0 THEN 1 ELSE 0 END,
+		       g.first_release_date DESC, g.popularity_score DESC`
+	case "release_old":
+		return `CASE WHEN g.first_release_date = 0 THEN 1 ELSE 0 END,
+		       g.first_release_date ASC, g.popularity_score DESC`
+	case "rating":
+		return `g.aggregated_rating DESC, g.aggregated_rating_count DESC, g.popularity_score DESC`
+	case "popularity":
+		return `g.popularity_score DESC, g.aggregated_rating_count DESC,
+		       g.aggregated_rating DESC, g.first_release_date DESC`
+	case "name":
+		return `g.name COLLATE NOCASE ASC, g.popularity_score DESC`
+	default:
+		return `x.tier ASC, x.src ASC,
+		       CASE WHEN g.category = 0 THEN 0 ELSE 1 END,
+		       g.popularity_score DESC,
+		       g.aggregated_rating_count DESC,
+		       g.aggregated_rating DESC,
+		       g.first_release_date DESC`
+	}
+}
+
+// execSearch runs one engine variant: builds the results SQL (and the COUNT
+// SQL when o.withTotal) from shared pieces, executes both, and scans rows.
+func (s *Store) execSearch(ctx context.Context, engine, match, query, prefix, wordPrefix, like string, o searchOptions) ([]GameResult, int64, error) {
+	var union strings.Builder
+	unionArgs := make([]interface{}, 0, 16)
+	buildSearchUnion(&union, &unionArgs, engine, match, query, prefix, wordPrefix, like)
+
+	var where strings.Builder
+	whereArgs := make([]interface{}, 0, len(unionArgs)+4)
+	buildFilterWhere(&where, &whereArgs, o, query, prefix, wordPrefix)
+	whereClause := where.String()
+
+	var sql strings.Builder
+	sql.WriteString(`SELECT g.id, g.name, g.slug, g.cover_url, g.local_cover_path, g.first_release_date`)
+	sql.WriteString(" FROM (")
+	sql.WriteString(union.String())
+	sql.WriteString(") x JOIN games g ON g.id = x.id")
+	sql.WriteString(whereClause)
+	sql.WriteString(" ORDER BY ")
+	sql.WriteString(sortOrder(o.sort))
+	sql.WriteString(" LIMIT ? OFFSET ?")
+	finalArgs := append(append(append([]interface{}{}, unionArgs...), whereArgs...), o.limit, o.offset)
+
+	results, err := s.querySearch(ctx, sql.String(), finalArgs)
+	if err != nil {
+		return nil, 0, fmt.Errorf("search games: %w", err)
 	}
 
-	// Add OFFSET clause if needed.
-	if offset > 0 {
-		// Use parameterized OFFSET to be safe.
-		sql += " OFFSET ?"
-		args = append(args, offset)
+	var total int64
+	if o.withTotal {
+		var csql strings.Builder
+		csql.WriteString("SELECT COUNT(*) FROM (")
+		csql.WriteString(union.String())
+		csql.WriteString(") x JOIN games g ON g.id = x.id")
+		csql.WriteString(whereClause)
+		countArgs := append(append([]interface{}{}, unionArgs...), whereArgs...)
+		if err := s.db.QueryRowContext(ctx, csql.String(), countArgs...).Scan(&total); err != nil {
+			return nil, 0, fmt.Errorf("count search games: %w", err)
+		}
 	}
-
-	return sql, args
+	return results, total, nil
 }
 
 func (s *Store) querySearch(ctx context.Context, sql string, args []interface{}) ([]GameResult, error) {
@@ -192,9 +321,18 @@ func (s *Store) GetByID(ctx context.Context, id int64) (*Game, error) {
 	return &g, nil
 }
 
+// UpsertIGDBGame inserts or refreshes a game row and replaces its alias set
+// (game_aliases) in one transaction, so a crash can't leave stale aliases for
+// a renamed game. The aliases_fts index is maintained by triggers.
 func (s *Store) UpsertIGDBGame(ctx context.Context, g Game) error {
 	now := time.Now().Unix()
-	_, err := s.db.ExecContext(ctx, `INSERT INTO games (
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, `INSERT INTO games (
 		id, name, slug, safe_name, normalized_name, summary, storyline,
 		cover_id, cover_url, local_cover_path, first_release_date, aggregated_rating,
 		aggregated_rating_count, platforms_json, genres_json, trailer,
@@ -240,7 +378,37 @@ func (s *Store) UpsertIGDBGame(ctx context.Context, g Game) error {
 		g.Hypes, g.IGDBPopularity, g.Category, g.Status, g.VersionParent,
 		g.PopularityScore, now,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+
+	if err := replaceAliases(ctx, tx, g.ID, g.NormalizedName, g.Aliases); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// replaceAliases swaps the stored alias set for a game: delete-all then
+// insert-normalized. The game's own normalized name is skipped (searching it
+// already hits the name branch; storing it would just duplicate rows).
+func replaceAliases(ctx context.Context, tx *sql.Tx, gameID int64, normalizedName string, aliases []string) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM game_aliases WHERE game_id = ?`, gameID); err != nil {
+		return err
+	}
+	seen := make(map[string]bool, len(aliases))
+	for _, a := range aliases {
+		na := NormalizeName(a)
+		if na == "" || na == normalizedName || seen[na] {
+			continue
+		}
+		seen[na] = true
+		if _, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO game_aliases (game_id, normalized_alias) VALUES (?, ?)`,
+			gameID, na); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) GetStaleGames(ctx context.Context, limit int) ([]int64, error) {
