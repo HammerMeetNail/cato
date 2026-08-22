@@ -63,6 +63,70 @@ a { color: var(--accent); text-decoration: none; }
 
 .topbar nav { display: flex; gap: 16px; align-items: center; }
 
+/* Hamburger account menu (username + logout) */
+.user-menu {
+  position: relative;
+}
+
+.user-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.user-menu-btn:hover {
+  background: var(--surface2);
+  color: var(--text);
+}
+
+.user-menu-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 170px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--surface2);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 60;
+}
+
+.user-menu-name {
+  display: block;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 8px 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--surface2);
+  border-radius: 4px 4px 0 0;
+}
+
+.user-menu-name:empty { display: none; }
+
+.user-menu-dropdown a {
+  display: block;
+  padding: 8px 10px;
+  font-size: 0.8rem;
+  color: var(--text);
+  border-radius: 0 0 4px 4px;
+}
+
+.user-menu-dropdown a:hover {
+  background: var(--surface2);
+}
+
 .container {
   max-width: 1200px;
   margin: 0 auto;
