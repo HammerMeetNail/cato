@@ -1973,8 +1973,9 @@ body.modal-open {
   align-items: start;
 }
 
-/* Color-coded circular rating dial: drag or tap around the ring, arrows to
-   nudge. The SVG arc fills clockwise from 12 o'clock. */
+/* Color-coded circular rating dial: press + drag around the ring to steer
+   (relative to where you grabbed), ±5 buttons below for exact nudges. The SVG
+   arc fills clockwise from 12 o'clock. */
 .rating-wheel {
   position: relative;
   width: 108px;
@@ -2023,6 +2024,55 @@ body.modal-open {
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   pointer-events: none;
+}
+
+/* Visual tick as the value crosses a 5-point band — the universal stand-in
+   for haptics, which iOS Safari does not support at all. */
+@keyframes wheel-num-pulse {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.16); }
+  100% { transform: scale(1); }
+}
+
+.wheel-num.tick {
+  animation: wheel-num-pulse 160ms ease-out;
+}
+
+/* Quarter marks (25/50/75) painted over the track to make the dial easier
+   to aim. */
+.wheel-ticks circle {
+  fill: rgba(255, 255, 255, 0.35);
+}
+
+/* Label row with inline reset/clear actions for the rating field */
+.field-label-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mini-btn {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--surface2);
+  color: var(--text-dim);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color var(--transition);
+}
+
+.mini-btn:hover { color: var(--accent); }
+
+/* Rating nudge buttons under the dial, mirroring the Hours stepper */
+.wheel-steps {
+  display: flex;
+  gap: 8px;
 }
 
 /* Hours stepper: ± buttons for keyboard-free tweaks on touch devices */

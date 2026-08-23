@@ -1354,16 +1354,32 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
         </div>
         <div class="modal-duo">
           <div class="modal-field">
-            <span class="field-label">Rating</span>
+            <div class="field-label-row">
+              <span class="field-label">Rating</span>
+              <button type="button" class="mini-btn" data-rating="reset"
+                      aria-label="Restore original rating" hidden>&#8634;</button>
+              <button type="button" class="mini-btn" data-rating="clear"
+                      aria-label="Clear rating (mark unrated)" hidden>&times;</button>
+            </div>
             <div class="rating-wheel" role="slider" tabindex="0"
                  aria-label="Rating" aria-valuemin="0" aria-valuemax="100"
                  aria-valuenow="${Number(rating)}">
               <svg viewBox="0 0 120 120" aria-hidden="true">
                 <circle class="wheel-track" cx="60" cy="60" r="52"></circle>
                 <circle class="wheel-fill" cx="60" cy="60" r="52"></circle>
+                <g class="wheel-ticks" aria-hidden="true">
+                  <circle cx="60" cy="8" r="2"></circle>
+                  <circle cx="8" cy="60" r="2"></circle>
+                  <circle cx="60" cy="112" r="2"></circle>
+                </g>
               </svg>
               <span class="wheel-num">${Number(rating)}</span>
             </div>
+            <div class="wheel-steps">
+              <button type="button" class="step-btn" data-rating-step="-5" aria-label="Rating minus 5">&minus;</button>
+              <button type="button" class="step-btn" data-rating-step="5" aria-label="Rating plus 5">+</button>
+            </div>
+            <div class="stepper-hint">drag the ring · tap &plusmn;5 to nudge</div>
           </div>
           <div class="modal-field">
             <span class="field-label">Hours</span>
@@ -1512,15 +1528,30 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
   };
 
   // --- rating wheel ----------------------------------------------------------
-  // A circular dial instead of a linear slider: drag anywhere around the ring
-  // (pointer events cover touch and mouse), or tap a spot to jump there. The
-  // arc is color-coded red→amber→green across the scale, so score reads at a
-  // glance. Arrow keys nudge by 1 (PageUp/PageDown by 10) for keyboards.
-  let ratingValue = Number(rating) || 0;
+  // A circular dial instead of a linear slider. Deliberate gestures only:
+  // a press must move ~8px before it starts steering, so stray taps (a scroll
+  // attempt landing here, a mis-aimed close) change nothing. The dial is
+  // RELATIVE: dragging rotates the value by the angle swept since the grab
+  // instead of teleporting to the finger's absolute position — the value sits
+  // still until you actually move, and there's no 0↔100 cliff at 12 o'clock.
+  // The arc is color-coded red→amber→green across the scale; quarter marks aid
+  // aiming. Arrow keys nudge by 1 (PageUp/PageDown by 10, Home/End to the
+  // rails) for keyboards; ±5 buttons give touch the same exact control.
+  const initialRating = Number(rating) || 0;
+  let ratingValue = initialRating;
   const wheel = modal.querySelector('.rating-wheel');
   const wheelFill = wheel.querySelector('.wheel-fill');
   const wheelNum = modal.querySelector('.wheel-num');
   const WHEEL_CIRC = 2 * Math.PI * 52;
+
+  // One-tap way back: restore appears only once the value has drifted from
+  // what the form opened with, clear appears whenever a rating is set.
+  const resetBtn = modal.querySelector('[data-rating="reset"]');
+  const clearBtn = modal.querySelector('[data-rating="clear"]');
+  const updateRatingHelpers = () => {
+    resetBtn.hidden = ratingValue === initialRating;
+    clearBtn.hidden = ratingValue === 0;
+  };
 
   const renderWheel = () => {
     const frac = ratingValue / 100;
@@ -1538,62 +1569,112 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
     }
     wheelNum.textContent = String(ratingValue);
     wheel.setAttribute('aria-valuenow', String(ratingValue));
+    wheel.setAttribute('aria-valuetext', `${ratingValue} out of 100`);
+    updateRatingHelpers();
   };
   renderWheel();
 
-  // Haptic tick when a drag crosses a quarter notch (25/50/75). Android
-  // fires it; iOS Safari silently ignores navigator.vibrate.
-  let lastNotch = Math.floor(ratingValue / 25);
-  const buzzOnNotch = () => {
-    const notch = Math.floor(ratingValue / 25);
-    if (notch === lastNotch) return;
-    lastNotch = notch;
-    if (typeof navigator.vibrate === 'function') navigator.vibrate(8);
+  // Per-step feedback: a light haptic tick every 5 points (stronger on the
+  // quarter marks) where the platform supports it, plus a visual pulse on the
+  // number as a universal fallback — iOS Safari ships no vibration API at all.
+  const pulseNum = () => {
+    wheelNum.classList.remove('tick');
+    void wheelNum.offsetWidth; // restart the CSS animation
+    wheelNum.classList.add('tick');
+  };
+  let lastTickBand = Math.floor(ratingValue / 5);
+  const tickFeedback = () => {
+    const band = Math.floor(ratingValue / 5);
+    if (band === lastTickBand) return;
+    lastTickBand = band;
+    if (typeof navigator.vibrate === 'function') {
+      navigator.vibrate(ratingValue % 25 === 0 ? 18 : 5);
+    }
+    pulseNum();
   };
 
-  const setWheelFromPointer = (e) => {
-    const r = wheel.getBoundingClientRect();
-    const dx = e.clientX - (r.left + r.width / 2);
-    const dy = e.clientY - (r.top + r.height / 2);
-    if (Math.hypot(dx, dy) < r.width * 0.18) return; // dead zone near the hub
-    let deg = Math.atan2(dy, dx) * 180 / Math.PI + 90; // 0° at 12 o'clock
-    if (deg < 0) deg += 360;
-    ratingValue = Math.min(100, Math.round(deg / 3.6));
-    buzzOnNotch();
+  const applyRating = (next) => {
+    const v = Math.max(0, Math.min(100, Math.round(next)));
+    if (v === ratingValue) return;
+    ratingValue = v;
     renderWheel();
+    tickFeedback();
     scheduleSave();
   };
-  let wheelDragging = false;
+
+  const angleAt = (e) => {
+    const r = wheel.getBoundingClientRect();
+    return Math.atan2(e.clientY - (r.top + r.height / 2),
+                      e.clientX - (r.left + r.width / 2)) * 180 / Math.PI;
+  };
+  const normDelta = (deg) => { // shortest signed sweep in (-180, 180]
+    let d = deg % 360;
+    if (d > 180) d -= 360;
+    if (d < -180) d += 360;
+    return d;
+  };
+
+  let pressId = null, pressX = 0, pressY = 0;
+  let grabAngle = 0, grabValue = 0, prevAngle = 0, sweep = 0, dialing = false;
+  const DIAL_SLOP = 8;
   wheel.addEventListener('pointerdown', (e) => {
+    if (pressId !== null) return;
     e.preventDefault();
-    wheelDragging = true;
+    pressId = e.pointerId;
+    pressX = e.clientX;
+    pressY = e.clientY;
+    grabAngle = angleAt(e);
+    grabValue = ratingValue;
+    sweep = 0;
+    dialing = false;
     try { wheel.setPointerCapture(e.pointerId); } catch { /* already released */ }
-    setWheelFromPointer(e);
   });
   wheel.addEventListener('pointermove', (e) => {
-    if (wheelDragging) setWheelFromPointer(e);
+    if (e.pointerId !== pressId) return;
+    if (!dialing) {
+      if (Math.hypot(e.clientX - pressX, e.clientY - pressY) < DIAL_SLOP) return;
+      dialing = true;
+      prevAngle = angleAt(e); // adopt where the gesture settled; nothing moved yet
+      return;
+    }
+    const a = angleAt(e);
+    sweep += normDelta(a - prevAngle);
+    prevAngle = a;
+    applyRating(grabValue + sweep / 3.6);
   });
   ['pointerup', 'pointercancel'].forEach(ev =>
-    wheel.addEventListener(ev, () => { wheelDragging = false; }));
+    wheel.addEventListener(ev, (e) => {
+      if (pressId !== null && e.pointerId !== pressId) return;
+      pressId = null;
+      dialing = false;
+    }));
   wheel.addEventListener('keydown', (e) => {
     let next = null;
-    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') next = Math.min(100, ratingValue + 1);
-    else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') next = Math.max(0, ratingValue - 1);
-    else if (e.key === 'PageUp') next = Math.min(100, ratingValue + 10);
-    else if (e.key === 'PageDown') next = Math.max(0, ratingValue - 10);
+    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') next = ratingValue + 1;
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') next = ratingValue - 1;
+    else if (e.key === 'PageUp') next = ratingValue + 10;
+    else if (e.key === 'PageDown') next = ratingValue - 10;
     else if (e.key === 'Home') next = 0;
     else if (e.key === 'End') next = 100;
     if (next === null) return;
     e.preventDefault();
-    ratingValue = next;
-    buzzOnNotch();
-    renderWheel();
-    scheduleSave();
+    applyRating(next);
   });
 
+  // ±5 nudges: exact adjustments without the keyboard or a precise drag.
+  modal.querySelectorAll('[data-rating-step]').forEach(btn => {
+    btn.addEventListener('click', () => applyRating(ratingValue + Number(btn.dataset.ratingStep)));
+  });
+  resetBtn.addEventListener('click', () => {
+    lastTickBand = Math.floor(initialRating / 5);
+    applyRating(initialRating);
+  });
+  clearBtn.addEventListener('click', () => applyRating(0));
+
   // Hours: ± buttons step whole hours so quick tweaks never summon the
-  // keyboard; typing still works for exact values.
-  modal.querySelectorAll('.step-btn').forEach(btn => {
+  // keyboard; typing still works for exact values. Scoped to the stepper so
+  // the rating wheel's ±5 buttons (also .step-btn) stay out of this handler.
+  modal.querySelectorAll('.stepper .step-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const inp = modal.querySelector('.modal-playtime');
       const cur = parseFloat(inp.value);
