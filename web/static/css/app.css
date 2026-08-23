@@ -2038,6 +2038,27 @@ body.modal-open {
   animation: wheel-num-pulse 160ms ease-out;
 }
 
+/* Floating value pill shown while dragging the rating dial: the thumb hides
+   the dial's own number, so the live score orbits just past the ring edge
+   beside the fingertip, tinted like the arc. Fixed-position on <body>, above
+   the modal overlay. */
+.wheel-hud {
+  position: fixed;
+  z-index: 110;
+  min-width: 40px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: var(--green);
+  color: #fff;
+  font-size: 0.95rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+}
+
 /* Quarter marks (25/50/75) painted over the track to make the dial easier
    to aim. */
 .wheel-ticks circle {

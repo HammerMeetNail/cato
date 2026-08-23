@@ -1277,9 +1277,11 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
                         startedAt = null, completedAt = null,
                         platformsOwned = [], medium = '', platforms = [],
                         inLibrary = false }) {
-  // Replace any existing modal (e.g. user clicks a second result).
+  // Replace any existing modal (e.g. user clicks a second result). Also drop
+  // any rating-drag HUD a previous form may have left on <body>.
   const existing = document.getElementById('addGameModal');
   if (existing) existing.remove();
+  document.querySelectorAll('.wheel-hud').forEach(h => h.remove());
 
   const title = inLibrary ? 'Edit Library Entry' : 'Add to Library';
   const hours = Math.round((playtime / 60) * 100) / 100;
@@ -1544,6 +1546,42 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
   const wheelNum = modal.querySelector('.wheel-num');
   const WHEEL_CIRC = 2 * Math.PI * 52;
 
+  // Hue 0 (red) at 0 → hue 120 (green) at 100; gray means "unrated".
+  const ratingColor = () =>
+    ratingValue > 0 ? `hsl(${Math.round(ratingValue * 1.2)}, 70%, 52%)` : '';
+
+  // Drag HUD: a thumb on the ring hides the dial's own readout, so while
+  // steering, the live value floats in a pill just past the ring edge beside
+  // the fingertip, tinted like the arc. Lives on <body> with fixed
+  // positioning because it orbits outside the scrollable modal card.
+  const hud = document.createElement('div');
+  hud.className = 'wheel-hud';
+  hud.setAttribute('aria-hidden', 'true');
+  hud.hidden = true;
+  document.body.appendChild(hud);
+  let lastPointer = { x: 0, y: 0 };
+  const updateHudPos = (x, y) => {
+    const r = wheel.getBoundingClientRect();
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const dx = x - cx, dy = y - cy;
+    const len = Math.hypot(dx, dy) || 1;
+    const dist = r.width / 2 + 30; // orbit just outside the ring
+    const halfW = hud.offsetWidth / 2, halfH = hud.offsetHeight / 2;
+    const m = 8; // viewport clamp so the pill never goes off-screen
+    lastPointer = { x, y };
+    hud.style.left =
+      `${Math.min(innerWidth - m - halfW, Math.max(m + halfW, cx + (dx / len) * dist))}px`;
+    hud.style.top =
+      `${Math.min(innerHeight - m - halfH, Math.max(m + halfH, cy + (dy / len) * dist))}px`;
+  };
+  const hideHud = () => { hud.hidden = true; };
+  const showHud = (x, y) => {
+    hud.textContent = String(ratingValue);
+    hud.style.background = ratingColor();
+    hud.hidden = false;
+    updateHudPos(x, y);
+  };
+
   // One-tap way back: restore appears only once the value has drifted from
   // what the form opened with, clear appears whenever a rating is set.
   const resetBtn = modal.querySelector('[data-rating="reset"]');
@@ -1557,8 +1595,7 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
     const frac = ratingValue / 100;
     if (ratingValue > 0) {
       wheelFill.style.display = '';
-      // Hue 0 (red) at 0 → hue 120 (green) at 100; gray means "unrated".
-      const col = `hsl(${Math.round(ratingValue * 1.2)}, 70%, 52%)`;
+      const col = ratingColor();
       wheelFill.style.strokeDasharray = `${WHEEL_CIRC * frac} ${WHEEL_CIRC}`;
       wheelFill.style.stroke = col;
       wheelNum.style.color = col;
@@ -1570,6 +1607,10 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
     wheelNum.textContent = String(ratingValue);
     wheel.setAttribute('aria-valuenow', String(ratingValue));
     wheel.setAttribute('aria-valuetext', `${ratingValue} out of 100`);
+    if (!hud.hidden) {
+      hud.textContent = String(ratingValue);
+      hud.style.background = ratingColor();
+    }
     updateRatingHelpers();
   };
   renderWheel();
@@ -1635,18 +1676,21 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
       if (Math.hypot(e.clientX - pressX, e.clientY - pressY) < DIAL_SLOP) return;
       dialing = true;
       prevAngle = angleAt(e); // adopt where the gesture settled; nothing moved yet
+      showHud(e.clientX, e.clientY);
       return;
     }
     const a = angleAt(e);
     sweep += normDelta(a - prevAngle);
     prevAngle = a;
     applyRating(grabValue + sweep / 3.6);
+    updateHudPos(e.clientX, e.clientY);
   });
   ['pointerup', 'pointercancel'].forEach(ev =>
     wheel.addEventListener(ev, (e) => {
       if (pressId !== null && e.pointerId !== pressId) return;
       pressId = null;
       dialing = false;
+      hideHud();
     }));
   wheel.addEventListener('keydown', (e) => {
     let next = null;
@@ -1920,6 +1964,8 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
 
   const close = async () => {
     dismissTagMenu();
+    hideHud();
+    hud.remove();
     // Flush any debounced edit before tearing down — closing must never
     // lose a change. (After removal, runSave no-ops via the removed flag.)
     if (unsavedChanges || saveTimer) await runSave();
