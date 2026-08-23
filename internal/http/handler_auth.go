@@ -18,19 +18,21 @@ import (
 )
 
 type AuthHandler struct {
-	db            *db.DB
-	cfg           *config.Config
-	googleCfg     *oauth2.Config
-	loginLimiter  *auth.RateLimiter
-	signupLimiter *auth.RateLimiter
+	db              *db.DB
+	cfg             *config.Config
+	googleCfg       *oauth2.Config
+	loginLimiter    *auth.RateLimiter
+	signupLimiter   *auth.RateLimiter
+	passwordLimiter *auth.RateLimiter
 }
 
 func NewAuthHandler(db *db.DB, cfg *config.Config) *AuthHandler {
 	h := &AuthHandler{
-		db:            db,
-		cfg:           cfg,
-		loginLimiter:  auth.NewRateLimiter(10, time.Minute),
-		signupLimiter: auth.NewRateLimiter(5, time.Minute),
+		db:              db,
+		cfg:             cfg,
+		loginLimiter:    auth.NewRateLimiter(10, time.Minute),
+		signupLimiter:   auth.NewRateLimiter(5, time.Minute),
+		passwordLimiter: auth.NewRateLimiter(10, time.Minute),
 	}
 
 	if cfg.GoogleKey != "" && cfg.GoogleSecret != "" {
@@ -63,6 +65,13 @@ func (h *AuthHandler) Register(mux *http.ServeMux) {
 	mux.Handle("/api/auth/login", loginChain)
 
 	mux.HandleFunc("/api/auth/logout", h.handleLogout)
+
+	// Change password: auth + CSRF + rate limited (the current password is
+	// verified inside, so the limiter slows online guessing).
+	passwordChain := h.passwordLimiter.Middleware(
+		auth.AuthRequired(h.db)(auth.CSRFRequired(h.db)(http.HandlerFunc(h.handleChangePassword))))
+	mux.Handle("/api/auth/password", passwordChain)
+
 	mux.HandleFunc("/api/auth/google/start", h.handleGoogleStart)
 	mux.HandleFunc("/api/auth/google/callback", h.handleGoogleCallback)
 }
@@ -70,6 +79,11 @@ func (h *AuthHandler) Register(mux *http.ServeMux) {
 func (h *AuthHandler) handleMe(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPatch {
 		h.updateMe(w, r)
+		return
+	}
+
+	if r.Method == http.MethodDelete {
+		h.deleteMe(w, r)
 		return
 	}
 
@@ -95,7 +109,8 @@ func (h *AuthHandler) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var email, displayName string
-	err = h.db.QueryRow("SELECT email, display_name FROM users WHERE id = ?", session.UserID).Scan(&email, &displayName)
+	var hasPassword bool
+	err = h.db.QueryRow("SELECT email, display_name, COALESCE(password_hash, '') != '' FROM users WHERE id = ?", session.UserID).Scan(&email, &displayName, &hasPassword)
 	if err == sql.ErrNoRows {
 		// Session points at a deleted user — treat as unauthenticated.
 		auth.DeleteSession(h.db, sessionID)
@@ -114,6 +129,7 @@ func (h *AuthHandler) handleMe(w http.ResponseWriter, r *http.Request) {
 		"user_id":       session.UserID,
 		"email":         email,
 		"display_name":  displayName,
+		"has_password":  hasPassword,
 		"csrf_token":    session.CSRFToken,
 	})
 }
@@ -169,6 +185,126 @@ func (h *AuthHandler) updateMe(w http.ResponseWriter, r *http.Request) {
 		"user_id":       session.UserID,
 		"email":         email,
 		"display_name":  req.DisplayName,
+	})
+}
+
+// handleChangePassword handles POST /api/auth/password. The current password
+// is verified before the new one is stored, so possession of the session
+// cookie alone is not enough to take over the account.
+func (h *AuthHandler) handleChangePassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, errResp("method_not_allowed", "Method not allowed"))
+		return
+	}
+
+	userID := auth.GetUserID(r.Context())
+
+	var req struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, errResp("invalid_body", "Invalid request body"))
+		return
+	}
+	if req.CurrentPassword == "" || req.NewPassword == "" {
+		writeJSON(w, http.StatusBadRequest, errResp("invalid_request", "Current and new passwords are required"))
+		return
+	}
+	if len(req.NewPassword) < 8 {
+		writeJSON(w, http.StatusBadRequest, errResp("weak_password", "Password must be at least 8 characters"))
+		return
+	}
+	if len(req.NewPassword) > 72 {
+		// bcrypt only considers the first 72 bytes; reject rather than
+		// silently truncating (same limit as nabu).
+		writeJSON(w, http.StatusBadRequest, errResp("weak_password", "Password must be at most 72 characters"))
+		return
+	}
+
+	var passwordHash string
+	err := h.db.QueryRow("SELECT COALESCE(password_hash, '') FROM users WHERE id = ?", userID).Scan(&passwordHash)
+	if err == sql.ErrNoRows {
+		writeJSON(w, http.StatusUnauthorized, errResp("unauthorized", "Invalid or expired session"))
+		return
+	}
+	if err != nil {
+		log.Printf("load password hash for %s: %v", userID, err)
+		writeJSON(w, http.StatusInternalServerError, errResp("internal_error", "Failed to change password"))
+		return
+	}
+	if passwordHash == "" {
+		// Google-linked account created without a local password.
+		writeJSON(w, http.StatusBadRequest, errResp("no_password_set", "This account signs in with Google and has no password to change"))
+		return
+	}
+	if !auth.CheckPassword(req.CurrentPassword, passwordHash) {
+		writeJSON(w, http.StatusUnauthorized, errResp("invalid_credentials", "Current password is incorrect"))
+		return
+	}
+
+	newHash, err := auth.HashPassword(req.NewPassword)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errResp("internal_error", "Failed to process password"))
+		return
+	}
+
+	if _, err := h.db.Exec(`UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		newHash, userID); err != nil {
+		log.Printf("change password for %s: %v", userID, err)
+		writeJSON(w, http.StatusInternalServerError, errResp("internal_error", "Failed to change password"))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"authenticated": true,
+		"message":       "Password updated",
+	})
+}
+
+// deleteMe handles DELETE /api/me — permanent account deletion. The body must
+// carry the typed confirmation {"confirm":"DELETE"} so a single stray or
+// forged request cannot destroy the account (parity with nabu). sessions and
+// library_items reference users(id) ON DELETE CASCADE, so removing the user
+// row cleans up everything owned by the account.
+func (h *AuthHandler) deleteMe(w http.ResponseWriter, r *http.Request) {
+	sessionID := auth.GetSessionID(r)
+	if sessionID == "" {
+		writeJSON(w, http.StatusUnauthorized, errResp("unauthorized", "Authentication required"))
+		return
+	}
+	session, err := auth.GetSession(h.db, sessionID)
+	if err != nil || session == nil {
+		writeJSON(w, http.StatusUnauthorized, errResp("unauthorized", "Invalid or expired session"))
+		return
+	}
+	if !strings.EqualFold(session.CSRFToken, r.Header.Get("X-CSRF-Token")) {
+		writeJSON(w, http.StatusForbidden, errResp("csrf_mismatch", "CSRF token mismatch"))
+		return
+	}
+
+	var req struct {
+		Confirm string `json:"confirm"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Confirm != "DELETE" {
+		writeJSON(w, http.StatusBadRequest, errResp("confirm_required", `Type DELETE to confirm: send {"confirm":"DELETE"}`))
+		return
+	}
+
+	res, err := h.db.Exec("DELETE FROM users WHERE id = ?", session.UserID)
+	if err != nil {
+		log.Printf("delete account for %s: %v", session.UserID, err)
+		writeJSON(w, http.StatusInternalServerError, errResp("internal_error", "Failed to delete account"))
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		writeJSON(w, http.StatusNotFound, errResp("not_found", "Account not found"))
+		return
+	}
+
+	auth.ClearSessionCookie(w, h.cfg.CookieSecure)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "Account deleted",
 	})
 }
 

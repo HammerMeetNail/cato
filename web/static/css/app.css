@@ -1546,6 +1546,37 @@ a { color: var(--accent); text-decoration: none; }
   color: var(--text);
 }
 
+/* Settings form inputs (password change, delete confirmation) */
+.settings-input {
+  flex: 1;
+  padding: 7px 10px;
+  font-size: 0.9rem;
+  background: var(--bg);
+  border: 1px solid var(--surface2);
+  border-radius: var(--radius);
+  color: var(--text);
+  outline: none;
+  min-width: 0;
+}
+
+.settings-input:focus {
+  border-color: var(--accent);
+}
+
+.settings-feedback-error { color: #e5534b; }
+
+/* Danger zone — irreversible account actions */
+.settings-danger-text {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+
+.btn-danger {
+  background: #e5534b;
+  color: white;
+}
+
 /* Editable completion date in the modal */
 .modal-date-input {
   margin-left: auto;

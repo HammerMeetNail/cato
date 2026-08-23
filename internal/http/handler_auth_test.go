@@ -3,6 +3,7 @@ package http
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -383,4 +384,275 @@ func TestAuthRequired(t *testing.T) {
 			t.Errorf("expected 200, got %d", rec.Code)
 		}
 	})
+}
+
+// signupTestUser creates a user via the API and returns the session cookie,
+// CSRF token and user ID.
+func signupTestUser(t *testing.T, mux *http.ServeMux, email string) (cookie, csrfToken, userID string) {
+	t.Helper()
+	body := `{"email":"` + email + `","password":"password123"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/signup", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("signup failed: %d: %s", rec.Code, rec.Body.String())
+	}
+	resp := readJSON(t, rec.Body)
+	return getCookie(rec.Result(), "cato_session"),
+		resp["csrf_token"].(string),
+		resp["user_id"].(string)
+}
+
+func TestChangePassword(t *testing.T) {
+	database := setupAuthTestDB(t)
+	defer database.Close()
+
+	handler := newTestAuthHandler(database)
+	mux := createTestMux(handler)
+
+	cookie, csrfToken, _ := signupTestUser(t, mux, "chpw@example.com")
+
+	body := `{"current_password":"password123","new_password":"newpassword456"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/password", strings.NewReader(body))
+	req.AddCookie(&http.Cookie{Name: "cato_session", Value: cookie})
+	req.Header.Set("X-CSRF-Token", csrfToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Old password must no longer work.
+	req = httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"chpw@example.com","password":"password123"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("old password still valid after change; expected 401, got %d", rec.Code)
+	}
+
+	// New password must work.
+	req = httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"chpw@example.com","password":"newpassword456"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("login with new password failed; expected 200, got %d", rec.Code)
+	}
+}
+
+func TestChangePasswordWrongCurrent(t *testing.T) {
+	database := setupAuthTestDB(t)
+	defer database.Close()
+
+	handler := newTestAuthHandler(database)
+	mux := createTestMux(handler)
+
+	cookie, csrfToken, _ := signupTestUser(t, mux, "wrongcur@example.com")
+
+	body := `{"current_password":"wrongpassword","new_password":"newpassword456"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/password", strings.NewReader(body))
+	req.AddCookie(&http.Cookie{Name: "cato_session", Value: cookie})
+	req.Header.Set("X-CSRF-Token", csrfToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for wrong current password, got %d", rec.Code)
+	}
+
+	// The password must be unchanged.
+	req = httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"wrongcur@example.com","password":"password123"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected old password to still work, got %d", rec.Code)
+	}
+}
+
+func TestChangePasswordValidation(t *testing.T) {
+	database := setupAuthTestDB(t)
+	defer database.Close()
+
+	handler := newTestAuthHandler(database)
+	mux := createTestMux(handler)
+
+	cookie, csrfToken, _ := signupTestUser(t, mux, "valpw@example.com")
+
+	tests := []struct {
+		name string
+		body string
+		code int
+	}{
+		{"too short", `{"current_password":"password123","new_password":"short"}`, http.StatusBadRequest},
+		{"missing current", `{"current_password":"","new_password":"newpassword456"}`, http.StatusBadRequest},
+		{"too long (>72)", fmt.Sprintf(`{"current_password":"password123","new_password":"%s"}`, strings.Repeat("x", 73)), http.StatusBadRequest},
+	}
+
+	for _, tt := range tests {
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/password", strings.NewReader(tt.body))
+		req.AddCookie(&http.Cookie{Name: "cato_session", Value: cookie})
+		req.Header.Set("X-CSRF-Token", csrfToken)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != tt.code {
+			t.Errorf("%s: expected %d, got %d", tt.name, tt.code, rec.Code)
+		}
+	}
+}
+
+func TestChangePasswordUnauthenticated(t *testing.T) {
+	database := setupAuthTestDB(t)
+	defer database.Close()
+
+	handler := newTestAuthHandler(database)
+	mux := createTestMux(handler)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/password",
+		strings.NewReader(`{"current_password":"a","new_password":"newpassword456"}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 without session, got %d", rec.Code)
+	}
+}
+
+func TestMeHasPassword(t *testing.T) {
+	database := setupAuthTestDB(t)
+	defer database.Close()
+
+	handler := newTestAuthHandler(database)
+	mux := createTestMux(handler)
+
+	cookie, _, _ := signupTestUser(t, mux, "haspw@example.com")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
+	req.AddCookie(&http.Cookie{Name: "cato_session", Value: cookie})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	resp := readJSON(t, rec.Body)
+	if resp["has_password"] != true {
+		t.Errorf("expected has_password=true for password account, got %v", resp["has_password"])
+	}
+
+	// A Google-linked user with no local password reports has_password=false.
+	database.Exec(`INSERT INTO users (id, email, google_subject) VALUES ('g-user', 'google@example.com', 'g-sub')`)
+	session, err := auth.CreateSession(database, "g-user")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/me", nil)
+	req.AddCookie(&http.Cookie{Name: "cato_session", Value: session.ID})
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	resp = readJSON(t, rec.Body)
+	if resp["has_password"] != false {
+		t.Errorf("expected has_password=false for Google-only account, got %v", resp["has_password"])
+	}
+}
+
+func TestDeleteAccount(t *testing.T) {
+	database := setupAuthTestDB(t)
+	defer database.Close()
+
+	handler := newTestAuthHandler(database)
+	mux := createTestMux(handler)
+
+	cookie, csrfToken, userID := signupTestUser(t, mux, "delme@example.com")
+
+	// Seed owned data plus a second session: both must vanish with the user.
+	database.Exec(`INSERT INTO games (id, name, slug, normalized_name) VALUES (42, 'Halo', 'halo', 'halo')`)
+	database.Exec(`INSERT INTO library_items (user_id, game_id, status) VALUES (?, 42, 'playing')`, userID)
+	if _, err := auth.CreateSession(database, userID); err != nil {
+		t.Fatalf("create second session: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/me", strings.NewReader(`{"confirm":"DELETE"}`))
+	req.AddCookie(&http.Cookie{Name: "cato_session", Value: cookie})
+	req.Header.Set("X-CSRF-Token", csrfToken)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var count int
+	if err := database.QueryRow("SELECT COUNT(*) FROM users WHERE id = ?", userID).Scan(&count); err != nil {
+		t.Fatalf("query users: %v", err)
+	}
+	if count != 0 {
+		t.Error("expected user row to be deleted")
+	}
+	if err := database.QueryRow("SELECT COUNT(*) FROM sessions WHERE user_id = ?", userID).Scan(&count); err != nil {
+		t.Fatalf("query sessions: %v", err)
+	}
+	if count != 0 {
+		t.Error("expected sessions to cascade-delete")
+	}
+	if err := database.QueryRow("SELECT COUNT(*) FROM library_items WHERE user_id = ?", userID).Scan(&count); err != nil {
+		t.Fatalf("query library_items: %v", err)
+	}
+	if count != 0 {
+		t.Error("expected library items to cascade-delete")
+	}
+
+	// Cookie should be cleared.
+	if getCookie(rec.Result(), "cato_session") != "" {
+		t.Error("expected cookie to be cleared")
+	}
+}
+
+func TestDeleteAccountRequiresConfirmation(t *testing.T) {
+	database := setupAuthTestDB(t)
+	defer database.Close()
+
+	handler := newTestAuthHandler(database)
+	mux := createTestMux(handler)
+
+	cookie, csrfToken, userID := signupTestUser(t, mux, "confirm@example.com")
+
+	for _, tt := range []struct{ name, body string }{
+		{"wrong text", `{"confirm":"delete"}`},
+		{"empty confirm", `{"confirm":""}`},
+		{"no body", ``},
+	} {
+		req := httptest.NewRequest(http.MethodDelete, "/api/me", strings.NewReader(tt.body))
+		req.AddCookie(&http.Cookie{Name: "cato_session", Value: cookie})
+		req.Header.Set("X-CSRF-Token", csrfToken)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: expected 400, got %d", tt.name, rec.Code)
+		}
+	}
+
+	// Account must still exist.
+	var count int
+	database.QueryRow("SELECT COUNT(*) FROM users WHERE id = ?", userID).Scan(&count)
+	if count != 1 {
+		t.Error("expected account to survive unconfirmed deletes")
+	}
+}
+
+func TestDeleteAccountUnauthenticated(t *testing.T) {
+	database := setupAuthTestDB(t)
+	defer database.Close()
+
+	handler := newTestAuthHandler(database)
+	mux := createTestMux(handler)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/me", strings.NewReader(`{"confirm":"DELETE"}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 without session, got %d", rec.Code)
+	}
 }

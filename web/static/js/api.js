@@ -56,7 +56,7 @@ export const api = {
   get(path, opts) { return request('GET', path, null, opts); },
   post(path, body) { return request('POST', path, body); },
   patch(path, body) { return request('PATCH', path, body); },
-  del(path) { return request('DELETE', path); },
+  del(path, body = null) { return request('DELETE', path, body); },
   getFull(path, opts) { return requestFull('GET', path, null, opts); },
   setCSRF,
   getCSRF,
@@ -94,6 +94,21 @@ export async function logout() {
 // updateMe patches the caller's profile (currently display_name only).
 export function updateMe(data) {
   return api.patch('/api/me', data);
+}
+
+// changePassword swaps the account password. The server verifies
+// currentPassword before storing the new one.
+export function changePassword(currentPassword, newPassword) {
+  return api.post('/api/auth/password', {
+    current_password: currentPassword,
+    new_password: newPassword,
+  });
+}
+
+// deleteAccount permanently removes the account and all its data (library,
+// sessions). The server requires the typed confirmation.
+export function deleteAccount() {
+  return api.del('/api/me', { confirm: 'DELETE' });
 }
 
 export async function getGame(id) {
