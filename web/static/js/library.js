@@ -854,10 +854,18 @@ export function initHeroActions() {
   hero.addEventListener('click', async (e) => {
     const timeBtn = e.target.closest('[data-hero-time]');
     const finishBtn = e.target.closest('[data-hero-finish]');
-    if (!timeBtn && !finishBtn) return;
-    const cardEl = (timeBtn || finishBtn).closest('.hero-card');
+    const coverEl = e.target.closest('.hero-card img');
+    if (!timeBtn && !finishBtn && !coverEl) return;
+    const cardEl = (timeBtn || finishBtn || coverEl).closest('.hero-card');
     const gameId = Number(cardEl?.dataset.gameId);
     if (!gameId) return;
+
+    // Cover click opens the same edit modal as grid cards.
+    if (coverEl) {
+      const item = heroItems.get(String(gameId));
+      if (item) openLibraryItemModal(item);
+      return;
+    }
 
     if (timeBtn) {
       const minutes = parseInt(timeBtn.dataset.heroTime, 10) || 0;
