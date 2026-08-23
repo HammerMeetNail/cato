@@ -53,7 +53,9 @@ a { color: var(--accent); text-decoration: none; }
   border-bottom: 1px solid var(--surface2);
   position: sticky;
   top: 0;
-  z-index: 10;
+  /* Must sit above .search-wrap (z-index 15) so the user-menu dropdown
+     isn't painted underneath the sticky search bar. */
+  z-index: 30;
 }
 
 .topbar h1 {
