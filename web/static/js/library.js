@@ -1884,7 +1884,8 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
         playtime_minutes: playtime,
         tags,
         notes,
-        platform,
+        platforms: platformsOwned,
+        platform: platformsOwned[0] || '',
         medium,
       };
       if (startedAt) snapshot.started_at = startedAt;
