@@ -12,6 +12,13 @@ const STATUS_LABELS = {
   abandoned: 'Abandoned',
 };
 
+// statusBadgeLabel maps an owned game's status to the badge text shown on
+// search results ("Completed ✓"), so the badge says WHICH list the game is
+// in rather than a generic "In library". Unknown/missing statuses fall back.
+export function statusBadgeLabel(status) {
+  return `${STATUS_LABELS[status] || 'In library'} ✓`;
+}
+
 // Hash routing utilities
 export function getHashStatus() {
   const hash = window.location.hash.slice(1);
@@ -92,10 +99,11 @@ const itemsById = new Map();
 // searchResultsById maps result id to result object for search mode
 const searchResultsById = new Map();
 
-// ownedIds holds game IDs confirmed (via /api/library/check) to be in the
-// user's library while in search mode, so cards can be badged and clicks can
-// open the edit form instead of the destructive add form.
-const ownedIds = new Set();
+// ownedStatuses maps game IDs confirmed (via /api/library/check) to be in
+// the user's library to their status, so search-mode cards can badge WHICH
+// list a game is in and clicks can open the edit form instead of the
+// destructive add form.
+const ownedStatuses = new Map();
 
 function indexItems(items, replace = false) {
   if (replace) itemsById.clear();
@@ -196,10 +204,10 @@ export async function loadSearchResults(query) {
     updateSearchTotal(total);
     // Learn which results are already in the library so cards get a badge
     // and clicks open the edit form instead of a destructive "Add" form.
-    ownedIds.clear();
+    ownedStatuses.clear();
     const ids = results.map(r => r.id);
-    for (const id of await library.check(ids)) {
-      ownedIds.add(Number(id));
+    for (const it of await library.check(ids)) {
+      ownedStatuses.set(Number(it.game_id), it.status);
     }
     renderPagedItems(grid, results, true);
   } catch (err) {
@@ -1034,8 +1042,8 @@ function buildCardHTML(items) {
     const tagsHTML = (item.tags && item.tags.length)
       ? `<div class="card-tags">${item.tags.map(t => `<span class="tag-chip" data-tag="${escapeHTML(t)}">${escapeHTML(t)}</span>`).join('')}</div>`
       : '';
-    const ownedBadge = isSearch && ownedIds.has(Number(item.game_id))
-      ? '<div class="owned-badge">In library ✓</div>'
+    const ownedBadge = isSearch && ownedStatuses.has(Number(item.game_id))
+      ? `<div class="owned-badge">${escapeHTML(statusBadgeLabel(ownedStatuses.get(Number(item.game_id))))}</div>`
       : '';
 
     let libraryOverlays = '';
@@ -1157,7 +1165,7 @@ function attachCardEvents(grid, newItems = null, originalSearchResults = null) {
         // In search mode, use original search result
         const result = searchResultsById.get(gameId);
         if (!result) return;
-        if (ownedIds.has(Number(gameId))) {
+        if (ownedStatuses.has(Number(gameId))) {
           // Already owned — open the edit form (never the destructive Add form).
           openLibraryItemById(result.id);
         } else {

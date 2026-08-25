@@ -268,10 +268,13 @@ func TestLibraryCheckEndpoint(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
-	var ids []float64
-	json.NewDecoder(rec.Body).Decode(&ids)
-	if len(ids) != 1 || ids[0] != 1 {
-		t.Errorf("expected [1], got %v", ids)
+	var items []struct {
+		GameID int64  `json:"game_id"`
+		Status string `json:"status"`
+	}
+	json.NewDecoder(rec.Body).Decode(&items)
+	if len(items) != 1 || items[0].GameID != 1 || items[0].Status != "playing" {
+		t.Errorf("expected [{1 playing}], got %+v", items)
 	}
 }
 

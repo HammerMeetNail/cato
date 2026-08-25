@@ -1,5 +1,5 @@
 import { searchGames, getCoverThumbnailURL, autocompleteTags, autocompletePlatforms, formatTagForQuery, library } from './api.js';
-import { escapeHTML, showToast, formatPlatformName } from './library.js';
+import { escapeHTML, showToast, formatPlatformName, statusBadgeLabel } from './library.js';
 
 // Tuning knobs (SEARCH_IMPROVEMENTS.md §1): 200ms feels responsive without
 // hammering the API; the dropdown renders at most 8 rows; the client-side
@@ -24,10 +24,10 @@ let renderedCount = 0;
 // resultCache maps raw query -> results array (per page session). Serving a
 // repeat query from memory avoids both latency and an IGDB round-trip.
 const resultCache = new Map();
-// ownedIds caches game IDs confirmed to be in the user's library, so badges
-// survive re-renders within the session. Positives only — a missing ID just
-// means "unknown", never "confirmed absent".
-const ownedIds = new Set();
+// ownedStatuses caches game IDs confirmed to be in the user's library,
+// mapped to their status, so badges say WHICH list the game is in ("Completed ✓").
+// Positives only — a missing ID just means "unknown", never "confirmed absent".
+const ownedStatuses = new Map();
 
 // --- recent searches (localStorage) ---------------------------------------
 
@@ -105,29 +105,32 @@ export function highlightName(name, query) {
 
 // --- ownership + quick-add --------------------------------------------------
 
-function ownedBadgeHTML() {
-  return '<span class="owned-badge owned-badge-sm">In library ✓</span>';
+function ownedBadgeHTML(status) {
+  return `<span class="owned-badge owned-badge-sm">${escapeHTML(statusBadgeLabel(status))}</span>`;
 }
 
+// swapToAddBadge replaces a "+ Add" button with the ownership badge, labeled
+// by the game's status from the ownedStatuses cache.
 function swapToAddBadge(btn) {
   if (btn && btn.isConnected) {
-    btn.insertAdjacentHTML('beforebegin', ownedBadgeHTML());
+    btn.insertAdjacentHTML('beforebegin', ownedBadgeHTML(ownedStatuses.get(Number(btn.dataset.addId))));
     btn.remove();
   }
 }
 
 // checkOwnership batch-confirms which dropdown rows are already in the
-// library, then patches their rows: "+ Add" flips to an "In library ✓" badge.
+// library, then patches their rows: "+ Add" flips to a status badge
+// ("Completed ✓", "Wishlist ✓", …).
 async function checkOwnership(resultsEl, results) {
-  const ids = results.map(g => Number(g.id)).filter(id => !ownedIds.has(id));
+  const ids = results.map(g => Number(g.id)).filter(id => !ownedStatuses.has(id));
   if (ids.length === 0) return;
   try {
     const confirmed = await library.check(ids);
-    for (const id of confirmed) ownedIds.add(Number(id));
+    for (const it of confirmed) ownedStatuses.set(Number(it.game_id), it.status);
     // Patch whatever is currently rendered; a newer render may have replaced
     // the nodes already — detached patches are harmless no-ops.
     resultsEl.querySelectorAll('.qa-add').forEach(btn => {
-      if (ownedIds.has(Number(btn.dataset.addId))) swapToAddBadge(btn);
+      if (ownedStatuses.has(Number(btn.dataset.addId))) swapToAddBadge(btn);
     });
   } catch { /* ownership badges are cosmetic */ }
 }
@@ -139,19 +142,21 @@ async function quickAdd(btn) {
   try {
     // Guard against a destructive upsert: POST /library/{id} overwrites the
     // stored item, so confirm the game isn't owned before adding.
-    let owned = ownedIds.has(id);
+    let owned = ownedStatuses.has(id);
     if (!owned) {
       const checked = await library.check([id]);
-      owned = checked.length > 0;
+      if (checked.length > 0) {
+        ownedStatuses.set(id, checked[0].status);
+        owned = true;
+      }
     }
     if (owned) {
-      ownedIds.add(id);
       swapToAddBadge(btn);
       showToast(`${name} is already in your library`);
       return;
     }
     await library.add(id, { status: 'backlog' });
-    ownedIds.add(id);
+    ownedStatuses.set(id, 'backlog');
     swapToAddBadge(btn);
     showToast(`Added ${name} to Backlog`);
   } catch (err) {
@@ -476,9 +481,9 @@ function renderResults(results, resultsEl, onSelect, onSubmit) {
         ? new Date(g.first_release_date * 1000).getFullYear()
         : '';
       const id = Number(g.id);
-      const owned = ownedIds.has(id);
-      const action = owned
-        ? ownedBadgeHTML()
+      const ownedStatus = ownedStatuses.get(id);
+      const action = ownedStatus !== undefined
+        ? ownedBadgeHTML(ownedStatus)
         : `<button type="button" class="qa-add" data-add-id="${id}" data-add-name="${escapeHTML(g.name)}" aria-label="Add ${escapeHTML(g.name)} to backlog">+</button>`;
       // Up to three platform names, shortened ("PC (Microsoft Windows)" →
       // "PC"), so it's obvious what a result can be played on.

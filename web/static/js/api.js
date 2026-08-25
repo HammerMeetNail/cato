@@ -254,7 +254,9 @@ export const library = {
     return api.get(`/api/library/${gameID}`);
   },
 
-  // check returns the subset of the given game IDs that are in the library.
+  // check returns {game_id, status} objects for the subset of the given game
+  // IDs that are in the library — status lets callers show WHICH list
+  // ("Completed", "Wishlist", …) a game is in.
   async check(ids) {
     if (!ids || ids.length === 0) return [];
     try {

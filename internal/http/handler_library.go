@@ -773,10 +773,18 @@ func (h *LibraryHandler) handleLibraryPlatforms(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, platforms)
 }
 
+// libCheckItem is one entry of the /api/library/check response: the game ID
+// plus which list (status) it's in.
+type libCheckItem struct {
+	GameID int64  `json:"game_id"`
+	Status string `json:"status"`
+}
+
 // handleLibraryCheck handles GET /api/library/check?ids=1,2,3 — returns the
-// JSON array of those game IDs that are in the caller's library. Used by the
-// frontend to badge search results and to avoid opening a destructive
-// "Add to Library" form for an owned game.
+// JSON array of {game_id, status} for those game IDs that are in the caller's
+// library, so clients can show WHICH list a game is in ("Completed", …).
+// Used by the frontend to badge search results and to avoid opening a
+// destructive "Add to Library" form for an owned game.
 func (h *LibraryHandler) handleLibraryCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, errResp("method_not_allowed", "Method not allowed"))
@@ -803,10 +811,10 @@ func (h *LibraryHandler) handleLibraryCheck(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	inLibrary := make([]int64, 0)
+	inLibrary := make([]libCheckItem, 0)
 	if len(ids) > 0 {
 		placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(ids)), ", ")
-		query := `SELECT game_id FROM library_items WHERE user_id = ? AND game_id IN (` + placeholders + `)`
+		query := `SELECT game_id, status FROM library_items WHERE user_id = ? AND game_id IN (` + placeholders + `)`
 		args := append([]interface{}{userID}, ids...)
 		rows, err := h.db.Query(query, args...)
 		if err != nil {
@@ -815,9 +823,9 @@ func (h *LibraryHandler) handleLibraryCheck(w http.ResponseWriter, r *http.Reque
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err == nil {
-				inLibrary = append(inLibrary, id)
+			var it libCheckItem
+			if err := rows.Scan(&it.GameID, &it.Status); err == nil {
+				inLibrary = append(inLibrary, it)
 			}
 		}
 	}
