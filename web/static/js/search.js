@@ -106,7 +106,10 @@ export function highlightName(name, query) {
 // --- ownership + quick-add --------------------------------------------------
 
 function ownedBadgeHTML(status) {
-  return `<span class="owned-badge owned-badge-sm">${escapeHTML(statusBadgeLabel(status))}</span>`;
+  // The status class adopts the library pill color for that list (see the
+  // shared .status-* rules in app.css); unknown statuses keep the accent.
+  const cls = status ? ` status-${escapeHTML(status)}` : '';
+  return `<span class="owned-badge owned-badge-sm${cls}">${escapeHTML(statusBadgeLabel(status))}</span>`;
 }
 
 // swapToAddBadge replaces a "+ Add" button with the ownership badge, labeled

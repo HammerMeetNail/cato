@@ -1221,11 +1221,14 @@ a { color: var(--accent); text-decoration: none; }
   text-transform: uppercase;
 }
 
-.status-wishlist { background: #2196f3; }
-.status-backlog { background: #ff9800; }
-.status-playing { background: #4caf50; }
-.status-completed { background: #9c27b0; }
-.status-abandoned { background: #f44336; }
+/* Status palette shared by library-card pills (.card-status), stats badges
+   (.status-badge) and search-result ownership badges (.owned-badge — the
+   extra selector out-specifies .game-card .owned-badge's accent background). */
+.status-wishlist, .owned-badge.status-wishlist { background: #2196f3; }
+.status-backlog, .owned-badge.status-backlog { background: #ff9800; }
+.status-playing, .owned-badge.status-playing { background: #4caf50; }
+.status-completed, .owned-badge.status-completed { background: #9c27b0; }
+.status-abandoned, .owned-badge.status-abandoned { background: #f44336; }
 
 /* Stats strip under the tabs */
 .stats-strip {

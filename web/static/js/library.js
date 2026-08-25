@@ -1042,8 +1042,9 @@ function buildCardHTML(items) {
     const tagsHTML = (item.tags && item.tags.length)
       ? `<div class="card-tags">${item.tags.map(t => `<span class="tag-chip" data-tag="${escapeHTML(t)}">${escapeHTML(t)}</span>`).join('')}</div>`
       : '';
-    const ownedBadge = isSearch && ownedStatuses.has(Number(item.game_id))
-      ? `<div class="owned-badge">${escapeHTML(statusBadgeLabel(ownedStatuses.get(Number(item.game_id))))}</div>`
+    const ownedStatus = isSearch ? ownedStatuses.get(Number(item.game_id)) : undefined;
+    const ownedBadge = ownedStatus !== undefined
+      ? `<div class="owned-badge status-${escapeHTML(ownedStatus)}">${escapeHTML(statusBadgeLabel(ownedStatus))}</div>`
       : '';
 
     let libraryOverlays = '';
