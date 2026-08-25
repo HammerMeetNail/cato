@@ -143,6 +143,39 @@ func TestAliasOwnNameNotStored(t *testing.T) {
 	}
 }
 
+// TestDuplicateAliasesSingleRow: a game with several aliases that all match
+// the query (e.g. "re4" matching both "RE4" and "RE4make") must appear once.
+func TestDuplicateAliasesSingleRow(t *testing.T) {
+	database, store := setupGameDB(t)
+	defer database.Close()
+
+	err := store.UpsertIGDBGame(context.Background(), Game{
+		ID:             1,
+		Name:           "Resident Evil 4",
+		Slug:           "re4",
+		SafeName:       "x",
+		NormalizedName: NormalizeName("Resident Evil 4"),
+		Aliases:        []string{"RE4", "RE4make"},
+	})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	results, err := store.SearchLocal(context.Background(), "re4", 10)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	n := 0
+	for _, r := range results {
+		if r.ID == 1 {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("game with multiple matching aliases should appear once; got %d rows in %v", n, results)
+	}
+}
+
 // TestAliasMatchPassesFloor: an unpopular game found only via alias must not
 // be filtered out by the relevance floor on the paged path.
 func TestAliasMatchPassesFloor(t *testing.T) {

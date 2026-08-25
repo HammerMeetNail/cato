@@ -148,8 +148,12 @@ func buildSearchUnion(b *strings.Builder, args *[]interface{}, engine, match, qu
 		     WHERE f.normalized_name MATCH ?`)
 		*args = append(*args, query, prefix, wordPrefix, match)
 
+		// UNION (not ALL): a game can have several aliases matching the same
+		// query ("re4" hits both "RE4" and "RE4make"); each would emit an
+		// identical row otherwise. Name-branch rows are unique per game by
+		// construction, so this only collapses alias duplicates.
 		b.WriteString(`
-		     UNION ALL
+		     UNION
 		     SELECT a.game_id, 3 AS tier, 1 AS src
 		     FROM game_aliases a
 		     JOIN aliases_fts af ON af.rowid = a.rowid
@@ -170,7 +174,7 @@ func buildSearchUnion(b *strings.Builder, args *[]interface{}, engine, match, qu
 		*args = append(*args, query, prefix, wordPrefix, like)
 
 		b.WriteString(`
-		     UNION ALL
+		     UNION
 		     SELECT a.game_id, 3 AS tier, 1 AS src
 		     FROM game_aliases a
 		     WHERE a.normalized_alias LIKE ? ESCAPE '\'
