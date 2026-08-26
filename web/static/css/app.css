@@ -393,8 +393,18 @@ a { color: var(--accent); text-decoration: none; }
 .recent-item {
   display: flex;
   align-items: center;
-  gap: 10px;
   width: 100%;
+  background: transparent;
+}
+
+.recent-item:hover { background: var(--surface2); }
+
+.recent-item-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
   padding: 9px 16px;
   border: none;
   background: transparent;
@@ -404,18 +414,24 @@ a { color: var(--accent); text-decoration: none; }
   cursor: pointer;
 }
 
-.recent-item:hover { background: var(--surface2); }
-.recent-item svg { flex: 0 0 auto; color: var(--text-dim); }
-.recent-item .recent-q { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-item-main svg { flex: 0 0 auto; color: var(--text-dim); }
+.recent-item-main .recent-q { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+.recent-x,
 .recent-item .recent-x {
   flex: 0 0 auto;
-  padding: 0 4px;
+  margin-right: 8px;
+  padding: 2px 8px;
+  border: none;
+  background: transparent;
   color: var(--text-dim);
   font-size: 1.05rem;
   border-radius: 4px;
+  cursor: pointer;
+  line-height: 1;
 }
 
+.recent-x:hover,
 .recent-item .recent-x:hover { color: var(--danger, #e5534b); background: var(--surface); }
 
 .recents-clear {

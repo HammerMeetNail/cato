@@ -17,6 +17,7 @@ let selectedIndex = -1;
 let currentResults = [];
 let currentQuery = '';
 let activeInputEl = null;
+let activeOnSubmit = null;
 // How many result rows are actually rendered in the dropdown. The games list
 // renders only the first 8 results while ArrowDown used to index into all 10,
 // letting the selection become invisible (FINDINGS §3.6).
@@ -202,6 +203,7 @@ function lastTagSegment(raw) {
 
 export function initSearch(inputEl, resultsEl, onSelect, onSubmit, onTagLookup) {
   activeInputEl = inputEl;
+  activeOnSubmit = onSubmit;
 
   // ARIA combobox wiring (SEARCH_IMPROVEMENTS.md §1.8). The static HTML
   // carries these too; setting them here keeps the contract in one place.
@@ -433,13 +435,15 @@ function renderRecents(resultsEl) {
     return;
   }
   const rows = list.map(q => `
-    <button type="button" class="recent-item" data-q="${escapeHTML(q)}">
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-        <circle cx="12" cy="12" r="9"></circle><polyline points="12 7 12 12 15.5 13.5"></polyline>
-      </svg>
-      <span class="recent-q">${escapeHTML(q)}</span>
-      <span class="recent-x" role="button" tabindex="-1" data-x="${escapeHTML(q)}" aria-label="Remove ${escapeHTML(q)}">×</span>
-    </button>`).join('');
+    <div class="recent-item" data-q="${escapeHTML(q)}">
+      <button type="button" class="recent-item-main" data-q="${escapeHTML(q)}">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="9"></circle><polyline points="12 7 12 12 15.5 13.5"></polyline>
+        </svg>
+        <span class="recent-q">${escapeHTML(q)}</span>
+      </button>
+      <button type="button" class="recent-x" data-x="${escapeHTML(q)}" aria-label="Remove ${escapeHTML(q)}">×</button>
+    </div>`).join('');
 
   resultsEl.innerHTML =
     '<div class="recents-header">Recent searches</div>' +
@@ -447,28 +451,48 @@ function renderRecents(resultsEl) {
     '<button type="button" class="recents-clear">Clear all</button>';
   openDropdown(activeInputEl, resultsEl);
 
-  resultsEl.querySelectorAll('.recent-item').forEach(item => {
-    item.addEventListener('click', (e) => {
-      if (e.target.closest('.recent-x')) return;
-      if (!activeInputEl) return;
-      activeInputEl.value = item.dataset.q;
-      activeInputEl.focus();
-      activeInputEl.dispatchEvent(new Event('input'));
+  resultsEl.querySelectorAll('.recent-item-main').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const q = btn.dataset.q;
+      if (!q) return;
+      clearTimeout(searchTimer);
+      if (activeController) { activeController.abort(); activeController = null; }
+      closeDropdown(activeInputEl, resultsEl);
+      if (activeOnSubmit) {
+        recordRecentSearch(q);
+        activeOnSubmit(q);
+      } else if (activeInputEl) {
+        activeInputEl.value = q;
+        activeInputEl.focus();
+        activeInputEl.dispatchEvent(new Event('input', { bubbles: true }));
+        if (q.length >= 2) {
+          recordRecentSearch(q);
+          window.location.hash = '#search/' + encodeURIComponent(q);
+        }
+      }
     });
+    // Keep focus from leaving the input on mousedown — without this the
+    // input blurs before the click fires and some browsers suppress the click,
+    // making the panel appear to ignore taps.
+    btn.addEventListener('mousedown', (e) => e.preventDefault());
   });
   resultsEl.querySelectorAll('.recent-x').forEach(x => {
     x.addEventListener('click', (e) => {
       e.stopPropagation();
       removeRecentSearch(x.dataset.x);
       renderRecents(resultsEl);
+      if (activeInputEl) activeInputEl.focus();
     });
+    x.addEventListener('mousedown', (e) => e.preventDefault());
   });
   const clearAll = resultsEl.querySelector('.recents-clear');
   if (clearAll) {
     clearAll.addEventListener('click', () => {
       clearRecentSearches();
       closeDropdown(activeInputEl, resultsEl);
+      if (activeInputEl) activeInputEl.focus();
     });
+    clearAll.addEventListener('mousedown', (e) => e.preventDefault());
   }
 }
 
