@@ -85,10 +85,12 @@ export function releaseStatus(unixSeconds) {
   return isUpcomingRelease(unixSeconds) ? 'upcoming' : 'released';
 }
 
-// modalReleaseLabel is the longer form used in the edit modal header.
+// modalReleaseLabel is the form used in the edit modal header — just the
+// date (or TBA), with "· Upcoming" for future releases. "Released" is
+// implied for past dates, so no prefix is needed.
 export function modalReleaseLabel(unixSeconds) {
-  if (!unixSeconds) return 'Release: TBA';
+  if (!unixSeconds) return 'TBA';
   const dateStr = formatReleaseDate(unixSeconds);
-  if (!dateStr) return 'Release: TBA';
-  return isUpcomingRelease(unixSeconds) ? `Releases ${dateStr}` : `Released ${dateStr}`;
+  if (!dateStr) return 'TBA';
+  return isUpcomingRelease(unixSeconds) ? `${dateStr} · Upcoming` : dateStr;
 }
