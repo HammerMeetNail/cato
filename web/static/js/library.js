@@ -1378,11 +1378,13 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
                     aria-label="Clear rating (mark unrated)" hidden>&times;</button>
           </div>
           <div class="rating-row">
-            <input type="number" class="rating-num" min="0" max="100" step="1"
-                   inputmode="numeric" value="${Number(rating) || 0}" aria-label="Rating, 0 to 100">
+            <select class="rating-select" aria-label="Rating, 0 to 100">
+              ${Array.from({ length: 101 }, (_, i) =>
+                `<option value="${i}"${i === (Number(rating) || 0) ? ' selected' : ''}>${i === 0 ? 'Unrated' : i}</option>`).join('')}
+            </select>
             <div class="rating-scale" aria-hidden="true"></div>
           </div>
-          <div class="stepper-hint">drag &#8597; or scroll the number · tap to type · 0 = unrated</div>
+          <div class="stepper-hint">tap to pick · 0 = unrated</div>
         </div>
         <div class="modal-field">
           <span class="field-label">Hours</span>
@@ -1530,14 +1532,15 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
   };
 
   // --- rating ----------------------------------------------------------------
-  // A plain 0-100 numeric input that doubles as a picker: drag vertically on
-  // the number (touch or mouse) or scroll the wheel over it to adjust without
-  // a keyboard; tap to type an exact value. 0 means unrated (gray). Hue ramps
-  // red → amber → green across the scale; the strip under the number is that
-  // static ramp, with a notch marking the current value.
+  // A native <select> with every value 0-100: on iPhone it opens the standard
+  // picker wheel — the familiar spin-to-choose control — and on desktop a
+  // plain dropdown with keyboard and type-ahead support. No custom gesture
+  // code on any platform. 0 ("Unrated") is gray; 1-100 tint red → amber →
+  // green, and the strip under the control is that same static ramp with a
+  // notch marking the current value.
   const initialRating = Number(rating) || 0;
   let ratingValue = initialRating;
-  const ratingNum = modal.querySelector('.rating-num');
+  const ratingSel = modal.querySelector('.rating-select');
   const ratingScale = modal.querySelector('.rating-scale');
 
   // Hue 0 (red) at 0 → hue 120 (green) at 100; gray means "unrated".
@@ -1553,14 +1556,9 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
     clearBtn.hidden = ratingValue === 0;
   };
 
-  // While the user is typing (or arrow-stepping) the field owns its text;
-  // programmatic updates would fight the caret, so they're suppressed.
-  let typing = false;
-
   const renderRating = () => {
-    const col = ratingColor();
-    ratingNum.style.color = col;
-    if (!typing) ratingNum.value = String(ratingValue);
+    ratingSel.value = String(ratingValue);
+    ratingSel.style.color = ratingColor();
     ratingScale.style.setProperty('--pct', `${ratingValue}%`);
     ratingScale.style.setProperty('--marker-o', ratingValue > 0 ? '1' : '0');
     updateRatingHelpers();
@@ -1568,70 +1566,14 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
   renderRating();
 
   const applyRating = (next) => {
-    const n = Number(next);
-    if (!Number.isFinite(n)) return;
-    const v = Math.max(0, Math.min(100, Math.round(n)));
-    if (v === ratingValue) return;
+    const v = Math.max(0, Math.min(100, Math.round(Number(next))));
+    if (!Number.isFinite(v) || v === ratingValue) return;
     ratingValue = v;
     renderRating();
     scheduleSave();
   };
 
-  // Mouse wheel over the field steps by 1 (Shift = 10); preventDefault keeps
-  // the page behind from scrolling and the native spin-on-wheel out of the way.
-  ratingNum.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    applyRating(ratingValue + (e.deltaY < 0 ? 1 : -1) * (e.shiftKey ? 10 : 1));
-  }, { passive: false });
-
-  // Vertical drag on the field is a picker: up = higher, ~8px per point.
-  // On touch, readOnly keeps the virtual keyboard shut while steering; a tap
-  // (no movement) releases it and focuses so the keyboard opens for typing.
-  let ratingDragId = null, ratingDragStartY = 0, ratingDragBase = 0, ratingDragMoved = false;
-  const DRAG_PX_PER_POINT = 8;
-  ratingNum.addEventListener('pointerdown', (e) => {
-    if (ratingDragId !== null) return;
-    ratingDragId = e.pointerId;
-    ratingDragStartY = e.clientY;
-    ratingDragBase = ratingValue;
-    ratingDragMoved = false;
-    typing = false;
-    if (e.pointerType === 'touch') ratingNum.readOnly = true;
-    try { ratingNum.setPointerCapture(e.pointerId); } catch { /* already gone */ }
-  });
-  ratingNum.addEventListener('pointermove', (e) => {
-    if (e.pointerId !== ratingDragId) return;
-    const dy = ratingDragStartY - e.clientY;
-    if (!ratingDragMoved && Math.abs(dy) < DRAG_PX_PER_POINT) return;
-    ratingDragMoved = true;
-    applyRating(ratingDragBase + Math.round(dy / DRAG_PX_PER_POINT));
-  });
-  const endRatingDrag = (e) => {
-    if (e.pointerId !== ratingDragId) return;
-    ratingDragId = null;
-    if (e.pointerType === 'touch') {
-      ratingNum.readOnly = false;
-      if (!ratingDragMoved) ratingNum.focus(); // plain tap: open the keyboard
-    }
-  };
-  ratingNum.addEventListener('pointerup', endRatingDrag);
-  ratingNum.addEventListener('pointercancel', endRatingDrag);
-
-  // Typing syncs live so the notch follows ("4" then "5" → 45); partial or
-  // empty text is ignored until blur, which restores the last good value.
-  ratingNum.addEventListener('input', () => {
-    typing = true;
-    const raw = ratingNum.value.trim();
-    if (raw === '') return;
-    applyRating(raw);
-  });
-  const restoreTypedRating = () => {
-    typing = false;
-    if (ratingNum.value.trim() === '') renderRating();
-  };
-  ratingNum.addEventListener('blur', restoreTypedRating);
-  ratingNum.addEventListener('change', restoreTypedRating);
-
+  ratingSel.addEventListener('change', () => applyRating(ratingSel.value));
   resetBtn.addEventListener('click', () => applyRating(initialRating));
   clearBtn.addEventListener('click', () => applyRating(0));
 

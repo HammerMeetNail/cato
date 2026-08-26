@@ -1969,10 +1969,9 @@ body.modal-open {
 .chip-row[data-role="status"] .opt-chip.selected[data-value="completed"]{ background: #9c27b0; border-color: #9c27b0; }
 .chip-row[data-role="status"] .opt-chip.selected[data-value="abandoned"]{ background: #f44336; border-color: #f44336; }
 
-/* Rating field: a big numeric readout you can steer without a keyboard —
-   mouse wheel or arrow keys on desktop, vertical picker-style drag on touch —
-   plus plain typing for exact entry. The strip under the number is the static
-   red → amber → green scale; the white notch marks the current value. */
+/* Rating: a native <select> with all values 0-100 — on iPhone it opens the
+   standard picker wheel, on desktop a plain dropdown. The strip under it is
+   the static red → amber → green scale; the white notch marks the value. */
 .rating-row {
   display: flex;
   flex-direction: column;
@@ -1980,22 +1979,29 @@ body.modal-open {
   width: 148px;
 }
 
-.rating-num {
-  padding: 6px 10px;
-  font-size: 1.5rem; /* ≥16px so iOS doesn't zoom the page on focus */
+.rating-select {
+  padding: 8px 26px 8px 10px;
+  font-size: 1.05rem; /* ≥16px so iOS doesn't zoom the page on focus */
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   text-align: center;
-  touch-action: none; /* the field itself is the drag surface */
-  user-select: none;
-  -webkit-user-select: none;
-  cursor: ns-resize;
+  text-align-last: center;
+  color: var(--text);
+  background-color: var(--bg);
+  border: 1px solid var(--surface2);
+  border-radius: var(--radius);
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8'><path d='M1 1l5 5 5-5' fill='none' stroke='%23999' stroke-width='2' stroke-linecap='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  background-size: 12px 8px;
+  cursor: pointer;
 }
 
-.rating-num::-webkit-outer-spin-button,
-.rating-num::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
+.rating-select option {
+  background: var(--surface);
+  color: var(--text);
 }
 
 .rating-scale {
