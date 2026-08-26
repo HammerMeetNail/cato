@@ -1373,8 +1373,6 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
             <div class="rating-actions">
               <button type="button" class="mini-btn" data-rating="reset"
                       aria-label="Restore original rating" hidden>&#8634;</button>
-              <button type="button" class="mini-btn" data-rating="clear"
-                      aria-label="Clear rating (mark unrated)" hidden>&times;</button>
             </div>
           </div>
         </div>
@@ -1549,12 +1547,12 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
     ratingValue > 0 ? `hsl(${Math.round(ratingValue * 1.2)}, 70%, 52%)` : '';
 
   // One-tap way back: restore appears only once the value has drifted from
-  // what the form opened with, clear appears whenever a rating is set.
+  // what the form opened with. Clearing is deliberate by design — pick
+  // "Unrated" (the first entry) in the picker; there is no clear button to
+  // hit by accident.
   const resetBtn = modal.querySelector('[data-rating="reset"]');
-  const clearBtn = modal.querySelector('[data-rating="clear"]');
   const updateRatingHelpers = () => {
     resetBtn.hidden = ratingValue === initialRating;
-    clearBtn.hidden = ratingValue === 0;
   };
 
   const renderRating = () => {
@@ -1585,7 +1583,6 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
 
   ratingSel.addEventListener('change', () => applyRating(ratingSel.value));
   resetBtn.addEventListener('click', () => applyRating(initialRating));
-  clearBtn.addEventListener('click', () => applyRating(0));
 
   // Hours: ± buttons step whole hours so quick tweaks never summon the
   // keyboard; typing still works for exact values. Scoped to the stepper so
