@@ -60,11 +60,17 @@ func (s *Server) routes() {
 // no build step), a long max-age would serve stale JS for the whole TTL after a
 // deploy. Covers are NOT handled here; they get their own long immutable cache
 // in covers.ServeCover (safe because they're keyed by immutable game ID).
+//
+// HTML is also no-cache: without an explicit header, browsers heuristically
+// cache pages based on Last-Modified, so phones kept serving the pre-deploy
+// markup (with fresh CSS/JS) until the heuristic expired.
 func staticCacheMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/js/") ||
 			strings.HasPrefix(r.URL.Path, "/css/") ||
-			r.URL.Path == "/favicon.svg" {
+			r.URL.Path == "/favicon.svg" ||
+			r.URL.Path == "/" ||
+			strings.HasSuffix(r.URL.Path, ".html") {
 			w.Header().Set("Cache-Control", "no-cache")
 		}
 		next.ServeHTTP(w, r)
@@ -140,6 +146,9 @@ func (w *gzipResponseWriter) Close() {
 func (s *Server) servePage(filename string) http.HandlerFunc {
 	path := filepath.Join(s.cfg.StaticDir, filename)
 	return func(w http.ResponseWriter, r *http.Request) {
+		// The named page routes bypass staticCacheMiddleware; keep HTML
+		// revalidated so deploys reach clients immediately.
+		w.Header().Set("Cache-Control", "no-cache")
 		http.ServeFile(w, r, path)
 	}
 }

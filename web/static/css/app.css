@@ -1747,12 +1747,19 @@ a { color: var(--accent); text-decoration: none; }
     padding: 10px 14px;
   }
 
-  /* Thumb-friendly tap targets for topbar text links (~44px). */
-  .topbar nav a {
+  /* Thumb-friendly tap targets for topbar text links (~44px). Scoped to
+     direct children only — .user-menu-dropdown links live inside nav and
+     must stay block-level. */
+  .topbar nav > a {
     display: inline-block;
     padding: 12px 4px;
     margin: -12px -4px;
     font-size: 0.95rem;
+  }
+
+  .topbar h1 a {
+    padding: 12px;
+    margin: -12px;
   }
 
   .topbar nav { gap: 20px; }
