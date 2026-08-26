@@ -1359,6 +1359,24 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
             <h3>${escapeHTML(name)}</h3>
             ${year ? `<div class="modal-year">${Number(year)}</div>` : ''}
           </div>
+          <div class="modal-rating">
+            <div class="rating-dial">
+              <svg viewBox="0 0 120 120" aria-hidden="true">
+                <circle class="dial-track" cx="60" cy="60" r="52"></circle>
+                <circle class="dial-fill" cx="60" cy="60" r="52"></circle>
+              </svg>
+              <select class="rating-input" aria-label="Rating, 0 to 100">
+                ${Array.from({ length: 101 }, (_, i) =>
+                  `<option value="${i}"${i === (Number(rating) || 0) ? ' selected' : ''}>${i === 0 ? 'Unrated' : i}</option>`).join('')}
+              </select>
+            </div>
+            <div class="rating-actions">
+              <button type="button" class="mini-btn" data-rating="reset"
+                      aria-label="Restore original rating" hidden>&#8634;</button>
+              <button type="button" class="mini-btn" data-rating="clear"
+                      aria-label="Clear rating (mark unrated)" hidden>&times;</button>
+            </div>
+          </div>
         </div>
         ${datesHTML}
         <div class="modal-field">
@@ -1368,26 +1386,6 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
               <button type="button" class="opt-chip${s === status ? ' selected' : ''}" data-value="${s}">${STATUS_LABELS[s]}</button>
             `).join('')}
           </div>
-        </div>
-        <div class="modal-field">
-          <div class="field-label-row">
-            <span class="field-label">Rating</span>
-            <button type="button" class="mini-btn" data-rating="reset"
-                    aria-label="Restore original rating" hidden>&#8634;</button>
-            <button type="button" class="mini-btn" data-rating="clear"
-                    aria-label="Clear rating (mark unrated)" hidden>&times;</button>
-          </div>
-          <div class="rating-dial">
-            <svg viewBox="0 0 120 120" aria-hidden="true">
-              <circle class="dial-track" cx="60" cy="60" r="52"></circle>
-              <circle class="dial-fill" cx="60" cy="60" r="52"></circle>
-            </svg>
-            <select class="rating-input" aria-label="Rating, 0 to 100">
-              ${Array.from({ length: 101 }, (_, i) =>
-                `<option value="${i}"${i === (Number(rating) || 0) ? ' selected' : ''}>${i === 0 ? 'Unrated' : i}</option>`).join('')}
-            </select>
-          </div>
-          <div class="stepper-hint">tap the number to pick</div>
         </div>
         <div class="modal-field">
           <span class="field-label">Hours</span>

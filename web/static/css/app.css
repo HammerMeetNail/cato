@@ -1863,9 +1863,29 @@ body.modal-open {
   flex-shrink: 0;
 }
 
+.modal-game-meta {
+  flex: 1;
+  min-width: 0; /* long titles wrap instead of pushing the dial out */
+}
+
 .modal-game-meta h3 {
   font-size: 1rem;
   font-weight: 600;
+}
+
+/* Rating dial mounted at the upper right, beside the cover and title */
+.modal-rating {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.rating-actions {
+  display: flex;
+  gap: 6px;
 }
 
 .modal-year {
@@ -1975,8 +1995,8 @@ body.modal-open {
    (red → amber → green), an empty gray ring means unrated. */
 .rating-dial {
   position: relative;
-  width: 104px;
-  height: 104px;
+  width: 96px;
+  height: 96px;
   -webkit-tap-highlight-color: transparent;
 }
 
