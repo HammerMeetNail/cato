@@ -471,6 +471,80 @@ func (s *Store) MarkAliasesFetched(ctx context.Context, id int64) error {
 	return err
 }
 
+// GetCoverRepairCandidates returns up to `limit` games whose cover_url was
+// likely built by guessing co%05d from the numeric cover_id rather than from
+// cover.image_id. Those URLs look like .../co<digits>.jpg where the digits
+// match the stored cover_id (zero-padded). They are 404-prone whenever IGDB's
+// image_id is a hash like "cobmj0" rather than the numeric id. The candidate
+// set is intentionally broad (any co+digits URL) — re-fetching a correct
+// numeric URL is harmless, while missing a wrong one leaves a broken cover.
+// Ordered by id for stable, resumable paging.
+func (s *Store) GetCoverRepairCandidates(ctx context.Context, limit int) ([]int64, error) {
+	// GLOB '*co[0-9]*.jpg' catches numeric image_ids (co542412) but not hash
+	// ones where the first char after "co" is a letter (cobmj0). Hashes like
+	// co81qo (digit then letters) still match, which is fine — re-checking
+	// them is cheap and verifies they are still correct.
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id FROM games WHERE cover_url GLOB '*co[0-9]*.jpg' AND cover_id != 0 ORDER BY id ASC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// CountPendingCoverRepair reports how many rows still look like guessed cover
+// URLs (for progress reporting).
+func (s *Store) CountPendingCoverRepair(ctx context.Context) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM games WHERE cover_url GLOB '*co[0-9]*.jpg' AND cover_id != 0`).Scan(&n)
+	return n, err
+}
+
+// GetCoverRepairCandidatesAfter returns the next `limit` guessed-cover
+// candidates after `afterID` (exclusive), ordered by id. Used by the full
+// backfill to make steady forward progress without re-checking already-
+// visited rows that are correctly numeric (co96746) and thus still match the
+// GLOB.
+func (s *Store) GetCoverRepairCandidatesAfter(ctx context.Context, afterID int64, limit int) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id FROM games WHERE cover_url GLOB '*co[0-9]*.jpg' AND cover_id != 0 AND id > ? ORDER BY id ASC LIMIT ?`, afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// SetCoverAndMarkFetched writes a corrected cover_url/cover_id without
+// touching other game columns. Used by the cover backfill, which fetches only
+// cover fields — unlike UpsertIGDBGame it leaves name, ratings, etc. alone.
+func (s *Store) SetCoverAndMarkFetched(ctx context.Context, gameID int64, coverID int64, coverURL string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE games SET cover_id = ?, cover_url = ? WHERE id = ?`,
+		coverID, coverURL, gameID)
+	return err
+}
+
 // SetAliasesAndMarkFetched writes an authoritative alias set and stamps the
 // marker in one transaction. Used by the alias backfill, which fetches only
 // id/name/alternative_names — unlike UpsertIGDBGame it deliberately leaves

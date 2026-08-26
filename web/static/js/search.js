@@ -495,7 +495,8 @@ function renderResults(results, resultsEl, onSelect, onSubmit) {
         <div class="search-result-item${i === selectedIndex ? ' selected' : ''}"
              ${optionAttrs(i)} data-index="${i}" data-id="${id}">
           <img src="${getCoverThumbnailURL(g)}"
-               alt="${escapeHTML(g.name)}" loading="lazy" decoding="async">
+               alt="${escapeHTML(g.name)}" loading="lazy" decoding="async"
+               onerror="this.onerror=null;this.src='/covers/${id}.jpg'">
           <div class="info">
             <div class="name">${highlightName(g.name, currentQuery)}</div>
             <div class="year">${[year, plats].filter(Boolean).join(' · ')}</div>
@@ -591,7 +592,8 @@ function renderTagSuggestions(tagSuggestions, items, resultsEl, onSelect, prefix
         <div class="search-result-item tag-result${i === selectedIndex ? ' selected' : ''}"
              ${optionAttrs(i)} data-index="${i}" data-id="${item.game_id}">
           <img src="${getCoverThumbnailURL(item)}"
-               alt="${escapeHTML(item.game_name)}" loading="lazy" decoding="async">
+               alt="${escapeHTML(item.game_name)}" loading="lazy" decoding="async"
+               onerror="this.onerror=null;this.src='/covers/${item.game_id}.jpg'">
           <div class="info">
             <div class="name">${escapeHTML(item.game_name)}</div>
             <div class="year">${year} · ${escapeHTML(item.status)}</div>

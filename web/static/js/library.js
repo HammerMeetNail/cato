@@ -577,7 +577,7 @@ async function loadSuggestions() {
   wrap.style.display = '';
   grid.innerHTML = items.map(g => `
     <button type="button" class="suggest-card" data-suggest-id="${g.id}" data-suggest-name="${escapeHTML(g.name)}">
-      <img src="${getCoverURL(g)}" alt="${escapeHTML(g.name)}" loading="lazy" decoding="async">
+      <img src="${getCoverURL(g)}" alt="${escapeHTML(g.name)}" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='/covers/${g.id}.jpg'">
       <span class="suggest-name">${escapeHTML(g.name)}</span>
       <span class="suggest-add">+</span>
     </button>`).join('');
@@ -836,7 +836,7 @@ function heroCardHTML(item) {
   }
   return `
     <div class="hero-card" data-game-id="${item.game_id}">
-      <img src="${getCoverURL(item)}" alt="${escapeHTML(item.game_name)}" loading="lazy" decoding="async">
+      <img src="${getCoverURL(item)}" alt="${escapeHTML(item.game_name)}" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='/covers/${item.game_id}.jpg'">
       <div class="hero-body">
         <div class="hero-name">${escapeHTML(item.game_name)}</div>
         <div class="hero-controls">

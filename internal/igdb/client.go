@@ -140,9 +140,12 @@ func (c *Client) GetGame(ctx context.Context, id int64) (*games.Game, error) {
 }
 
 // GetGamesBatch fetches many games in a single rate-limited request, asking
-// only for the fields the alias backfill needs. IGDB accepts up to 500 IDs
-// per query, so 300k+ rows cost ~1 request per 500 games (~10 min at the
-// ~1 req/s limiter) instead of one request per game.
+// for id/name/alternative_names plus cover.image_id. The extra cover fields
+// let the cover-URL repair batch (RepairCovers) verify and correct URLs that
+// were once guessed from the numeric cover ID (co%05d) rather than the
+// authoritative covers.image_id. IGDB accepts up to 500 IDs per query, so
+// 300k+ rows cost ~1 request per 500 games (~10 min at the ~1 req/s limiter)
+// instead of one request per game.
 func (c *Client) GetGamesBatch(ctx context.Context, ids []int64) ([]games.Game, error) {
 	if c.clientID == "" {
 		return nil, nil
@@ -161,7 +164,7 @@ func (c *Client) GetGamesBatch(ctx context.Context, ids []int64) ([]games.Game, 
 
 	c.rateLimiter.Wait()
 
-	body := fmt.Sprintf(`where id = (%s); fields id,name,alternative_names.name; limit %d;`,
+	body := fmt.Sprintf(`where id = (%s); fields id,name,alternative_names.name,cover.id,cover.image_id; limit %d;`,
 		strings.Join(strs, ","), len(ids))
 
 	igdbGames, err := c.post(ctx, "games", body)

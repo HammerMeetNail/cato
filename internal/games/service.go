@@ -213,12 +213,27 @@ func (s *Service) StartCoverRepair() {
 //     such game from IGDB now yields a URL built from the authoritative
 //     covers.image_id; EnqueueCoverJob revives the exhausted job when the URL
 //     differs. Jobs whose game no longer exists upstream are removed.
+//
+//  3. Guessed cover URLs (co<digits>.jpg where the digits are the numeric
+//     cover_id) are still in the catalog for ~254k rows inserted before the
+//     image_id fix. Many coincide with the real image_id and work, but a
+//     meaningful fraction (e.g. Resident Evil Requiem's cobmj0 vs co542412)
+//     are 404s. At startup we repair a small batch (500) so the worst
+//     offenders are fixed within a few restarts without stalling boot for
+//     8 minutes. A full backfill is available via `cato backfill-covers`.
 func (s *Service) RepairCovers(ctx context.Context) {
 	purged, err := PurgeDeadCoverSources(s.db)
 	if err != nil {
 		log.Printf("cover repair: purge dead sources failed: %v", err)
 	} else if purged > 0 {
 		log.Printf("cover repair: cleared %d games pointing at dead cover host", purged)
+	}
+
+	// Step 3: opportunistically fix a batch of guessed cover URLs. Limit to
+	// 500 to keep startup fast; the `backfill-covers` subcommand handles the
+	// full catalog when run manually. Errors are logged but never fatal.
+	if err := s.repairGuessedCoverBatch(ctx, 500); err != nil {
+		log.Printf("cover repair: guessed-cover batch failed: %v", err)
 	}
 
 	rows, err := s.db.QueryContext(ctx,
@@ -272,6 +287,146 @@ func (s *Service) RepairCovers(ctx context.Context) {
 	if len(ids) > 0 {
 		log.Printf("cover repair: %d exhausted jobs examined: %d revived, %d dropped", len(ids), repaired, dropped)
 	}
+}
+
+// repairGuessedCoverBatch re-fetches up to `limit` games whose cover_url looks
+// like a guessed numeric URL (co<digits>.jpg) and corrects it from IGDB's
+// authoritative cover.image_id. Batching through GetGamesBatch keeps the cost
+// to 1 IGDB request per 500 games. Only rows where the fetched image_id
+// differs are updated, so correctly-guessed numeric URLs are left alone.
+func (s *Service) repairGuessedCoverBatch(ctx context.Context, limit int) error {
+	ids, err := s.store.GetCoverRepairCandidates(ctx, limit)
+	if err != nil {
+		return fmt.Errorf("list candidates: %w", err)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	// GetGamesBatch may return fewer rows than requested (deleted upstream).
+	games, err := s.fetchBatchWithRetry(ctx, ids)
+	if err != nil {
+		return fmt.Errorf("fetch batch: %w", err)
+	}
+	byID := make(map[int64]Game, len(games))
+	for _, g := range games {
+		byID[g.ID] = g
+	}
+	fixed := 0
+	for _, id := range ids {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		g, ok := byID[id]
+		if !ok {
+			// Deleted upstream — clear its stale cover so the UI shows the
+			// placeholder instead of a permanent 404. The row itself is kept
+			// for catalog completeness; source_updated_at will be bumped by
+			// the stale-refresh path eventually.
+			continue
+		}
+		// Fetch the stored URL to compare.
+		var storedURL string
+		var storedCoverID int64
+		_ = s.db.QueryRowContext(ctx, `SELECT cover_url, cover_id FROM games WHERE id = ?`, id).Scan(&storedURL, &storedCoverID)
+		if g.CoverURL != storedURL || g.CoverID != storedCoverID {
+			if err := s.store.SetCoverAndMarkFetched(ctx, id, g.CoverID, g.CoverURL); err != nil {
+				log.Printf("cover repair: update game %d failed: %v", id, err)
+				continue
+			}
+			// If this game is in a library, ensure a fresh cover job exists
+			// with the corrected URL (EnqueueCoverJob is idempotent and only
+			// revives exhausted/changed jobs).
+			if g.CoverURL != "" {
+				s.store.EnqueueCoverJob(ctx, id, g.CoverURL)
+			}
+			fixed++
+		}
+	}
+	if fixed > 0 {
+		log.Printf("cover repair: fixed %d/%d guessed cover URLs", fixed, len(ids))
+	}
+	return nil
+}
+
+// BackfillCovers walks every game whose cover_url looks guessed (co<digits>)
+// and re-fetches it from IGDB in batches, correcting the URL from
+// cover.image_id. Resumable: only rows where the fetched URL differs are
+// updated, and the GLOB filter narrows the candidate set so re-running after
+// a partial run skips already-fixed rows. `progress` is called after each
+// batch with (done, total) for logging.
+func (s *Service) BackfillCovers(ctx context.Context, batchSize int, progress func(done, total int)) (int, error) {
+	if batchSize <= 0 {
+		batchSize = 500
+	}
+	if batchSize > 500 {
+		batchSize = 500
+	}
+	pending, err := s.store.CountPendingCoverRepair(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("count pending: %w", err)
+	}
+	total := int(pending)
+	done := 0
+	progress(done, total)
+	if total == 0 {
+		return 0, nil
+	}
+	var afterID int64
+	for {
+		if ctx.Err() != nil {
+			return done, ctx.Err()
+		}
+		ids, err := s.store.GetCoverRepairCandidatesAfter(ctx, afterID, batchSize)
+		if err != nil {
+			return done, fmt.Errorf("get candidates: %w", err)
+		}
+		if len(ids) == 0 {
+			break
+		}
+		afterID = ids[len(ids)-1]
+		games, err := s.fetchBatchWithRetry(ctx, ids)
+		if err != nil {
+			return done, fmt.Errorf("batch fetch at %d/%d: %w", done, total, err)
+		}
+		byID := make(map[int64]Game, len(games))
+		for _, g := range games {
+			byID[g.ID] = g
+		}
+		for _, id := range ids {
+			if ctx.Err() != nil {
+				return done, ctx.Err()
+			}
+			g, ok := byID[id]
+			if !ok {
+				// Deleted upstream — count it as done and move on. The stale
+				// cover_url will be left as-is; it will be cleared on next
+				// full refresh or left to show the placeholder.
+				done++
+				continue
+			}
+			var storedURL string
+			var storedCoverID int64
+			_ = s.db.QueryRowContext(ctx, `SELECT cover_url, cover_id FROM games WHERE id = ?`, id).Scan(&storedURL, &storedCoverID)
+			if g.CoverURL != storedURL || g.CoverID != storedCoverID {
+				if err := s.store.SetCoverAndMarkFetched(ctx, id, g.CoverID, g.CoverURL); err != nil {
+					log.Printf("backfill-covers: update %d failed: %v", id, err)
+				}
+				if g.CoverURL != "" {
+					s.store.EnqueueCoverJob(ctx, id, g.CoverURL)
+				}
+			}
+			done++
+		}
+		progress(done, total)
+		// Re-count remaining to keep total accurate if new rows were inserted
+		// concurrently (unlikely, but keeps the log honest).
+		if done%5000 == 0 {
+			if n, err := s.store.CountPendingCoverRepair(ctx); err == nil {
+				total = done + int(n)
+			}
+		}
+	}
+	return done, nil
 }
 
 // PurgeDeadCoverSources clears cover URLs pointing at the defunct
