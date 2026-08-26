@@ -1289,7 +1289,7 @@ export function openLibraryItemModal(item) {
 // shows a blank form with an "Add to Library" action; in "edit" mode
 // (inLibrary=true) it is pre-filled and offers Save and Remove. Both actions
 // POST to library.add, which upserts.
-function openGameForm({ id, name, cover, year = '', status = 'backlog',
+function openGameForm({ id, name, cover, year = '', status = '',
                         rating = 0, playtime = 0, tags = [], notes = '',
                         startedAt = null, completedAt = null,
                         platformsOwned = [], medium = '', platforms = [],
@@ -1395,6 +1395,7 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
           <div class="modal-field">
             <span class="field-label">Status</span>
             <select class="modal-select" data-role="status" aria-label="Status">
+              <option value=""${!status ? ' selected' : ''} disabled>— Select status —</option>
               ${VALID_STATUSES.map(s => `<option value="${s}"${s === status ? ' selected' : ''}>${STATUS_LABELS[s]}</option>`).join('')}
             </select>
           </div>
@@ -1530,6 +1531,13 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
     saveTimer = null;
     if (removed) return;
     const payload = collectPayload();
+    if (!payload.status) {
+      const el = modal.querySelector('.autosave-status');
+      if (el) el.classList.remove('visible');
+      flashSaveState('Choose a status');
+      unsavedChanges = false;
+      return;
+    }
     const snapshot = JSON.stringify(payload);
     if (snapshot === lastSnapshot) {
       unsavedChanges = false;
