@@ -1037,13 +1037,6 @@ a { color: var(--accent); text-decoration: none; }
   color: var(--text-dim);
 }
 
-.modal-dates-hint {
-  width: 100%;
-  font-size: 0.72rem;
-  color: var(--text-dim);
-  opacity: 0.8;
-}
-
 /* Tag chips on cards */
 .card-tags {
   display: flex;
@@ -1909,7 +1902,6 @@ body.modal-open {
   letter-spacing: 0.05em;
 }
 
-.modal-field input[type="number"],
 .modal-field textarea {
   width: 100%;
   padding: 8px 10px;
@@ -1980,14 +1972,6 @@ body.modal-open {
   border-color: var(--accent);
   color: #fff;
 }
-
-/* Selected status chips take their badge colors, so the form matches the
-   pills on cards at a glance. */
-.chip-row[data-role="status"] .opt-chip.selected[data-value="wishlist"] { background: #2196f3; border-color: #2196f3; }
-.chip-row[data-role="status"] .opt-chip.selected[data-value="backlog"]  { background: #ff9800; border-color: #ff9800; }
-.chip-row[data-role="status"] .opt-chip.selected[data-value="playing"]  { background: var(--green); border-color: var(--green); }
-.chip-row[data-role="status"] .opt-chip.selected[data-value="completed"]{ background: #9c27b0; border-color: #9c27b0; }
-.chip-row[data-role="status"] .opt-chip.selected[data-value="abandoned"]{ background: #f44336; border-color: #f44336; }
 
 /* Rating dial: the number in the center is the input — a transparent native
    <select> filling the circle. Tapping it opens the standard picker (iPhone
@@ -2082,42 +2066,36 @@ body.modal-open {
 
 .mini-btn:hover { color: var(--accent); }
 
-/* Hours stepper: ± buttons for keyboard-free tweaks on touch devices */
-.stepper {
+/* Status + Hours share one compact row of native selects (iPhone picker
+   wheel / desktop dropdown, matching the rating dial's select). */
+.modal-pair {
   display: grid;
-  grid-template-columns: auto 1fr auto;
-  gap: 6px;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
 }
 
-.step-btn {
-  width: 44px;
-  height: 44px;
-  border-radius: var(--radius);
-  border: 1px solid var(--surface2);
-  background: var(--surface2);
-  color: var(--text);
-  font-size: 1.4rem;
-  line-height: 1;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  transition: border-color var(--transition), color var(--transition);
-}
-
-.step-btn:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.stepper input[type="number"] {
-  min-width: 0;
-  text-align: center;
+.modal-select {
+  width: 100%;
+  padding: 8px 26px 8px 10px;
+  font-size: 1rem; /* ≥16px so iOS doesn't zoom the page on focus */
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  color: var(--text);
+  background-color: var(--bg);
+  border: 1px solid var(--surface2);
+  border-radius: var(--radius);
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8'><path d='M1 1l5 5 5-5' fill='none' stroke='%23999' stroke-width='2' stroke-linecap='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  background-size: 12px 8px;
+  cursor: pointer;
 }
 
-.stepper-hint {
-  font-size: 0.72rem;
-  opacity: 0.75;
+.modal-select option {
+  background: var(--surface);
+  color: var(--text);
 }
 
 .modal-tags-wrap {

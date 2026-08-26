@@ -1301,6 +1301,20 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
   const title = inLibrary ? 'Edit Library Entry' : 'Add to Library';
   const hours = Math.round((playtime / 60) * 100) / 100;
 
+  // Hours dropdown: quarter-hour steps (the old stepper's granularity) from 0
+  // up to at least 200h — the cap stretches if a stored value is bigger, and
+  // off-grid stored values (e.g. 4.13) are spliced in so they stay visible
+  // and saveable.
+  const fmtHours = (h) => h.toFixed(2).replace(/\.?0+$/, '');
+  const hourVals = [];
+  for (let q = 0; q <= Math.max(200, hours) * 4; q++) hourVals.push(q / 4);
+  if (!hourVals.includes(hours)) {
+    hourVals.push(hours);
+    hourVals.sort((a, b) => a - b);
+  }
+  const hoursOptionsHTML = hourVals.map(h =>
+    `<option value="${fmtHours(h)}"${h === hours ? ' selected' : ''}>${fmtHours(h)}</option>`).join('');
+
   // Dates are server-managed (auto-set on completion) but correctable: the
   // finish date is editable and only sent when changed, so an untouched save
   // never disturbs it. Empty + sent = explicit clear.
@@ -1312,8 +1326,8 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
   const datesHTML = inLibrary ? `
         <div class="modal-date-row">
           <span class="modal-date-label">Completed</span>
-          <input type="date" class="modal-date-input" data-datekey="completed" value="${escapeHTML(initialDates.completed)}">
-          <div class="modal-dates-hint">fills in when you mark it Completed</div>
+          <input type="date" class="modal-date-input" data-datekey="completed" value="${escapeHTML(initialDates.completed)}"
+                 title="Fills in when you mark it Completed">
         </div>` : '';
 
   // Ownership is chosen directly on the available-platform chips, which are
@@ -1377,22 +1391,19 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
           </div>
         </div>
         ${datesHTML}
-        <div class="modal-field">
-          <span class="field-label">Status</span>
-          <div class="chip-row" data-role="status">
-            ${VALID_STATUSES.map(s => `
-              <button type="button" class="opt-chip${s === status ? ' selected' : ''}" data-value="${s}">${STATUS_LABELS[s]}</button>
-            `).join('')}
+        <div class="modal-pair">
+          <div class="modal-field">
+            <span class="field-label">Status</span>
+            <select class="modal-select" data-role="status" aria-label="Status">
+              ${VALID_STATUSES.map(s => `<option value="${s}"${s === status ? ' selected' : ''}>${STATUS_LABELS[s]}</option>`).join('')}
+            </select>
           </div>
-        </div>
-        <div class="modal-field">
-          <span class="field-label">Hours</span>
-          <div class="stepper">
-            <button type="button" class="step-btn" data-step="-1" aria-label="Less hours">&minus;</button>
-            <input type="number" min="0" step="0.25" value="${hours}" class="modal-playtime" inputmode="decimal" aria-label="Hours played">
-            <button type="button" class="step-btn" data-step="1" aria-label="More hours">+</button>
+          <div class="modal-field">
+            <span class="field-label">Hours</span>
+            <select class="modal-select" data-role="hours" aria-label="Hours played">
+              ${hoursOptionsHTML}
+            </select>
           </div>
-          <div class="stepper-hint">tap ± to adjust without typing</div>
         </div>
         <div class="modal-field">
           <span class="field-label">Tags</span>
@@ -1462,13 +1473,34 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
     });
     return () => value;
   };
-  const getStatus = setupChipRow(modal.querySelector('[data-role="status"]'), status, false);
+  // Status is a native select; its text takes the list-badge color so the
+  // form matches the pills on the cards at a glance.
+  const STATUS_COLORS = {
+    wishlist: '#2196f3',
+    backlog: '#ff9800',
+    playing: '#4caf50',
+    completed: '#9c27b0',
+    abandoned: '#f44336',
+  };
+  const statusSel = modal.querySelector('[data-role="status"]');
+  const renderStatus = () => {
+    statusSel.style.color = STATUS_COLORS[statusSel.value] || '';
+  };
+  renderStatus();
+  statusSel.addEventListener('change', () => {
+    renderStatus();
+    scheduleSave();
+  });
+
+  const hoursSel = modal.querySelector('[data-role="hours"]');
+  hoursSel.addEventListener('change', () => scheduleSave());
+
   const getMedium = setupChipRow(modal.querySelector('[data-role="medium"]'), medium || '', true);
 
   const collectPayload = () => {
-    const newHours = parseFloat(modal.querySelector('.modal-playtime').value) || 0;
+    const newHours = parseFloat(hoursSel.value) || 0;
     const payload = {
-      status: getStatus(),
+      status: statusSel.value,
       rating: ratingValue,
       playtime_minutes: Math.max(0, Math.round(newHours * 60)),
       tags: Array.from(modal.querySelectorAll('.modal-tags-chips .tag-chip-removable'))
@@ -1584,18 +1616,6 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
   ratingSel.addEventListener('change', () => applyRating(ratingSel.value));
   resetBtn.addEventListener('click', () => applyRating(initialRating));
 
-  // Hours: ± buttons step whole hours so quick tweaks never summon the
-  // keyboard; typing still works for exact values. Scoped to the stepper so
-  // only these two buttons match.
-  modal.querySelectorAll('.stepper .step-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const inp = modal.querySelector('.modal-playtime');
-      const cur = parseFloat(inp.value);
-      inp.value = Math.max(0, ((isNaN(cur) ? 0 : cur) + Number(btn.dataset.step)).toFixed(2).replace(/\.?0+$/, ''));
-      scheduleSave();
-    });
-  });
-  modal.querySelector('.modal-playtime').addEventListener('input', scheduleSave);
   modal.querySelector('.modal-notes').addEventListener('input', scheduleSave);
 
   // Auto-growing notes: expands with content (up to ~40% of the viewport)
