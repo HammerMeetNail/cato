@@ -1666,13 +1666,16 @@ function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status
   modal.querySelectorAll('.plat-chip').forEach(chip => {
     chip.addEventListener('click', () => {
       const key = norm(chip.dataset.full);
-      if (ownedMap.has(key)) {
+      const wasSelected = ownedMap.has(key);
+      if (wasSelected) {
         ownedMap.delete(key);
-        chip.classList.remove('selected');
       } else {
         ownedMap.set(key, chip.dataset.full);
-        chip.classList.add('selected');
       }
+      // Toggle selected class instantly; use the new state so the color
+      // updates even while the pointer is still hovering (hover previously
+      // masked the change because both states used the same accent bg).
+      chip.classList.toggle('selected', !wasSelected);
       scheduleSave();
     });
   });

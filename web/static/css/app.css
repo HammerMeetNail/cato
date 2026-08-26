@@ -1470,24 +1470,27 @@ a { color: var(--accent); text-decoration: none; }
 .plat-chip {
   background: var(--surface2);
   color: var(--text);
-  border: none;
+  border: 1px solid transparent;
   border-radius: 999px;
   padding: 3px 10px;
   font-size: 0.78rem;
   cursor: pointer;
-  transition: background var(--transition), color var(--transition);
+  transition: background var(--transition), color var(--transition), border-color var(--transition), filter var(--transition);
 }
 
 .plat-chip:hover {
-  background: var(--accent);
-  color: #fff;
+  border-color: var(--accent);
 }
 
-/* Selected chip = owned platform (single-select; tap again to clear) */
 .plat-chip.selected {
   background: var(--accent);
   color: #fff;
+  border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
+}
+
+.plat-chip.selected:hover {
+  filter: brightness(1.08);
 }
 
 /* Auto-save feedback in the modal footer ("Saving…" / "Saved ✓").
