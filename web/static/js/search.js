@@ -1,5 +1,5 @@
 import { searchGames, getCoverThumbnailURL, autocompleteTags, autocompletePlatforms, formatTagForQuery, library } from './api.js';
-import { escapeHTML, showToast, formatPlatformName, statusBadgeLabel } from './library.js';
+import { escapeHTML, showToast, formatPlatformName, statusBadgeLabel, openLibraryItemModal, refreshTabCounts } from './library.js';
 import { releaseLabel, releaseStatus } from './dates.js';
 
 // Tuning knobs (SEARCH_IMPROVEMENTS.md §1): 200ms feels responsive without
@@ -164,6 +164,21 @@ async function quickAdd(btn) {
     ownedStatuses.set(id, 'backlog');
     swapToAddBadge(btn);
     showToast(`Added ${name} to Backlog`);
+    refreshTabCounts().catch(() => {});
+    // Close the dropdown so the edit modal is not hidden behind it, then
+    // open the edit form so platform/format (bought condition) can be set
+    // immediately — backlog stays as the initial status.
+    if (activeInputEl) {
+      const resultsEl = document.getElementById('searchResults');
+      if (resultsEl) closeDropdown(activeInputEl, resultsEl);
+    }
+    try {
+      const item = await library.get(id);
+      openLibraryItemModal(item);
+    } catch {
+      // Fetching the new item failed — backlog add already succeeded, so
+      // leave the badge/toast and let the user edit later from the grid.
+    }
   } catch (err) {
     btn.disabled = false;
     showToast(`Couldn't add ${name}: ${err.message}`, { type: 'error' });

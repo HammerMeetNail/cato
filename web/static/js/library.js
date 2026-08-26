@@ -592,9 +592,19 @@ async function loadSuggestions() {
       try {
         await library.add(id, { status: 'backlog' });
         showToast(`Added ${name} to Backlog`);
-        // Reload the view: if this was the first game the empty state gives
-        // way to the real grid; otherwise fresh suggestions exclude it.
-        await loadLibrary(activeTab?.dataset?.status || '', paginationState.tagFilter);
+        // Offer to set platform/format immediately; backlog stays the status
+        // even if the sheet is closed without edits.
+        try {
+          const item = await library.get(id);
+          // Refresh the grid/counts so the new backlog entry is visible
+          // even if the sheet is dismissed without further changes (the
+          // sheet's close would otherwise only refresh after an edit).
+          loadLibrary(activeTab?.dataset?.status || '', paginationState.tagFilter);
+          openLibraryItemModal(item);
+        } catch {
+          // Fallback: if fetching the new item fails, at least reload the view
+          await loadLibrary(activeTab?.dataset?.status || '', paginationState.tagFilter);
+        }
       } catch (err) {
         card.disabled = false;
         showToast(`Couldn't add ${name}: ${err.message}`, { type: 'error' });
