@@ -1970,16 +1970,17 @@ body.modal-open {
 .chip-row[data-role="status"] .opt-chip.selected[data-value="abandoned"]{ background: #f44336; border-color: #f44336; }
 
 /* Rating: a native <select> with all values 0-100 — on iPhone it opens the
-   standard picker wheel, on desktop a plain dropdown. The strip under it is
-   the static red → amber → green scale; the white notch marks the value. */
+   standard picker wheel, on desktop a plain dropdown — with a read-only dial
+   beside it that mirrors the value. */
 .rating-row {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  width: 148px;
+  align-items: center;
+  gap: 14px;
 }
 
 .rating-select {
+  flex: 1;
+  min-width: 0;
   padding: 8px 26px 8px 10px;
   font-size: 1.05rem; /* ≥16px so iOS doesn't zoom the page on focus */
   font-weight: 800;
@@ -2004,28 +2005,47 @@ body.modal-open {
   color: var(--text);
 }
 
-.rating-scale {
+/* Read-only color dial: arc length and hue mirror the chosen value
+   (red → amber → green); empty gray ring means unrated. Purely visual —
+   the select beside it is the only input. */
+.rating-dial {
   position: relative;
-  height: 4px;
-  border-radius: 999px;
-  background: linear-gradient(90deg,
-    hsl(0, 70%, 52%), hsl(60, 70%, 52%) 50%, hsl(120, 70%, 52%));
+  flex: none;
+  width: 84px;
+  height: 84px;
   pointer-events: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
-.rating-scale::after {
-  content: '';
+.rating-dial svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  transform: rotate(-90deg); /* arc starts at 12 o'clock */
+}
+
+.rating-dial .dial-track {
+  fill: none;
+  stroke: var(--surface2);
+  stroke-width: 11;
+}
+
+.rating-dial .dial-fill {
+  fill: none;
+  stroke: var(--green);
+  stroke-width: 11;
+  stroke-linecap: round;
+}
+
+.dial-num {
   position: absolute;
-  top: -3px;
-  left: clamp(3px, var(--pct, 0%), calc(100% - 3px));
-  width: 4px;
-  height: 10px;
-  border-radius: 2px;
-  background: #fff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
-  transform: translateX(-50%);
-  opacity: var(--marker-o, 0);
-  transition: left 80ms linear;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.35rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Label row with inline reset/clear actions for the rating field */

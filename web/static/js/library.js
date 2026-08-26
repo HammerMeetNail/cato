@@ -1382,9 +1382,14 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
               ${Array.from({ length: 101 }, (_, i) =>
                 `<option value="${i}"${i === (Number(rating) || 0) ? ' selected' : ''}>${i === 0 ? 'Unrated' : i}</option>`).join('')}
             </select>
-            <div class="rating-scale" aria-hidden="true"></div>
+            <div class="rating-dial" aria-hidden="true">
+              <svg viewBox="0 0 120 120">
+                <circle class="dial-track" cx="60" cy="60" r="52"></circle>
+                <circle class="dial-fill" cx="60" cy="60" r="52"></circle>
+              </svg>
+              <span class="dial-num">${Number(rating) || 0}</span>
+            </div>
           </div>
-          <div class="stepper-hint">tap to pick · 0 = unrated</div>
         </div>
         <div class="modal-field">
           <span class="field-label">Hours</span>
@@ -1534,14 +1539,16 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
   // --- rating ----------------------------------------------------------------
   // A native <select> with every value 0-100: on iPhone it opens the standard
   // picker wheel — the familiar spin-to-choose control — and on desktop a
-  // plain dropdown with keyboard and type-ahead support. No custom gesture
-  // code on any platform. 0 ("Unrated") is gray; 1-100 tint red → amber →
-  // green, and the strip under the control is that same static ramp with a
-  // notch marking the current value.
+  // plain dropdown with keyboard and type-ahead support. Beside it, a
+  // read-only dial mirrors the choice (arc length + hue red → amber → green,
+  // number in the middle); it's purely decorative, all input goes through
+  // the select. 0 ("Unrated") shows an empty, gray dial.
   const initialRating = Number(rating) || 0;
   let ratingValue = initialRating;
   const ratingSel = modal.querySelector('.rating-select');
-  const ratingScale = modal.querySelector('.rating-scale');
+  const dialFill = modal.querySelector('.dial-fill');
+  const dialNum = modal.querySelector('.dial-num');
+  const DIAL_CIRC = 2 * Math.PI * 52;
 
   // Hue 0 (red) at 0 → hue 120 (green) at 100; gray means "unrated".
   const ratingColor = () =>
@@ -1558,9 +1565,17 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
 
   const renderRating = () => {
     ratingSel.value = String(ratingValue);
-    ratingSel.style.color = ratingColor();
-    ratingScale.style.setProperty('--pct', `${ratingValue}%`);
-    ratingScale.style.setProperty('--marker-o', ratingValue > 0 ? '1' : '0');
+    const col = ratingColor();
+    if (ratingValue > 0) {
+      dialFill.style.display = '';
+      dialFill.style.strokeDasharray = `${DIAL_CIRC * ratingValue / 100} ${DIAL_CIRC}`;
+      dialFill.style.stroke = col;
+    } else {
+      // Hidden rather than zero-length: a round linecap would still paint a dot.
+      dialFill.style.display = 'none';
+    }
+    dialNum.textContent = String(ratingValue);
+    dialNum.style.color = col;
     updateRatingHelpers();
   };
   renderRating();
