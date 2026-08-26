@@ -1377,19 +1377,17 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
             <button type="button" class="mini-btn" data-rating="clear"
                     aria-label="Clear rating (mark unrated)" hidden>&times;</button>
           </div>
-          <div class="rating-row">
-            <select class="rating-select" aria-label="Rating, 0 to 100">
+          <div class="rating-dial">
+            <svg viewBox="0 0 120 120" aria-hidden="true">
+              <circle class="dial-track" cx="60" cy="60" r="52"></circle>
+              <circle class="dial-fill" cx="60" cy="60" r="52"></circle>
+            </svg>
+            <select class="rating-input" aria-label="Rating, 0 to 100">
               ${Array.from({ length: 101 }, (_, i) =>
                 `<option value="${i}"${i === (Number(rating) || 0) ? ' selected' : ''}>${i === 0 ? 'Unrated' : i}</option>`).join('')}
             </select>
-            <div class="rating-dial" aria-hidden="true">
-              <svg viewBox="0 0 120 120">
-                <circle class="dial-track" cx="60" cy="60" r="52"></circle>
-                <circle class="dial-fill" cx="60" cy="60" r="52"></circle>
-              </svg>
-              <span class="dial-num">${Number(rating) || 0}</span>
-            </div>
           </div>
+          <div class="stepper-hint">tap the number to pick</div>
         </div>
         <div class="modal-field">
           <span class="field-label">Hours</span>
@@ -1537,17 +1535,15 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
   };
 
   // --- rating ----------------------------------------------------------------
-  // A native <select> with every value 0-100: on iPhone it opens the standard
-  // picker wheel — the familiar spin-to-choose control — and on desktop a
-  // plain dropdown with keyboard and type-ahead support. Beside it, a
-  // read-only dial mirrors the choice (arc length + hue red → amber → green,
-  // number in the middle); it's purely decorative, all input goes through
-  // the select. 0 ("Unrated") shows an empty, gray dial.
+  // The number in the center of the dial IS the control: a transparent,
+  // borderless native <select> filling the circle. Tapping it opens the
+  // standard picker (iPhone picker wheel, desktop dropdown with keyboard
+  // type-ahead); the arc around it mirrors the choice (length + hue,
+  // red → amber → green). 0 ("Unrated") shows an empty gray ring.
   const initialRating = Number(rating) || 0;
   let ratingValue = initialRating;
-  const ratingSel = modal.querySelector('.rating-select');
+  const ratingSel = modal.querySelector('.rating-input');
   const dialFill = modal.querySelector('.dial-fill');
-  const dialNum = modal.querySelector('.dial-num');
   const DIAL_CIRC = 2 * Math.PI * 52;
 
   // Hue 0 (red) at 0 → hue 120 (green) at 100; gray means "unrated".
@@ -1574,8 +1570,9 @@ function openGameForm({ id, name, cover, year = '', status = 'backlog',
       // Hidden rather than zero-length: a round linecap would still paint a dot.
       dialFill.style.display = 'none';
     }
-    dialNum.textContent = String(ratingValue);
-    dialNum.style.color = col;
+    ratingSel.style.color = col;
+    // "Unrated" is longer than the digits; shrink it to fit the circle.
+    ratingSel.classList.toggle('unrated', ratingValue === 0);
     updateRatingHelpers();
   };
   renderRating();
