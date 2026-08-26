@@ -63,6 +63,16 @@ a { color: var(--accent); text-decoration: none; }
   font-weight: 700;
 }
 
+/* The wordmark is the home button on every page. */
+.topbar h1 a {
+  color: inherit;
+  /* Expand the tap area without shifting layout. */
+  display: inline-block;
+  padding: 8px;
+  margin: -8px;
+  -webkit-tap-highlight-color: transparent;
+}
+
 .topbar nav { display: flex; gap: 16px; align-items: center; }
 
 /* Hamburger account menu (username + logout) */
@@ -1736,6 +1746,16 @@ a { color: var(--accent); text-decoration: none; }
   .topbar {
     padding: 10px 14px;
   }
+
+  /* Thumb-friendly tap targets for topbar text links (~44px). */
+  .topbar nav a {
+    display: inline-block;
+    padding: 12px 4px;
+    margin: -12px -4px;
+    font-size: 0.95rem;
+  }
+
+  .topbar nav { gap: 20px; }
 
   .hero-card {
     min-width: 260px;
