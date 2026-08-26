@@ -1,5 +1,6 @@
 import { searchGames, getCoverThumbnailURL, autocompleteTags, autocompletePlatforms, formatTagForQuery, library } from './api.js';
 import { escapeHTML, showToast, formatPlatformName, statusBadgeLabel } from './library.js';
+import { releaseLabel, releaseStatus } from './dates.js';
 
 // Tuning knobs (SEARCH_IMPROVEMENTS.md §1): 200ms feels responsive without
 // hammering the API; the dropdown renders at most 8 rows; the client-side
@@ -480,9 +481,8 @@ function renderResults(results, resultsEl, onSelect, onSubmit) {
     const displayResults = results.slice(0, DROPDOWN_MAX);
     renderedCount = displayResults.length;
     let html = displayResults.map((g, i) => {
-      const year = g.first_release_date
-        ? new Date(g.first_release_date * 1000).getFullYear()
-        : '';
+      const release = releaseLabel(g.first_release_date);
+      const relStatus = releaseStatus(g.first_release_date);
       const id = Number(g.id);
       const ownedStatus = ownedStatuses.get(id);
       const action = ownedStatus !== undefined
@@ -499,7 +499,7 @@ function renderResults(results, resultsEl, onSelect, onSubmit) {
                onerror="this.onerror=null;this.src='/covers/${id}.jpg'">
           <div class="info">
             <div class="name">${highlightName(g.name, currentQuery)}</div>
-            <div class="year">${[year, plats].filter(Boolean).join(' · ')}</div>
+            <div class="year release-${relStatus}">${[release, plats].filter(Boolean).join(' · ')}</div>
           </div>
           ${action}
         </div>`;
@@ -585,9 +585,8 @@ function renderTagSuggestions(tagSuggestions, items, resultsEl, onSelect, prefix
     const displayItems = items.slice(0, DROPDOWN_MAX);
     renderedCount = displayItems.length;
     html += displayItems.map((item, i) => {
-      const year = item.first_release_date
-        ? new Date(item.first_release_date * 1000).getFullYear()
-        : '';
+      const release = releaseLabel(item.first_release_date);
+      const relStatus = releaseStatus(item.first_release_date);
       return `
         <div class="search-result-item tag-result${i === selectedIndex ? ' selected' : ''}"
              ${optionAttrs(i)} data-index="${i}" data-id="${item.game_id}">
@@ -596,7 +595,7 @@ function renderTagSuggestions(tagSuggestions, items, resultsEl, onSelect, prefix
                onerror="this.onerror=null;this.src='/covers/${item.game_id}.jpg'">
           <div class="info">
             <div class="name">${escapeHTML(item.game_name)}</div>
-            <div class="year">${year} · ${escapeHTML(item.status)}</div>
+            <div class="year release-${relStatus}">${escapeHTML(release)} · ${escapeHTML(item.status)}</div>
           </div>
         </div>`;
     }).join('');

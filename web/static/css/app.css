@@ -228,6 +228,8 @@ a { color: var(--accent); text-decoration: none; }
 .search-result-item .info { flex: 1; }
 .search-result-item .name { font-weight: 600; font-size: 0.9rem; }
 .search-result-item .year { font-size: 0.8rem; color: var(--text-dim); }
+.search-result-item .year.release-upcoming { color: var(--accent); font-weight: 600; }
+.search-result-item .year.release-tba { font-style: italic; }
 
 .no-results {
   padding: 16px;
@@ -694,7 +696,7 @@ a { color: var(--accent); text-decoration: none; }
 /* Game card */
 .game-card {
   position: relative;
-  height: 270px;
+  height: 285px;
   cursor: pointer;
   background: var(--surface);
   border-radius: var(--radius);
@@ -1066,6 +1068,25 @@ a { color: var(--accent); text-decoration: none; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Release date line on search result cards. */
+.card-release {
+  padding: 0 10px 2px;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-release.release-upcoming {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.card-release.release-tba {
+  font-style: italic;
 }
 
 .card-tags .tag-chip {
@@ -1732,7 +1753,7 @@ a { color: var(--accent); text-decoration: none; }
   }
 
   .game-card {
-    height: 220px;
+    height: 235px;
   }
 
   .game-card img {
@@ -1912,6 +1933,21 @@ body.modal-open {
   font-size: 0.85rem;
   color: var(--text-dim);
   margin-top: 2px;
+}
+
+.modal-release {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.modal-release.release-upcoming {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.modal-release.release-tba {
+  font-style: italic;
 }
 
 .modal-field {

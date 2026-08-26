@@ -1,5 +1,5 @@
 import { library, getCoverURL, getGame, searchGamesFull, parseTagQuery, formatTagForQuery, autocompleteTags } from './api.js';
-import { formatYear } from './dates.js';
+import { formatYear, releaseLabel, releaseStatus, modalReleaseLabel } from './dates.js';
 
 const VALID_STATUSES = ['wishlist', 'backlog', 'playing', 'completed', 'abandoned'];
 
@@ -374,6 +374,7 @@ function renderPagedItems(grid, items, isFirstPage = true, hasMore = null) {
       local_cover_path: r.local_cover_path,
       platforms: r.platforms || [],
       rating: 0,
+      first_release_date: r.first_release_date || 0,
     }));
     indexSearchResults(items, isFirstPage);
   } else {
@@ -1078,11 +1079,19 @@ function buildCardHTML(items) {
       ? `<div class="card-platforms" title="${escapeHTML((item.platforms || []).join(', '))}">${escapeHTML(platLine)}</div>`
       : '';
 
+    // Release date — visible on search result cards so the timing of a
+    // release (or upcoming TBA) is obvious without opening the modal.
+    const releaseUnix = item.first_release_date || 0;
+    const releaseHTML = isSearch
+      ? `<div class="card-release release-${releaseStatus(releaseUnix)}">${escapeHTML(releaseLabel(releaseUnix))}</div>`
+      : '';
+
     return `
     <div class="game-card" data-game-id="${item.game_id}">
       <img src="${getCoverURL(item)}" alt="${escapeHTML(item.game_name)}" loading="lazy" decoding="async"${priority}>
       ${libraryOverlays}
       <div class="card-title">${escapeHTML(item.game_name)}</div>
+      ${releaseHTML}
       ${platformsHTML}
       ${tagsHTML || ownMetaHTML}
       ${ownedBadge}
@@ -1250,9 +1259,7 @@ function openAddForm(game) {
     id: game.id,
     name: game.name,
     cover: getCoverURL(game),
-    year: game.first_release_date
-      ? new Date(game.first_release_date * 1000).getFullYear()
-      : '',
+    firstReleaseDate: game.first_release_date || 0,
     platforms: game.platforms || [],
     inLibrary: false,
   });
@@ -1268,9 +1275,7 @@ export function openLibraryItemModal(item) {
     id: item.game_id,
     name: item.game_name,
     cover: getCoverURL(item),
-    year: item.first_release_date
-      ? new Date(item.first_release_date * 1000).getFullYear()
-      : '',
+    firstReleaseDate: item.first_release_date || 0,
     status: item.status,
     rating: item.rating || 0,
     playtime: item.playtime_minutes || 0,
@@ -1289,7 +1294,7 @@ export function openLibraryItemModal(item) {
 // shows a blank form with an "Add to Library" action; in "edit" mode
 // (inLibrary=true) it is pre-filled and offers Save and Remove. Both actions
 // POST to library.add, which upserts.
-function openGameForm({ id, name, cover, year = '', status = '',
+function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status = '',
                         rating = 0, playtime = 0, tags = [], notes = '',
                         startedAt = null, completedAt = null,
                         platformsOwned = [], medium = '', platforms = [],
@@ -1299,6 +1304,16 @@ function openGameForm({ id, name, cover, year = '', status = '',
   if (existing) existing.remove();
 
   const title = inLibrary ? 'Edit Library Entry' : 'Add to Library';
+  // Release date display — prefer the unix timestamp; fall back to the legacy
+  // year number so older call paths still render a label. TBA is always shown
+  // so an unknown date is explicit rather than silently blank.
+  let releaseUnix = Number(firstReleaseDate) || 0;
+  if (!releaseUnix && year) {
+    const y = Number(year);
+    if (y >= 1900 && y <= 2100) releaseUnix = Date.UTC(y, 0, 1) / 1000;
+  }
+  const releaseText = modalReleaseLabel(releaseUnix);
+  const releaseCls = releaseStatus(releaseUnix);
   const hours = Math.round((playtime / 60) * 100) / 100;
 
   // Hours dropdown: quarter-hour steps (the old stepper's granularity) from 0
@@ -1371,7 +1386,7 @@ function openGameForm({ id, name, cover, year = '', status = '',
           <img src="${cover}" alt="${escapeHTML(name)}" decoding="async">
           <div class="modal-game-meta">
             <h3>${escapeHTML(name)}</h3>
-            ${year ? `<div class="modal-year">${Number(year)}</div>` : ''}
+            <div class="modal-release release-${releaseCls}">${escapeHTML(releaseText)}</div>
           </div>
           <div class="modal-rating">
             <div class="rating-dial">

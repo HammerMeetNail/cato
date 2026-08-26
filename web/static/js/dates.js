@@ -44,3 +44,51 @@ export function formatYear(s) {
   const d = parseDBDate(s);
   return d ? String(d.getFullYear()) : '';
 }
+
+// Release date helpers — games store first_release_date as a unix timestamp
+// (seconds, 0 = unknown/TBA), not a DB string.
+
+export function formatReleaseDate(unixSeconds) {
+  if (!unixSeconds) return '';
+  const d = new Date(unixSeconds * 1000);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+export function isUpcomingRelease(unixSeconds) {
+  if (!unixSeconds) return false;
+  const d = new Date(unixSeconds * 1000);
+  if (isNaN(d.getTime())) return false;
+  return d.getTime() > Date.now();
+}
+
+export function formatReleaseYear(unixSeconds) {
+  if (!unixSeconds) return '';
+  const d = new Date(unixSeconds * 1000);
+  if (isNaN(d.getTime())) return '';
+  return String(d.getFullYear());
+}
+
+// releaseLabel returns a compact human label for search results: the full
+// date for dated games, "TBA" for unknown, with "(upcoming)" suffix when the
+// date is in the future so scheduled releases are obvious at a glance.
+export function releaseLabel(unixSeconds) {
+  if (!unixSeconds) return 'TBA';
+  const dateStr = formatReleaseDate(unixSeconds);
+  if (!dateStr) return 'TBA';
+  return isUpcomingRelease(unixSeconds) ? `${dateStr} · Upcoming` : dateStr;
+}
+
+// releaseStatus returns "upcoming" / "released" / "tba" for styling hooks.
+export function releaseStatus(unixSeconds) {
+  if (!unixSeconds) return 'tba';
+  return isUpcomingRelease(unixSeconds) ? 'upcoming' : 'released';
+}
+
+// modalReleaseLabel is the longer form used in the edit modal header.
+export function modalReleaseLabel(unixSeconds) {
+  if (!unixSeconds) return 'Release: TBA';
+  const dateStr = formatReleaseDate(unixSeconds);
+  if (!dateStr) return 'Release: TBA';
+  return isUpcomingRelease(unixSeconds) ? `Releases ${dateStr}` : `Released ${dateStr}`;
+}
