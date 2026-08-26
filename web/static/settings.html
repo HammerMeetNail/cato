@@ -12,8 +12,20 @@
   <header class="topbar">
     <h1><a class="brand-link" href="/" aria-label="Cato home">Cato</a></h1>
     <nav>
-      <a href="/" class="back-link">&larr; Library</a>
-      <a href="#" id="logoutLink">Logout</a>
+      <div class="user-menu" id="userMenu">
+        <button type="button" class="user-menu-btn" id="userMenuBtn" aria-haspopup="true" aria-expanded="false" aria-label="Account menu">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <line x1="4" y1="6" x2="20" y2="6"></line>
+            <line x1="4" y1="12" x2="20" y2="12"></line>
+            <line x1="4" y1="18" x2="20" y2="18"></line>
+          </svg>
+        </button>
+        <div class="user-menu-dropdown" id="userMenuDropdown" hidden>
+          <span class="user-menu-name" id="userDisplay"></span>
+          <a href="/">Library</a>
+          <a href="#" id="logoutLink">Logout</a>
+        </div>
+      </div>
     </nav>
   </header>
   <main class="container">
@@ -92,6 +104,30 @@
     import { checkAuth, logout, updateMe, changePassword, deleteAccount, library } from '/js/api.js';
     const auth = await checkAuth();
     if (!auth.authenticated) { window.location.href = '/login'; throw new Error(); }
+    // Hamburger menu (matches index.html)
+    const userDisplay = document.getElementById('userDisplay');
+    const userMenuBtn = document.getElementById('userMenuBtn');
+    const userMenuDropdown = document.getElementById('userMenuDropdown');
+    if (auth.display_name) {
+      userDisplay.textContent = auth.display_name;
+    } else {
+      userDisplay.style.display = 'none';
+    }
+    function setUserMenu(open) {
+      userMenuDropdown.hidden = !open;
+      userMenuBtn.setAttribute('aria-expanded', String(open));
+    }
+    userMenuBtn.addEventListener('click', () => setUserMenu(userMenuDropdown.hidden));
+    document.addEventListener('click', (e) => {
+      if (!userMenuDropdown.hidden && !e.target.closest('.user-menu')) setUserMenu(false);
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !userMenuDropdown.hidden) {
+        e.stopPropagation();
+        setUserMenu(false);
+      }
+    });
+
     document.getElementById('logoutLink').addEventListener('click', async (e) => {
       e.preventDefault();
       await logout();
