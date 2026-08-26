@@ -1969,104 +1969,57 @@ body.modal-open {
 .chip-row[data-role="status"] .opt-chip.selected[data-value="completed"]{ background: #9c27b0; border-color: #9c27b0; }
 .chip-row[data-role="status"] .opt-chip.selected[data-value="abandoned"]{ background: #f44336; border-color: #f44336; }
 
-/* Rating wheel + hours side by side */
-.modal-duo {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 18px;
-  align-items: start;
-}
-
-/* Color-coded circular rating dial: press + drag around the ring to steer
-   (relative to where you grabbed), ±5 buttons below for exact nudges. The SVG
-   arc fills clockwise from 12 o'clock. */
-.rating-wheel {
-  position: relative;
-  width: 108px;
-  height: 108px;
-  touch-action: none;
-  cursor: grab;
-  outline: none;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.rating-wheel:active { cursor: grabbing; }
-
-.rating-wheel:focus-visible {
-  box-shadow: 0 0 0 3px rgba(233, 69, 96, 0.45);
-  border-radius: 50%;
-}
-
-.rating-wheel svg {
-  width: 100%;
-  height: 100%;
-  display: block;
-  transform: rotate(-90deg); /* arc starts at 12 o'clock */
-}
-
-.rating-wheel .wheel-track {
-  fill: none;
-  stroke: var(--surface2);
-  stroke-width: 11;
-}
-
-.rating-wheel .wheel-fill {
-  fill: none;
-  stroke: var(--green);
-  stroke-width: 11;
-  stroke-linecap: round;
-  transition: stroke-dashoffset 80ms linear, stroke 120ms linear;
-}
-
-.wheel-num {
-  position: absolute;
-  inset: 0;
+/* Rating field: a big numeric readout you can steer without a keyboard —
+   mouse wheel or arrow keys on desktop, vertical picker-style drag on touch —
+   plus plain typing for exact entry. The strip under the number is the static
+   red → amber → green scale; the white notch marks the current value. */
+.rating-row {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.7rem;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-  pointer-events: none;
+  flex-direction: column;
+  gap: 6px;
+  width: 148px;
 }
 
-/* Visual tick as the value crosses a 5-point band — the universal stand-in
-   for haptics, which iOS Safari does not support at all. */
-@keyframes wheel-num-pulse {
-  0% { transform: scale(1); }
-  40% { transform: scale(1.16); }
-  100% { transform: scale(1); }
-}
-
-.wheel-num.tick {
-  animation: wheel-num-pulse 160ms ease-out;
-}
-
-/* Floating value pill shown while dragging the rating dial: the thumb hides
-   the dial's own number, so the live score orbits just past the ring edge
-   beside the fingertip, tinted like the arc. Fixed-position on <body>, above
-   the modal overlay. */
-.wheel-hud {
-  position: fixed;
-  z-index: 110;
-  min-width: 40px;
-  padding: 7px 12px;
-  border-radius: 999px;
-  background: var(--green);
-  color: #fff;
-  font-size: 0.95rem;
+.rating-num {
+  padding: 6px 10px;
+  font-size: 1.5rem; /* ≥16px so iOS doesn't zoom the page on focus */
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   text-align: center;
-  pointer-events: none;
-  transform: translate(-50%, -50%);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  touch-action: none; /* the field itself is the drag surface */
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: ns-resize;
 }
 
-/* Quarter marks (25/50/75) painted over the track to make the dial easier
-   to aim. */
-.wheel-ticks circle {
-  fill: rgba(255, 255, 255, 0.35);
+.rating-num::-webkit-outer-spin-button,
+.rating-num::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.rating-scale {
+  position: relative;
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(90deg,
+    hsl(0, 70%, 52%), hsl(60, 70%, 52%) 50%, hsl(120, 70%, 52%));
+  pointer-events: none;
+}
+
+.rating-scale::after {
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: clamp(3px, var(--pct, 0%), calc(100% - 3px));
+  width: 4px;
+  height: 10px;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+  transform: translateX(-50%);
+  opacity: var(--marker-o, 0);
+  transition: left 80ms linear;
 }
 
 /* Label row with inline reset/clear actions for the rating field */
@@ -2093,12 +2046,6 @@ body.modal-open {
 }
 
 .mini-btn:hover { color: var(--accent); }
-
-/* Rating nudge buttons under the dial, mirroring the Hours stepper */
-.wheel-steps {
-  display: flex;
-  gap: 8px;
-}
 
 /* Hours stepper: ± buttons for keyboard-free tweaks on touch devices */
 .stepper {
