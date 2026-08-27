@@ -203,11 +203,13 @@
         addGameToLibrary(game);
       }
       searchInput.value = '';
+      searchInput.blur();
     }, (query) => {
       if (query.startsWith('$')) {
         const tag = query.slice(1).trim();
         if (tag) {
           searchInput.value = '';
+          searchInput.blur();
           filterByTag(tag);
           return;
         }
@@ -216,10 +218,12 @@
         const platform = query.slice(1).trim();
         if (platform) {
           searchInput.value = '';
+          searchInput.blur();
           filterByPlatform(platform);
           return;
         }
       }
+      searchInput.blur();
       window.location.hash = '#search/' + encodeURIComponent(query);
     }, async (tag) => {
       try {
@@ -244,12 +248,14 @@
     // Listen for tagfilter events from search.js ($tag Enter or "Filter library" click)
     searchResults.addEventListener('tagfilter', (e) => {
       searchInput.value = '';
+      searchInput.blur();
       filterByTag(e.detail.tag);
     });
 
     // Listen for platformfilter events from search.js (@platform Enter or footer)
     searchResults.addEventListener('platformfilter', (e) => {
       searchInput.value = '';
+      searchInput.blur();
       filterByPlatform(e.detail.platform);
     });
 

@@ -473,6 +473,7 @@ function renderRecents(resultsEl) {
       clearTimeout(searchTimer);
       if (activeController) { activeController.abort(); activeController = null; }
       closeDropdown(activeInputEl, resultsEl);
+      activeInputEl?.blur();
       if (activeOnSubmit) {
         recordRecentSearch(q);
         activeOnSubmit(q);
@@ -572,6 +573,7 @@ function attachResultHandlers(resultsEl, displayResults, results, onSelect, onSu
       const game = results.find(g => g.id === id);
       if (!game) return;
       closeDropdown(activeInputEl, resultsEl);
+      activeInputEl?.blur();
       if (onSelect) onSelect(game);
     });
   });
@@ -582,6 +584,7 @@ function attachResultHandlers(resultsEl, displayResults, results, onSelect, onSu
     footerRow.addEventListener('click', () => {
       closeDropdown(activeInputEl, resultsEl);
       recordRecentSearch(currentQuery);
+      activeInputEl?.blur();
       if (onSubmit) onSubmit(currentQuery);
     });
   }
@@ -671,6 +674,7 @@ function renderTagSuggestions(tagSuggestions, items, resultsEl, onSelect, prefix
       const match = items.find(g => String(g.game_id) === String(id));
       if (!match) return;
       closeDropdown(activeInputEl, resultsEl);
+      activeInputEl?.blur();
       if (onSelect) onSelect(match);
     });
   });
@@ -680,13 +684,14 @@ function renderTagSuggestions(tagSuggestions, items, resultsEl, onSelect, prefix
   if (footerRow) {
     footerRow.addEventListener('click', () => {
       closeDropdown(activeInputEl, resultsEl);
+      activeInputEl?.blur();
       const event = new CustomEvent('tagfilter', { detail: { tag: raw } });
       resultsEl.dispatchEvent(event);
     });
   }
 }
 
-// renderPlatformSuggestions shows @prefix autocomplete chips plus a footer
+ // renderPlatformSuggestions shows @prefix autocomplete chips plus a footer
 // that applies the library platform filter (mirrors the $tag flow; no live
 // item list — the filtered library view is the feedback). raw is everything
 // after '@' — one phrase, no segmentation.
@@ -730,6 +735,7 @@ function renderPlatformSuggestions(suggestions, resultsEl, raw) {
   if (footerRow) {
     footerRow.addEventListener('click', () => {
       closeDropdown(activeInputEl, resultsEl);
+      activeInputEl?.blur();
       resultsEl.dispatchEvent(new CustomEvent('platformfilter', { detail: { platform: raw } }));
     });
   }
@@ -757,12 +763,14 @@ function handleKeyboard(e, inputEl, resultsEl, onSelect, onSubmit, onTagLookup) 
       e.preventDefault();
       if (resultsEl.classList.contains('active') && selectedIndex >= 0 && selectedIndex < renderedCount) {
         closeDropdown(inputEl, resultsEl);
+        inputEl.blur();
         if (onSelect) onSelect(currentResults[selectedIndex]);
       } else if (currentQuery && currentQuery.startsWith('$') && onTagLookup) {
         // $tag with no selection — filter library by tag(s)
         const tag = currentQuery.slice(1).trim();
         if (tag) {
           closeDropdown(inputEl, resultsEl);
+          inputEl.blur();
           const event = new CustomEvent('tagfilter', { detail: { tag } });
           resultsEl.dispatchEvent(event);
         }
@@ -771,12 +779,14 @@ function handleKeyboard(e, inputEl, resultsEl, onSelect, onSubmit, onTagLookup) 
         const platform = currentQuery.slice(1).trim();
         if (platform) {
           closeDropdown(inputEl, resultsEl);
+          inputEl.blur();
           const event = new CustomEvent('platformfilter', { detail: { platform } });
           resultsEl.dispatchEvent(event);
         }
       } else if (currentQuery && currentQuery.length >= 2 && onSubmit) {
         closeDropdown(inputEl, resultsEl);
         recordRecentSearch(currentQuery);
+        inputEl.blur();
         if (onSubmit) onSubmit(currentQuery);
       }
       break;
