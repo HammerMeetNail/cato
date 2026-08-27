@@ -125,8 +125,11 @@ func TestSearchCallsIGDBForNewQueryEvenWithLocalResults(t *testing.T) {
 	if len(results) < 3 {
 		t.Fatalf("expected at least 3 results, got %d", len(results))
 	}
+	if err := waitForRefresh(svc, context.Background(), cacheKey("zelda", false)); err != nil {
+		t.Fatalf("wait for refresh: %v", err)
+	}
 	if igdb.searchCalls != 1 {
-		t.Errorf("expected 1 IGDB call for new query, got %d", igdb.searchCalls)
+		t.Errorf("expected 1 asynchronous IGDB call for new query, got %d", igdb.searchCalls)
 	}
 }
 
@@ -150,8 +153,11 @@ func TestSearchCallsIGDBWhenLocalResultsAreWeak(t *testing.T) {
 	if err != nil {
 		t.Fatalf("search failed: %v", err)
 	}
+	if err := waitForRefresh(svc, context.Background(), cacheKey("only match", false)); err != nil {
+		t.Fatalf("wait for refresh: %v", err)
+	}
 	if igdb.searchCalls != 1 {
-		t.Errorf("expected 1 IGDB call, got %d", igdb.searchCalls)
+		t.Errorf("expected 1 asynchronous IGDB call, got %d", igdb.searchCalls)
 	}
 	_ = results
 }
@@ -191,6 +197,9 @@ func TestSearchIGDBFailureDoesNotBreakLocal(t *testing.T) {
 	if len(results) != 1 {
 		t.Errorf("expected 1 local result, got %d", len(results))
 	}
+	if err := waitForRefresh(svc, context.Background(), cacheKey("only match", false)); err != nil {
+		t.Fatalf("wait for refresh: %v", err)
+	}
 }
 
 func TestSearchCachesIGDBAndSkipsOnRepeat(t *testing.T) {
@@ -210,8 +219,11 @@ func TestSearchCachesIGDBAndSkipsOnRepeat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first search failed: %v", err)
 	}
+	if err := waitForRefresh(svc, context.Background(), cacheKey("cached result", false)); err != nil {
+		t.Fatalf("wait for first refresh: %v", err)
+	}
 	if igdb.searchCalls != 1 {
-		t.Errorf("first search: expected 1 IGDB call, got %d", igdb.searchCalls)
+		t.Errorf("first search: expected 1 asynchronous IGDB call, got %d", igdb.searchCalls)
 	}
 	_ = results
 
@@ -223,6 +235,32 @@ func TestSearchCachesIGDBAndSkipsOnRepeat(t *testing.T) {
 		t.Errorf("second search: expected still 1 IGDB call (cached), got %d", igdb.searchCalls)
 	}
 	_ = results2
+}
+
+func TestSearchCachesEmptyIGDBResultAndSkipsOnRepeat(t *testing.T) {
+	database, store := setupGameDB(t)
+	defer database.Close()
+
+	igdb := &fakeIGDB{}
+	svc := NewService(store, igdb, database)
+
+	for i := 0; i < 2; i++ {
+		results, err := svc.Search(context.Background(), "not in catalog", false)
+		if err != nil {
+			t.Fatalf("search failed: %v", err)
+		}
+		if len(results) != 0 {
+			t.Fatalf("expected no results, got %v", results)
+		}
+		if i == 0 {
+			if err := waitForRefresh(svc, context.Background(), cacheKey("not in catalog", false)); err != nil {
+				t.Fatalf("wait for empty refresh: %v", err)
+			}
+		}
+	}
+	if igdb.searchCalls != 1 {
+		t.Errorf("expected empty search to be cached after first call, got %d IGDB calls", igdb.searchCalls)
+	}
 }
 
 func TestGetGameByID(t *testing.T) {

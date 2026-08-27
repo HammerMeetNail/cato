@@ -103,7 +103,9 @@ func (c *Client) SearchGames(ctx context.Context, query string, limit int, inclu
 		return nil, nil
 	}
 
-	c.rateLimiter.Wait()
+	if err := c.rateLimiter.WaitContext(ctx); err != nil {
+		return nil, err
+	}
 
 	// Hide IGDB editions/packs by default: `version_parent` marks
 	// deluxe/collector editions, `game_type` packs/skins (13) etc. Bypass
@@ -141,7 +143,9 @@ func (c *Client) GetGame(ctx context.Context, id int64) (*games.Game, error) {
 		return nil, nil
 	}
 
-	c.rateLimiter.Wait()
+	if err := c.rateLimiter.WaitContext(ctx); err != nil {
+		return nil, err
+	}
 
 	body := fmt.Sprintf(`where id = %d; fields %s;`, id, igdbFields)
 
@@ -181,7 +185,9 @@ func (c *Client) GetGamesBatch(ctx context.Context, ids []int64) ([]games.Game, 
 		strs[i] = strconv.FormatInt(id, 10)
 	}
 
-	c.rateLimiter.Wait()
+	if err := c.rateLimiter.WaitContext(ctx); err != nil {
+		return nil, err
+	}
 
 	// Include version_parent/category/parent_game so edition/pack backfills
 	// can correct legacy rows without a separate endpoint. Harmless for
@@ -209,7 +215,9 @@ func (c *Client) GetPlatforms(ctx context.Context) ([]games.Platform, error) {
 		return nil, nil
 	}
 
-	c.rateLimiter.Wait()
+	if err := c.rateLimiter.WaitContext(ctx); err != nil {
+		return nil, err
+	}
 
 	raw, err := c.do(ctx, "platforms", "fields id,name,abbreviation; limit 500;")
 	if err != nil {

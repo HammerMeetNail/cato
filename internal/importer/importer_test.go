@@ -87,6 +87,13 @@ COPY public.games (id, name, slug, safe_name, summary, storyline, cover, cover_u
 	if platformsJSON != "[169,6,167]" {
 		t.Errorf("expected platforms [169,6,167], got %s", platformsJSON)
 	}
+	var normalizedPlatformRows int
+	if err := database.QueryRow("SELECT COUNT(*) FROM game_platforms WHERE game_id = 1").Scan(&normalizedPlatformRows); err != nil {
+		t.Fatalf("failed to query normalized platforms: %v", err)
+	}
+	if normalizedPlatformRows != 3 {
+		t.Errorf("expected 3 normalized platform rows, got %d", normalizedPlatformRows)
+	}
 	if genresJSON != "[5,12,31]" {
 		t.Errorf("expected genres [5,12,31], got %s", genresJSON)
 	}

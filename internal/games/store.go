@@ -18,10 +18,9 @@ func NewStore(db *db.DB) *Store {
 	return &Store{db: db}
 }
 
-// Search is composed at query time (buildSearchUnion + buildFilterWhere)
-// rather than from fixed templates: the name branch and the alias branch
-// (SEARCH_IMPROVEMENTS.md §4.1) share the ranking/floor/filter plumbing, and
-// both a results query and a COUNT query are produced from identical pieces.
+// Search is composed at query time: direct name and alias matches are
+// materialized once, then branch-local filters produce the candidate set used
+// for both the page and its window count.
 
 // EscapeLike escapes SQL LIKE wildcards in user input so that a query like
 // "100%" matches the literal string "100%" rather than "100<anything>".
@@ -48,18 +47,18 @@ var ValidSorts = map[string]bool{
 type searchOptions struct {
 	limit           int
 	offset          int
-	applyFloor      bool  // hide weak tier-3 substring matches unless popular
+	applyFloor      bool // hide weak tier-3 substring matches unless popular
 	sort            string
-	yearFrom        int64 // unix seconds, inclusive; 0 = unset
-	yearTo          int64 // unix seconds, inclusive; 0 = unset
-	minRating       int64 // aggregated_rating >= minRating with count > 0; 0 = unset
+	yearFrom        int64  // unix seconds, inclusive; 0 = unset
+	yearTo          int64  // unix seconds, inclusive; 0 = unset
+	minRating       int64  // aggregated_rating >= minRating with count > 0; 0 = unset
 	platform        string // availability filter: substring of platform name/abbrev
 	tags            []string
 	tagOp           string // "and" (default) or "or"
 	libraryUserID   string // when set, enable library-scoped filters below
 	inLibrary       *bool  // nil = no filter; true = only owned, false = not owned
 	libraryStatus   string // when set with libraryUserID, filter to that library status
-	withTotal       bool   // also run the COUNT query
+	withTotal       bool   // include a total via COUNT(*) OVER()
 	includeEditions bool   // when false, hide IGDB editions (version_parent != 0) unless query explicitly asks for one
 }
 
@@ -145,59 +144,6 @@ func (s *Store) search(ctx context.Context, query string, o searchOptions) ([]Ga
 	return run("like", "")
 }
 
-// buildSearchUnion composes the inner subquery listing matching game IDs:
-// the name branch (tier 0-3 by match strength) plus the alias branch
-// (tier 3, src 1). args is appended in positional order.
-func buildSearchUnion(b *strings.Builder, args *[]interface{}, engine, match, query, prefix, wordPrefix, like string) {
-	switch engine {
-	case "fts":
-		b.WriteString(`SELECT g0.id,
-		       CASE WHEN g0.normalized_name = ? THEN 0
-		            WHEN g0.normalized_name LIKE ? ESCAPE '\' THEN 1
-		            WHEN g0.normalized_name LIKE ? ESCAPE '\' THEN 2
-		            ELSE 3 END AS tier,
-		       0 AS src
-		     FROM games g0
-		     JOIN games_fts f ON f.rowid = g0.id
-		     WHERE f.normalized_name MATCH ?`)
-		*args = append(*args, query, prefix, wordPrefix, match)
-
-		// UNION (not ALL): a game can have several aliases matching the same
-		// query ("re4" hits both "RE4" and "RE4make"); each would emit an
-		// identical row otherwise. Name-branch rows are unique per game by
-		// construction, so this only collapses alias duplicates.
-		b.WriteString(`
-		     UNION
-		     SELECT a.game_id, 3 AS tier, 1 AS src
-		     FROM game_aliases a
-		     JOIN aliases_fts af ON af.rowid = a.rowid
-		     WHERE af.normalized_alias MATCH ?
-		       AND a.game_id NOT IN (
-		         SELECT g1.id FROM games g1 JOIN games_fts f1 ON f1.rowid = g1.id
-		         WHERE f1.normalized_name MATCH ?)`)
-		*args = append(*args, match, match)
-	default: // "like"
-		b.WriteString(`SELECT g0.id,
-		       CASE WHEN g0.normalized_name = ? THEN 0
-		            WHEN g0.normalized_name LIKE ? ESCAPE '\' THEN 1
-		            WHEN g0.normalized_name LIKE ? ESCAPE '\' THEN 2
-		            ELSE 3 END AS tier,
-		       0 AS src
-		     FROM games g0
-		     WHERE g0.normalized_name LIKE ? ESCAPE '\'`)
-		*args = append(*args, query, prefix, wordPrefix, like)
-
-		b.WriteString(`
-		     UNION
-		     SELECT a.game_id, 3 AS tier, 1 AS src
-		     FROM game_aliases a
-		     WHERE a.normalized_alias LIKE ? ESCAPE '\'
-		       AND a.game_id NOT IN (
-		         SELECT g1.id FROM games g1 WHERE g1.normalized_name LIKE ? ESCAPE '\')`)
-		*args = append(*args, like, like)
-	}
-}
-
 // ValidLibraryStatuses whitelists library status values for search filtering.
 var ValidLibraryStatuses = map[string]bool{
 	"wishlist":  true,
@@ -207,13 +153,15 @@ var ValidLibraryStatuses = map[string]bool{
 	"abandoned": true,
 }
 
-// buildFilterWhere emits the WHERE clause shared by results and COUNT queries
-// (relevance floor + year/rating filters), or "" when nothing applies.
-func buildFilterWhere(b *strings.Builder, args *[]interface{}, o searchOptions, query, prefix, wordPrefix string) {
+// appendGameFilterWhere emits filters for one candidate branch. Direct name
+// matches get the relevance floor; alias and parent matches are already strong
+// signals and bypass it. Keeping this predicate inside each branch removes
+// rows before the final sort and window count on broad searches.
+func appendGameFilterWhere(b *strings.Builder, args *[]interface{}, o searchOptions, query, prefix, wordPrefix string, directName bool) {
 	var conds []string
-	if o.applyFloor {
+	if o.applyFloor && directName {
 		conds = append(conds,
-			`(x.src = 1 OR g.normalized_name = ? OR g.normalized_name LIKE ? ESCAPE '\' OR g.normalized_name LIKE ? ESCAPE '\' OR g.popularity_score > 0)`)
+			`(g.normalized_name = ? OR g.normalized_name LIKE ? ESCAPE '\' OR g.normalized_name LIKE ? ESCAPE '\' OR g.popularity_score > 0)`)
 		*args = append(*args, query, prefix, wordPrefix)
 	}
 	if o.yearFrom > 0 {
@@ -233,7 +181,6 @@ func buildFilterWhere(b *strings.Builder, args *[]interface{}, o searchOptions, 
 		conds = append(conds, frag)
 		*args = append(*args, fargs...)
 	}
-	// Tag filtering (personal library tags) — only when a user is known.
 	if len(o.tags) > 0 && o.libraryUserID != "" {
 		placeholders := make([]string, len(o.tags))
 		for i := range placeholders {
@@ -241,13 +188,13 @@ func buildFilterWhere(b *strings.Builder, args *[]interface{}, o searchOptions, 
 		}
 		inClause := strings.Join(placeholders, ", ")
 		if o.tagOp == "or" {
-			conds = append(conds, `EXISTS (SELECT 1 FROM library_items li_t WHERE li_t.game_id = g.id AND li_t.user_id = ? AND EXISTS (SELECT 1 FROM json_each(li_t.tags_json) WHERE value IN (`+inClause+`)))`)
+			conds = append(conds, `EXISTS (SELECT 1 FROM library_tags lt WHERE lt.game_id = g.id AND lt.user_id = ? AND lt.tag IN (`+inClause+`))`)
 			*args = append(*args, o.libraryUserID)
 			for _, t := range o.tags {
 				*args = append(*args, t)
 			}
 		} else {
-			conds = append(conds, `EXISTS (SELECT 1 FROM library_items li_t WHERE li_t.game_id = g.id AND li_t.user_id = ? AND (SELECT COUNT(DISTINCT value) FROM json_each(li_t.tags_json) WHERE value IN (`+inClause+`)) = ?)`)
+			conds = append(conds, `(SELECT COUNT(DISTINCT lt.tag) FROM library_tags lt WHERE lt.game_id = g.id AND lt.user_id = ? AND lt.tag IN (`+inClause+`)) = ?`)
 			*args = append(*args, o.libraryUserID)
 			for _, t := range o.tags {
 				*args = append(*args, t)
@@ -255,16 +202,14 @@ func buildFilterWhere(b *strings.Builder, args *[]interface{}, o searchOptions, 
 			*args = append(*args, len(o.tags))
 		}
 	}
-	// Library membership filters — only when a user is known.
 	if o.libraryUserID != "" {
 		if o.inLibrary != nil {
 			if *o.inLibrary {
 				conds = append(conds, `EXISTS (SELECT 1 FROM library_items li_f WHERE li_f.game_id = g.id AND li_f.user_id = ?)`)
-				*args = append(*args, o.libraryUserID)
 			} else {
 				conds = append(conds, `NOT EXISTS (SELECT 1 FROM library_items li_f WHERE li_f.game_id = g.id AND li_f.user_id = ?)`)
-				*args = append(*args, o.libraryUserID)
 			}
+			*args = append(*args, o.libraryUserID)
 		}
 		if o.libraryStatus != "" && ValidLibraryStatuses[o.libraryStatus] {
 			conds = append(conds, `EXISTS (SELECT 1 FROM library_items li_s WHERE li_s.game_id = g.id AND li_s.user_id = ? AND li_s.status = ?)`)
@@ -278,10 +223,90 @@ func buildFilterWhere(b *strings.Builder, args *[]interface{}, o searchOptions, 
 		conds = append(conds, `g.category IN (0,1,2,4,8,9,10,11)`)
 	}
 	if len(conds) == 0 {
+		b.WriteString(" WHERE 1")
 		return
 	}
 	b.WriteString(" WHERE ")
 	b.WriteString(strings.Join(conds, " AND "))
+}
+
+// buildSearchCandidates builds the CTE graph shared by the page query and
+// the rare out-of-range count fallback. name_match and alias_match are kept
+// unfiltered: parent discovery must see a parent even when the parent itself
+// fails a child-specific date/platform/library filter.
+//
+// Arguments are appended in the exact order their placeholders appear in the
+// generated SQL. The FTS join starts at the virtual table and uses CROSS JOIN
+// to keep SQLite from choosing the full games table as the driving relation.
+func buildSearchCandidates(b *strings.Builder, args *[]interface{}, engine, match, query, prefix, wordPrefix, like string, o searchOptions) {
+	b.WriteString(`WITH name_match(id, tier) AS MATERIALIZED (`)
+	switch engine {
+	case "fts":
+		b.WriteString(`SELECT g.id,
+		       CASE WHEN g.normalized_name = ? THEN 0
+		            WHEN g.normalized_name LIKE ? ESCAPE '\' THEN 1
+		            WHEN g.normalized_name LIKE ? ESCAPE '\' THEN 2
+		            ELSE 3 END
+		     FROM games_fts f
+		     CROSS JOIN games g
+		     WHERE f.normalized_name MATCH ? AND g.id = f.rowid`)
+		*args = append(*args, query, prefix, wordPrefix, match)
+	default: // "like"
+		b.WriteString(`SELECT g.id,
+		       CASE WHEN g.normalized_name = ? THEN 0
+		            WHEN g.normalized_name LIKE ? ESCAPE '\' THEN 1
+		            WHEN g.normalized_name LIKE ? ESCAPE '\' THEN 2
+		            ELSE 3 END
+		     FROM games g
+		     WHERE g.normalized_name LIKE ? ESCAPE '\'`)
+		*args = append(*args, query, prefix, wordPrefix, like)
+	}
+
+	b.WriteString(`), alias_match(game_id) AS MATERIALIZED (`)
+	if engine == "fts" {
+		b.WriteString(`SELECT DISTINCT a.game_id
+		     FROM aliases_fts af
+		     CROSS JOIN game_aliases a
+		     WHERE af.normalized_alias MATCH ? AND a.rowid = af.rowid`)
+		*args = append(*args, match)
+	} else {
+		b.WriteString(`SELECT DISTINCT a.game_id
+		     FROM game_aliases a
+		     WHERE a.normalized_alias LIKE ? ESCAPE '\'`)
+		*args = append(*args, like)
+	}
+
+	b.WriteString(`), parent_match(game_id) AS MATERIALIZED (
+		     SELECT id FROM name_match
+		     UNION
+		     SELECT game_id FROM alias_match
+		   ), eligible(id, tier, src) AS MATERIALIZED (
+		     SELECT nm.id, nm.tier, 0
+		     FROM name_match nm
+		     CROSS JOIN games g`)
+	appendGameFilterWhere(b, args, o, query, prefix, wordPrefix, true)
+	b.WriteString(` AND g.id = nm.id`)
+
+	b.WriteString(`
+		     UNION ALL
+		     SELECT am.game_id, 3, 1
+		     FROM alias_match am
+		     CROSS JOIN games g`)
+	appendGameFilterWhere(b, args, o, query, prefix, wordPrefix, false)
+	b.WriteString(` AND g.id = am.game_id`)
+	b.WriteString(`
+		       AND NOT EXISTS (SELECT 1 FROM name_match nm WHERE nm.id = g.id)
+
+		     UNION ALL
+		     SELECT g.id, 3, 2
+		     FROM parent_match pm
+		     CROSS JOIN games g`)
+	appendGameFilterWhere(b, args, o, query, prefix, wordPrefix, false)
+	b.WriteString(` AND g.parent_game = pm.game_id`)
+	b.WriteString(`
+		       AND NOT EXISTS (SELECT 1 FROM name_match nm WHERE nm.id = g.id)
+		       AND NOT EXISTS (SELECT 1 FROM alias_match am WHERE am.game_id = g.id)
+		   ) `)
 }
 
 // sortOrder maps the whitelisted sort key to its ORDER BY expression. The
@@ -312,53 +337,44 @@ func sortOrder(sort string) string {
 	}
 }
 
-// execSearch runs one engine variant: builds the results SQL (and the COUNT
-// SQL when o.withTotal) from shared pieces, executes both, and scans rows.
+// execSearch runs one engine variant. Full searches carry COUNT(*) OVER() on
+// every returned row, avoiding a second broad query. If OFFSET is beyond the
+// end there is no row carrying the window value, so only that case uses a
+// count fallback.
 func (s *Store) execSearch(ctx context.Context, engine, match, query, prefix, wordPrefix, like string, o searchOptions) ([]GameResult, int64, error) {
-	var union strings.Builder
-	unionArgs := make([]interface{}, 0, 16)
-	buildSearchUnion(&union, &unionArgs, engine, match, query, prefix, wordPrefix, like)
-
-	var where strings.Builder
-	whereArgs := make([]interface{}, 0, len(unionArgs)+4)
-	buildFilterWhere(&where, &whereArgs, o, query, prefix, wordPrefix)
-	whereClause := where.String()
+	var candidates strings.Builder
+	candidateArgs := make([]interface{}, 0, 32)
+	buildSearchCandidates(&candidates, &candidateArgs, engine, match, query, prefix, wordPrefix, like, o)
 
 	var sql strings.Builder
 	sql.WriteString(`SELECT g.id, g.name, g.slug, g.cover_url, g.local_cover_path, g.first_release_date, g.platforms_json`)
-	sql.WriteString(" FROM (")
-	sql.WriteString(union.String())
-	sql.WriteString(") x JOIN games g ON g.id = x.id")
-	sql.WriteString(whereClause)
+	if o.withTotal {
+		sql.WriteString(", COUNT(*) OVER() AS total_count")
+	}
+	sql.WriteString(" FROM eligible x JOIN games g ON g.id = x.id")
 	sql.WriteString(" ORDER BY ")
 	sql.WriteString(sortOrder(o.sort))
 	sql.WriteString(" LIMIT ? OFFSET ?")
-	finalArgs := append(append(append([]interface{}{}, unionArgs...), whereArgs...), o.limit, o.offset)
+	finalArgs := append(append([]interface{}{}, candidateArgs...), o.limit, o.offset)
 
-	results, err := s.querySearch(ctx, sql.String(), finalArgs)
+	results, total, err := s.querySearch(ctx, candidates.String()+sql.String(), finalArgs, o.withTotal)
 	if err != nil {
 		return nil, 0, fmt.Errorf("search games: %w", err)
 	}
 
-	var total int64
-	if o.withTotal {
-		var csql strings.Builder
-		csql.WriteString("SELECT COUNT(*) FROM (")
-		csql.WriteString(union.String())
-		csql.WriteString(") x JOIN games g ON g.id = x.id")
-		csql.WriteString(whereClause)
-		countArgs := append(append([]interface{}{}, unionArgs...), whereArgs...)
-		if err := s.db.QueryRowContext(ctx, csql.String(), countArgs...).Scan(&total); err != nil {
+	if o.withTotal && len(results) == 0 && o.offset > 0 {
+		countArgs := append([]interface{}{}, candidateArgs...)
+		if err := s.db.QueryRowContext(ctx, candidates.String()+"SELECT COUNT(*) FROM eligible", countArgs...).Scan(&total); err != nil {
 			return nil, 0, fmt.Errorf("count search games: %w", err)
 		}
 	}
 	return results, total, nil
 }
 
-func (s *Store) querySearch(ctx context.Context, sql string, args []interface{}) ([]GameResult, error) {
+func (s *Store) querySearch(ctx context.Context, sql string, args []interface{}, withTotal bool) ([]GameResult, int64, error) {
 	rows, err := s.db.QueryContext(ctx, sql, args...)
 	if err != nil {
-		return nil, fmt.Errorf("search games: %w", err)
+		return nil, 0, fmt.Errorf("search games: %w", err)
 	}
 	defer rows.Close()
 
@@ -368,16 +384,25 @@ func (s *Store) querySearch(ctx context.Context, sql string, args []interface{})
 	names, _ := s.PlatformNames(ctx)
 
 	var results []GameResult
+	var total int64
 	for rows.Next() {
 		var g GameResult
 		var platformsJSON string
-		if err := rows.Scan(&g.ID, &g.Name, &g.Slug, &g.CoverURL, &g.LocalCoverPath, &g.FirstReleaseDate, &platformsJSON); err != nil {
-			return nil, fmt.Errorf("scan game: %w", err)
+		scanArgs := []interface{}{&g.ID, &g.Name, &g.Slug, &g.CoverURL, &g.LocalCoverPath, &g.FirstReleaseDate, &platformsJSON}
+		var rowTotal int64
+		if withTotal {
+			scanArgs = append(scanArgs, &rowTotal)
+		}
+		if err := rows.Scan(scanArgs...); err != nil {
+			return nil, 0, fmt.Errorf("scan game: %w", err)
+		}
+		if withTotal {
+			total = rowTotal
 		}
 		g.Platforms = ResolvePlatformNames(platformsJSON, names)
 		results = append(results, g)
 	}
-	return results, rows.Err()
+	return results, total, rows.Err()
 }
 
 func (s *Store) GetByID(ctx context.Context, id int64) (*Game, error) {

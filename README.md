@@ -46,7 +46,7 @@ The import is idempotent — safe to run multiple times.
 
 ## IGDB Integration
 
-Cato searches IGDB on-demand: any query of 3+ characters that hasn't been seen in the last 24 hours triggers an IGDB refresh (regardless of how many local matches exist). Search-marker results are cached for 24 hours.
+Cato searches IGDB on-demand: any query of 3+ characters that hasn't been seen in the last 24 hours schedules a bounded background refresh (regardless of how many local matches exist). Local results return immediately, and successful search markers, including empty responses, are cached for 24 hours.
 
 A background refresh loop updates metadata for games older than 90 days — up to 100 per cycle, every 6 hours (~400/day), ordered purely by `source_updated_at`. Games deleted from IGDB are marked refreshed so the queue advances instead of retrying them forever.
 

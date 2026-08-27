@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"cato/internal/db"
@@ -23,16 +24,23 @@ type IGDBClient interface {
 }
 
 type Service struct {
-	store *Store
-	igdb  IGDBClient
-	db    *db.DB
+	store          *Store
+	igdb           IGDBClient
+	db             *db.DB
+	refreshMu      sync.Mutex
+	refreshing     map[string]chan struct{}
+	refreshSlots   chan struct{}
+	refreshTimeout time.Duration
 }
 
 func NewService(store *Store, igdb IGDBClient, db *db.DB) *Service {
 	return &Service{
-		store: store,
-		igdb:  igdb,
-		db:    db,
+		store:          store,
+		igdb:           igdb,
+		db:             db,
+		refreshing:     make(map[string]chan struct{}),
+		refreshSlots:   make(chan struct{}, 2),
+		refreshTimeout: 15 * time.Second,
 	}
 }
 
@@ -44,23 +52,22 @@ func (s *Service) Search(ctx context.Context, query string, includeEditions bool
 
 	effectiveInclude := includeEditions || ContainsEditionKeyword(query)
 
+	// Return the local snapshot before scheduling the remote refresh. This keeps
+	// stale-while-revalidate semantics exact even when IGDB responds immediately.
 	local, err := s.store.SearchLocalWithEditions(ctx, query, 10, effectiveInclude)
 	if err != nil {
 		return nil, err
 	}
-	if !s.shouldAskIGDB(query, effectiveInclude) {
-		return local, nil
+	if s.shouldAskIGDB(ctx, query, effectiveInclude) {
+		s.startAsyncRefresh(query, effectiveInclude)
 	}
 
-	s.refreshFromIGDB(ctx, query, effectiveInclude)
-
-	return s.store.SearchLocalWithEditions(ctx, query, 10, effectiveInclude)
+	return local, nil
 }
 
 // SearchPaged performs a paginated search with a relevance floor applied to
 // exclude weak (tier-3 substring) matches unless popular. On page 1 (offset=0),
-// it runs the IGDB live fallback before returning results; on deeper pages,
-// it returns pure local DB results (no IGDB hammering).
+// it schedules an asynchronous IGDB refresh; deeper pages are local-only.
 func (s *Service) SearchPaged(ctx context.Context, query string, limit, offset int) ([]GameResult, error) {
 	results, _, err := s.SearchPagedFull(ctx, query, limit, offset, "", 0, 0, 0, "", false)
 	return results, err
@@ -70,8 +77,7 @@ func (s *Service) SearchPaged(ctx context.Context, query string, limit, offset i
 // optionally sorted/filtered (SEARCH_IMPROVEMENTS.md §4.4), and returning the
 // total match count so the UI can display "N results". platform (substring of
 // a platform name/abbreviation) restricts to games available on it. As in
-// SearchPaged, the IGDB live fallback runs on page 1 only; deeper pages are
-// pure local queries.
+// SearchPaged, refreshes are asynchronous on page 1 only.
 func (s *Service) SearchPagedFull(ctx context.Context, query string, limit, offset int, sort string, yearFrom, yearTo, minRating int64, platform string, includeEditions bool) ([]GameResult, int64, error) {
 	return s.SearchPagedFullWithFilters(ctx, query, limit, offset, sort, yearFrom, yearTo, minRating, platform, nil, "", "", nil, "", includeEditions)
 }
@@ -80,8 +86,7 @@ func (s *Service) SearchPagedFull(ctx context.Context, query string, limit, offs
 // filters: tags/tagOp (library tags), libraryUserID/inLibrary/libraryStatus.
 // tags and library filters are applied only when libraryUserID is non-empty;
 // callers should obtain it from the session when present. Personal filters are
-// honored on both the initial and the IGDB-refreshed query so pagination stays
-// consistent.
+// honored on local results and remain stable while an async refresh completes.
 func (s *Service) SearchPagedFullWithFilters(ctx context.Context, query string, limit, offset int, sort string, yearFrom, yearTo, minRating int64, platform string, tags []string, tagOp string, libraryUserID string, inLibrary *bool, libraryStatus string, includeEditions bool) ([]GameResult, int64, error) {
 	query = NormalizeName(query)
 	if len(query) < 2 {
@@ -117,19 +122,58 @@ func (s *Service) SearchPagedFullWithFilters(ctx context.Context, query string, 
 	}
 
 	// Only ask IGDB on page 1 and only if the query is long enough and not cached.
-	if offset > 0 || !s.shouldAskIGDB(query, effectiveInclude) {
-		return local, total, nil
+	// The local page is already fixed; a later request sees refreshed rows.
+	if offset == 0 && s.shouldAskIGDB(ctx, query, effectiveInclude) {
+		s.startAsyncRefresh(query, effectiveInclude)
 	}
 
-	// Page 1: refresh from IGDB, then re-query locally.
-	s.refreshFromIGDB(ctx, query, effectiveInclude)
+	return local, total, nil
+}
 
-	return s.store.SearchGamesPaged(ctx, query, opts())
+// startAsyncRefresh schedules a best-effort stale-while-revalidate refresh.
+// At most two refreshes run at once, and the key remains in refreshing while a
+// slot is held so concurrent requests cannot duplicate an IGDB query. A full
+// slot drops the refresh; a later request can retry it without being blocked.
+func (s *Service) startAsyncRefresh(query string, includeEditions bool) {
+	key := cacheKey(query, includeEditions)
+	s.refreshMu.Lock()
+	if _, ok := s.refreshing[key]; ok {
+		s.refreshMu.Unlock()
+		return
+	}
+	done := make(chan struct{})
+	s.refreshing[key] = done
+	s.refreshMu.Unlock()
+
+	select {
+	case s.refreshSlots <- struct{}{}:
+	default:
+		close(done)
+		s.refreshMu.Lock()
+		delete(s.refreshing, key)
+		s.refreshMu.Unlock()
+		return
+	}
+
+	go func() {
+		defer func() {
+			<-s.refreshSlots
+			close(done)
+			s.refreshMu.Lock()
+			delete(s.refreshing, key)
+			s.refreshMu.Unlock()
+		}()
+
+		ctx, cancel := context.WithTimeout(context.Background(), s.refreshTimeout)
+		defer cancel()
+		s.refreshFromIGDB(ctx, query, includeEditions)
+	}()
 }
 
 // refreshFromIGDB fetches a query from IGDB, upserts all results, and records
-// the search in the cache. (The per-game "igdb:" cache entries the old version
-// also wrote were never read by anything — removed.)
+// both non-empty and empty successful searches in the cache. It always receives
+// a detached bounded context: an HTTP client canceling its request must not
+// cancel a refresh that is already responsible for warming the catalog/cache.
 func (s *Service) refreshFromIGDB(ctx context.Context, query string, includeEditions bool) {
 	remote, err := s.igdb.SearchGames(ctx, query, 10, includeEditions)
 	if err != nil {
@@ -806,9 +850,15 @@ func (s *Service) refreshStaleGames(maxPerDay int) {
 	log.Printf("stale refresh: refreshed %d/%d games", refreshed, len(ids))
 }
 
-func (s *Service) shouldAskIGDB(query string, includeEditions bool) bool {
-	cached, err := getCachedSearchDB(context.Background(), s.db, query, includeEditions)
+func (s *Service) shouldAskIGDB(ctx context.Context, query string, includeEditions bool) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	cached, err := getCachedSearchDB(ctx, s.db, query, includeEditions)
 	if err == nil && cached {
+		return false
+	}
+	if ctx.Err() != nil {
 		return false
 	}
 	return len(query) >= 3
@@ -827,9 +877,6 @@ func PurgeExpiredQueryCache(database *db.DB) (int64, error) {
 }
 
 func cacheSearchResultsDB(ctx context.Context, db *db.DB, query string, games []Game, includeEditions bool) {
-	if len(games) == 0 {
-		return
-	}
 	data, _ := json.Marshal(map[string]interface{}{"query": query, "cached": true})
 	key := cacheKey(query, includeEditions)
 	db.ExecContext(ctx, `INSERT OR REPLACE INTO igdb_query_cache (normalized_query, response_json, expires_at)

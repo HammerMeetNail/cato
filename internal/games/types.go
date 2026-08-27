@@ -1,6 +1,9 @@
 package games
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 type Game struct {
 	ID                    int64   `json:"id"`
@@ -81,13 +84,36 @@ func NewIGDBRateLimiter() *IGDBRateLimiter {
 	}
 }
 
-func (rl *IGDBRateLimiter) Wait() {
-	rl.mu <- struct{}{}
+// WaitContext waits for the next rate-limit slot, returning early when the
+// request has been canceled. Search requests are created on every debounced
+// keystroke; without cancellation, browser-aborted requests still occupied a
+// slot for a full second and delayed the query the user actually wants.
+func (rl *IGDBRateLimiter) WaitContext(ctx context.Context) error {
+	select {
+	case rl.mu <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	defer func() { <-rl.mu }()
 
-	elapsed := time.Since(rl.lastRequest)
-	if elapsed < time.Second {
-		time.Sleep(time.Second - elapsed)
+	if elapsed := time.Since(rl.lastRequest); elapsed < time.Second {
+		timer := time.NewTimer(time.Second - elapsed)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	rl.lastRequest = time.Now()
+	return nil
+}
+
+// Wait retains the non-cancelable form for callers that do not have a request
+// context, such as maintenance jobs.
+func (rl *IGDBRateLimiter) Wait() {
+	_ = rl.WaitContext(context.Background())
 }

@@ -2,6 +2,8 @@ package games
 
 import (
 	"context"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -195,6 +197,189 @@ func TestAliasMatchPassesFloor(t *testing.T) {
 	}
 }
 
+// TestParentAliasSearchFindsDLC verifies that a parent game's alias can find
+// children whose own name does not contain that alias (for example, "re4
+// remake" should find Separate Ways). Parent matches also bypass the
+// popularity floor, just like direct alias matches.
+func TestParentAliasSearchFindsDLC(t *testing.T) {
+	database, store := setupGameDB(t)
+	defer database.Close()
+	ctx := context.Background()
+
+	if err := store.UpsertIGDBGame(ctx, Game{
+		ID:             132181,
+		Name:           "Resident Evil 4",
+		Slug:           "resident-evil-4--1",
+		SafeName:       "Resident Evil 4",
+		NormalizedName: "resident evil 4",
+		Category:       8,
+		Aliases:        []string{"RE4 Remake"},
+	}); err != nil {
+		t.Fatalf("upsert parent: %v", err)
+	}
+	if err := store.UpsertIGDBGame(ctx, Game{
+		ID:              266717,
+		Name:            "Resident Evil 4: Separate Ways",
+		Slug:            "resident-evil-4-separate-ways--1",
+		SafeName:        "Resident Evil 4: Separate Ways",
+		NormalizedName:  "resident evil 4 separate ways",
+		Category:        2,
+		ParentGame:      132181,
+		PopularityScore: 0,
+	}); err != nil {
+		t.Fatalf("upsert child: %v", err)
+	}
+
+	results, err := store.SearchLocalPaged(ctx, "re4 remake", 10, 0, true)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	seen := make(map[int64]int)
+	for _, result := range results {
+		seen[result.ID]++
+	}
+	if seen[132181] != 1 || seen[266717] != 1 {
+		t.Errorf("expected parent and one DLC result, got %v", results)
+	}
+}
+
+func TestParentSearchKeepsDiscoveryUnfilteredButFiltersReturnedChildren(t *testing.T) {
+	database, store := setupGameDB(t)
+	defer database.Close()
+	ctx := context.Background()
+
+	if err := store.UpsertIGDBGame(ctx, Game{
+		ID:             1,
+		Name:           "Parent Game",
+		Slug:           "parent-game",
+		SafeName:       "Parent Game",
+		NormalizedName: "parent game",
+		Aliases:        []string{"parent alias"},
+	}); err != nil {
+		t.Fatalf("upsert parent: %v", err)
+	}
+	for _, child := range []Game{
+		{ID: 2, Name: "Old Child", Slug: "old-child", SafeName: "Old Child", NormalizedName: "old child", ParentGame: 1, FirstReleaseDate: yearUnix(t, 1990, false)},
+		{ID: 3, Name: "New Child", Slug: "new-child", SafeName: "New Child", NormalizedName: "new child", ParentGame: 1, FirstReleaseDate: yearUnix(t, 2020, false)},
+	} {
+		if err := store.UpsertIGDBGame(ctx, child); err != nil {
+			t.Fatalf("upsert child %d: %v", child.ID, err)
+		}
+	}
+
+	results, total, err := store.SearchGamesPaged(ctx, "parent alias", searchOptions{
+		limit: 10, withTotal: true, yearFrom: yearUnix(t, 2010, false),
+	})
+	if err != nil {
+		t.Fatalf("filtered parent search: %v", err)
+	}
+	if total != 1 || len(results) != 1 || results[0].ID != 3 {
+		t.Errorf("filtered parent search = total %d results %v, want child 3 only", total, results)
+	}
+}
+
+func TestSearchTagFilterUsesNormalizedTags(t *testing.T) {
+	database, store := setupGameDB(t)
+	defer database.Close()
+	ctx := context.Background()
+
+	if _, err := database.Exec(`INSERT INTO users (id, email) VALUES ('u1', 'tags@example.com');
+		INSERT INTO games (id, name, slug, normalized_name) VALUES
+			(1, 'Tagged One', 'tagged-one', 'tagged one'),
+			(2, 'Tagged Two', 'tagged-two', 'tagged two'),
+			(3, 'Tagged Three', 'tagged-three', 'tagged three');
+		INSERT INTO library_items (user_id, game_id, status, tags_json) VALUES
+			('u1', 1, 'backlog', '["rpg","favorite"]'),
+			('u1', 2, 'backlog', '["rpg"]')`); err != nil {
+		t.Fatalf("seed tag fixture: %v", err)
+	}
+
+	owned := true
+	for _, tc := range []struct {
+		name string
+		tags []string
+		op   string
+		want int64
+		ids  []int64
+	}{
+		{name: "or", tags: []string{"favorite", "missing"}, op: "or", want: 1, ids: []int64{1}},
+		{name: "and", tags: []string{"rpg", "favorite"}, op: "and", want: 1, ids: []int64{1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			results, total, err := store.SearchGamesPaged(ctx, "tagged", searchOptions{
+				limit: 10, withTotal: true, tags: tc.tags, tagOp: tc.op,
+				libraryUserID: "u1", inLibrary: &owned,
+			})
+			if err != nil {
+				t.Fatalf("search: %v", err)
+			}
+			if total != tc.want || len(results) != len(tc.ids) {
+				t.Fatalf("total=%d results=%v, want total=%d ids=%v", total, results, tc.want, tc.ids)
+			}
+			for i, id := range tc.ids {
+				if results[i].ID != id {
+					t.Errorf("result[%d] id=%d, want %d", i, results[i].ID, id)
+				}
+			}
+		})
+	}
+
+	results, total, err := store.SearchGamesPaged(ctx, "tagged", searchOptions{
+		limit: 10, withTotal: true, libraryUserID: "u1", inLibrary: &owned,
+		libraryStatus: "backlog",
+	})
+	if err != nil || total != 2 || len(results) != 2 {
+		t.Fatalf("owned backlog search = total %d results %v err %v, want games 1 and 2", total, results, err)
+	}
+
+	notOwned := false
+	results, total, err = store.SearchGamesPaged(ctx, "tagged", searchOptions{
+		limit: 10, withTotal: true, libraryUserID: "u1", inLibrary: &notOwned,
+	})
+	if err != nil || total != 1 || len(results) != 1 || results[0].ID != 3 {
+		t.Errorf("not-owned search = total %d results %v err %v, want game 3", total, results, err)
+	}
+}
+
+func TestBuildSearchCandidatesArgumentOrder(t *testing.T) {
+	owned := true
+	o := searchOptions{
+		applyFloor:      true,
+		yearFrom:        11,
+		yearTo:          22,
+		minRating:       33,
+		platform:        "switch",
+		tags:            []string{"tag-a", "tag-b"},
+		tagOp:           "or",
+		libraryUserID:   "user-1",
+		inLibrary:       &owned,
+		libraryStatus:   "playing",
+		includeEditions: true,
+	}
+	var query strings.Builder
+	args := make([]interface{}, 0, 64)
+	buildSearchCandidates(&query, &args, "like", "", "needle", "needle%", "% needle%", "%needle%", o)
+
+	platformPattern := "%switch%"
+	want := []interface{}{
+		"needle", "needle%", "% needle%", "%needle%", // name CTE
+		"%needle%",                       // alias CTE
+		"needle", "needle%", "% needle%", // name floor
+		int64(11), int64(22), int64(33), platformPattern, platformPattern, platformPattern, platformPattern,
+		"user-1", "tag-a", "tag-b", "user-1", "user-1", "playing", // name branch
+		int64(11), int64(22), int64(33), platformPattern, platformPattern, platformPattern, platformPattern,
+		"user-1", "tag-a", "tag-b", "user-1", "user-1", "playing", // alias branch
+		int64(11), int64(22), int64(33), platformPattern, platformPattern, platformPattern, platformPattern,
+		"user-1", "tag-a", "tag-b", "user-1", "user-1", "playing", // parent branch
+	}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("generated args = %#v, want %#v", args, want)
+	}
+	if strings.Contains(query.String(), "json_each") {
+		t.Error("search candidate SQL must use normalized filter tables, not json_each")
+	}
+}
+
 // TestWordOrderRetry covers §4.2: the strict trigram phrase can't match
 // reordered words, but the token-AND retry recovers them without touching
 // the LIKE fallback.
@@ -290,6 +475,15 @@ func TestSearchGamesPagedTotalSortFilters(t *testing.T) {
 	})
 	if err != nil || total != 4 || len(page2) != 2 {
 		t.Errorf("page 2 expected total=4 len=2; got total=%d len=%d (%v)", total, len(page2), err)
+	}
+
+	// An empty page still reports the exact total. The window count has no row
+	// to carry the value in this case, so the store uses its count fallback.
+	page3, total, err := store.SearchGamesPaged(ctx, q, searchOptions{
+		limit: 2, offset: 4, sort: "", applyFloor: true, withTotal: true,
+	})
+	if err != nil || total != 4 || len(page3) != 0 {
+		t.Errorf("empty page expected total=4 len=0; got total=%d len=%d (%v)", total, len(page3), err)
 	}
 }
 

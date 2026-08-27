@@ -13,6 +13,92 @@ type Migration struct {
 
 var migrations = []Migration{
 	{
+		Version: 15,
+		// Search/filter indexes for JSON-backed platform and tag fields. The JSON
+		// columns remain the API/source-of-truth format for compatibility, while
+		// these tables make repeated filter predicates indexed and keep raw SQL
+		// import/test writes synchronized through triggers.
+		Up: `CREATE TABLE IF NOT EXISTS game_platforms (
+		     game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+		     platform_id INTEGER NOT NULL DEFAULT 0,
+		     platform_value TEXT NOT NULL DEFAULT '',
+		     PRIMARY KEY (game_id, platform_id, platform_value)
+		     );
+		     CREATE INDEX IF NOT EXISTS idx_game_platforms_platform_game
+		       ON game_platforms(platform_id, game_id);
+			INSERT OR IGNORE INTO game_platforms (game_id, platform_id, platform_value)
+			  SELECT g.id,
+			         CASE WHEN je.type = 'integer'
+			                    OR (je.type = 'text' AND je.value != '' AND je.value NOT GLOB '*[^0-9]*')
+			              THEN CAST(je.value AS INTEGER) ELSE 0 END,
+			         CASE WHEN je.type = 'integer'
+			                    OR (je.type = 'text' AND je.value != '' AND je.value NOT GLOB '*[^0-9]*')
+			              THEN '' ELSE CAST(je.value AS TEXT) END
+		       FROM games g,
+	            json_each(CASE WHEN json_valid(g.platforms_json) THEN g.platforms_json ELSE '[]' END) je
+		       WHERE je.type != 'null';
+
+		       CREATE TRIGGER IF NOT EXISTS game_platforms_ai AFTER INSERT ON games BEGIN
+		       INSERT OR IGNORE INTO game_platforms (game_id, platform_id, platform_value)
+		         SELECT new.id,
+		                CASE WHEN je.type = 'integer'
+		                           OR (je.type = 'text' AND je.value != '' AND je.value NOT GLOB '*[^0-9]*')
+		                     THEN CAST(je.value AS INTEGER) ELSE 0 END,
+		                CASE WHEN je.type = 'integer'
+		                           OR (je.type = 'text' AND je.value != '' AND je.value NOT GLOB '*[^0-9]*')
+		                     THEN '' ELSE CAST(je.value AS TEXT) END
+		           FROM json_each(CASE WHEN json_valid(new.platforms_json) THEN new.platforms_json ELSE '[]' END) je
+		          WHERE je.type != 'null';
+		     END;
+		       CREATE TRIGGER IF NOT EXISTS game_platforms_au AFTER UPDATE OF platforms_json ON games BEGIN
+		       DELETE FROM game_platforms WHERE game_id = old.id;
+		       INSERT OR IGNORE INTO game_platforms (game_id, platform_id, platform_value)
+		         SELECT new.id,
+		                CASE WHEN je.type = 'integer'
+		                           OR (je.type = 'text' AND je.value != '' AND je.value NOT GLOB '*[^0-9]*')
+		                     THEN CAST(je.value AS INTEGER) ELSE 0 END,
+		                CASE WHEN je.type = 'integer'
+		                           OR (je.type = 'text' AND je.value != '' AND je.value NOT GLOB '*[^0-9]*')
+		                     THEN '' ELSE CAST(je.value AS TEXT) END
+		           FROM json_each(CASE WHEN json_valid(new.platforms_json) THEN new.platforms_json ELSE '[]' END) je
+		          WHERE je.type != 'null';
+		     END;
+
+		     CREATE TABLE IF NOT EXISTS library_tags (
+		       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		       game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+		       tag TEXT NOT NULL,
+		       PRIMARY KEY (user_id, game_id, tag)
+		       );
+		     CREATE INDEX IF NOT EXISTS idx_library_tags_user_tag_game
+		       ON library_tags(user_id, tag, game_id);
+		     CREATE INDEX IF NOT EXISTS idx_library_tags_game_user
+		       ON library_tags(game_id, user_id, tag);
+		     INSERT OR IGNORE INTO library_tags (user_id, game_id, tag)
+		       SELECT li.user_id, li.game_id, CAST(j.value AS TEXT)
+		       FROM library_items li,
+	            json_each(CASE WHEN json_valid(li.tags_json) THEN li.tags_json ELSE '[]' END) j
+		       WHERE j.type != 'null'
+		       GROUP BY li.user_id, li.game_id, CAST(j.value AS TEXT);
+
+		     CREATE TRIGGER IF NOT EXISTS library_tags_ai AFTER INSERT ON library_items BEGIN
+		       INSERT OR IGNORE INTO library_tags (user_id, game_id, tag)
+		         SELECT new.user_id, new.game_id, CAST(j.value AS TEXT)
+		           FROM json_each(CASE WHEN json_valid(new.tags_json) THEN new.tags_json ELSE '[]' END) j
+		          WHERE j.type != 'null';
+		     END;
+		     CREATE TRIGGER IF NOT EXISTS library_tags_au AFTER UPDATE OF user_id, game_id, tags_json ON library_items BEGIN
+		       DELETE FROM library_tags WHERE user_id = old.user_id AND game_id = old.game_id;
+		       INSERT OR IGNORE INTO library_tags (user_id, game_id, tag)
+		         SELECT new.user_id, new.game_id, CAST(j.value AS TEXT)
+		           FROM json_each(CASE WHEN json_valid(new.tags_json) THEN new.tags_json ELSE '[]' END) j
+		          WHERE j.type != 'null';
+		     END;
+		     CREATE TRIGGER IF NOT EXISTS library_tags_ad AFTER DELETE ON library_items BEGIN
+		       DELETE FROM library_tags WHERE user_id = old.user_id AND game_id = old.game_id;
+		     END;`,
+	},
+	{
 		Version: 14,
 		// Seed curated shortname platforms so the platform filter works even
 		// before the IGDB sync runs or when IGDB is not configured. The

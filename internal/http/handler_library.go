@@ -214,14 +214,14 @@ func libraryFilter(status string, tags []string, tagOp string) (string, []interf
 		inClause := strings.Join(placeholders, ", ")
 		if tagOp == "and" {
 			// All tags must be present
-			where += ` AND (SELECT COUNT(DISTINCT value) FROM json_each(li.tags_json) WHERE value IN (` + inClause + `)) = ?`
+			where += ` AND (SELECT COUNT(DISTINCT lt.tag) FROM library_tags lt WHERE lt.user_id = li.user_id AND lt.game_id = li.game_id AND lt.tag IN (` + inClause + `)) = ?`
 			for _, t := range tags {
 				args = append(args, t)
 			}
 			args = append(args, len(tags))
 		} else {
 			// Any tag must be present
-			where += ` AND EXISTS (SELECT 1 FROM json_each(li.tags_json) WHERE value IN (` + inClause + `))`
+			where += ` AND EXISTS (SELECT 1 FROM library_tags lt WHERE lt.user_id = li.user_id AND lt.game_id = li.game_id AND lt.tag IN (` + inClause + `))`
 			for _, t := range tags {
 				args = append(args, t)
 			}
@@ -713,10 +713,10 @@ func (h *LibraryHandler) handleLibraryTags(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Escape LIKE wildcards so searching "100%" doesn't match "1000 things".
-	rows, err := h.db.Query(`SELECT DISTINCT j.value
-		FROM library_items li, json_each(li.tags_json) j
-		WHERE li.user_id = ? AND j.value LIKE ? ESCAPE '\'
-		ORDER BY j.value
+	rows, err := h.db.Query(`SELECT DISTINCT tag
+		FROM library_tags
+		WHERE user_id = ? AND tag LIKE ? ESCAPE '\'
+		ORDER BY tag
 		LIMIT ?`, userID, games.EscapeLike(q)+"%", limit)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to fetch tags"))
@@ -754,13 +754,12 @@ func (h *LibraryHandler) handleLibraryPlatforms(w http.ResponseWriter, r *http.R
 	// name, IGDB abbreviation, and curated shortname); ownership platforms
 	// are literal text. Union keeps all sources suggestable.
 	rows, err := h.db.Query(`SELECT t.name, COUNT(*) AS c FROM (
-		SELECT COALESCE(NULLIF(p.name, ''), CAST(je.value AS TEXT)) AS name,
+		SELECT COALESCE(NULLIF(p.name, ''), gp.platform_value) AS name,
 		       COALESCE(p.abbreviation, '') AS abbr,
 		       COALESCE(p.shortname, '') AS sn
 		FROM library_items li
-		JOIN games g ON g.id = li.game_id
-		CROSS JOIN json_each(g.platforms_json) je
-		LEFT JOIN platforms p ON p.id = je.value
+		JOIN game_platforms gp ON gp.game_id = li.game_id
+		LEFT JOIN platforms p ON p.id = gp.platform_id
 		WHERE li.user_id = ?
 		UNION ALL
 		SELECT je.value AS name, '' AS abbr, '' AS sn
@@ -1068,10 +1067,10 @@ func (h *LibraryHandler) handleLibraryStats(w http.ResponseWriter, r *http.Reque
 		stats["by_year"] = byYear
 	}
 
-	rows2, err := h.db.Query(`SELECT j.value, COUNT(*) AS c
-		FROM library_items li, json_each(li.tags_json) j
-		WHERE li.user_id = ?
-		GROUP BY j.value ORDER BY c DESC LIMIT 8`, userID)
+	rows2, err := h.db.Query(`SELECT tag, COUNT(*) AS c
+		FROM library_tags
+		WHERE user_id = ?
+		GROUP BY tag ORDER BY c DESC LIMIT 8`, userID)
 	if err == nil {
 		defer rows2.Close()
 		topTags := make([]map[string]interface{}, 0)

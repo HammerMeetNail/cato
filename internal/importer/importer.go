@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"cato/internal/db"
 )
 
 const batchSize = 1000
@@ -25,19 +27,21 @@ type GameRow struct {
 	AggregatedRatingCount int64
 	PlatformsJSON         string
 	GenresJSON            string
-	Trailer              string
+	Trailer               string
 	IGDBURL               string
 	SourceUpdatedAt       int64
 }
 
 func Import(inputPath, dbPath string) (int64, error) {
-	database, err := sql.Open("sqlite", "file:"+dbPath+"?_journal_mode=WAL&_foreign_keys=on")
+	database, err := db.Open(dbPath)
 	if err != nil {
 		return 0, fmt.Errorf("open sqlite: %w", err)
 	}
 	defer database.Close()
 
-	database.SetMaxOpenConns(1)
+	if err := db.Migrate(database); err != nil {
+		return 0, fmt.Errorf("migrate sqlite: %w", err)
+	}
 
 	data, err := os.ReadFile(inputPath)
 	if err != nil {
@@ -56,7 +60,7 @@ func Import(inputPath, dbPath string) (int64, error) {
 		return 0, fmt.Errorf("parse copy rows: %w", err)
 	}
 
-	imported, err := writeBatch(database, rows)
+	imported, err := writeBatch(database.Write, rows)
 	if err != nil {
 		return 0, fmt.Errorf("write batch: %w", err)
 	}
@@ -111,7 +115,7 @@ func parseCopyRows(lines []string, startIdx int, colMap map[string]int) ([]GameR
 			AggregatedRatingCount: parseNullableInt(getField(fields, colMap, "aggregated_rating_count")),
 			PlatformsJSON:         pgArrayToJSONText(getField(fields, colMap, "platforms")),
 			GenresJSON:            pgArrayToJSONText(getField(fields, colMap, "genres")),
-			Trailer:              parseNullableString(getField(fields, colMap, "trailer")),
+			Trailer:               parseNullableString(getField(fields, colMap, "trailer")),
 			IGDBURL:               parseNullableString(getField(fields, colMap, "url")),
 			SourceUpdatedAt:       parseNullableInt(getField(fields, colMap, "updated_at")),
 		}

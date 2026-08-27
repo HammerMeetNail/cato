@@ -225,21 +225,28 @@ func (s *Store) PlatformNames(ctx context.Context) (map[int64]string, error) {
 }
 
 // PlatformFilter returns a WHERE fragment (no leading AND/OR) matching games
-// whose platforms_json includes a platform whose name, abbreviation, or
-// curated shortname contains the given text (case-insensitive substring),
-// plus its bind args. Legacy rows storing literal name strings instead of IDs
-// are matched too; numeric IDs missing from the lookup table match nothing
-// (and raw ID text never matches — the interface is names, not numbers).
-// alias is the games table alias used in the caller's query.
+// whose normalized platform rows contain a platform whose name, abbreviation,
+// or curated shortname contains the given text (case-insensitive substring),
+// plus its bind args. Platform IDs are resolved through the small reference
+// table first, then game_platforms uses its game/platform indexes. Legacy rows
+// storing literal names in platforms_json are represented by
+// game_platforms.platform_value and remain searchable too. alias is the games
+// table alias used in the caller's query.
 func PlatformFilter(alias, platform string) (string, []interface{}) {
 	pat := "%" + strings.ToLower(EscapeLike(strings.TrimSpace(platform))) + "%"
 	frag := fmt.Sprintf(`EXISTS (
-		SELECT 1 FROM json_each(%s.platforms_json) je
-		LEFT JOIN platforms p ON p.id = je.value
-		WHERE LOWER(COALESCE(p.name, '')) LIKE ? ESCAPE '\'
-		   OR LOWER(COALESCE(p.abbreviation, '')) LIKE ? ESCAPE '\'
-		   OR LOWER(COALESCE(p.shortname, '')) LIKE ? ESCAPE '\'
-		   OR (typeof(je.value) != 'integer' AND LOWER(CAST(je.value AS TEXT)) LIKE ? ESCAPE '\'))`, alias)
+		SELECT 1 FROM game_platforms gp
+		WHERE gp.game_id = %s.id
+		  AND (
+		       gp.platform_id IN (
+		         SELECT id FROM platforms
+		          WHERE LOWER(name) LIKE ? ESCAPE '\'
+		             OR LOWER(abbreviation) LIKE ? ESCAPE '\'
+		             OR LOWER(shortname) LIKE ? ESCAPE '\'
+		       )
+		   OR (gp.platform_id = 0 AND LOWER(gp.platform_value) LIKE ? ESCAPE '\')
+		  )
+	)`, alias)
 	return frag, []interface{}{pat, pat, pat, pat}
 }
 
