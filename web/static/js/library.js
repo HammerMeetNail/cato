@@ -273,70 +273,114 @@ function updateSearchTotal(total) {
 }
 
 // buildSearchFilterBarHTML renders the collapsible sort/filter controls.
+// Friendly, grouped layout with clear section headings and mobile-tuned sizing.
 function buildSearchFilterBarHTML() {
   return `
     <details class="search-filterbar">
-      <summary>Sort &amp; filter</summary>
-      <div class="sf-controls">
-        <label>Sort
-          <select id="sfSort">
-            <option value="">Relevance</option>
-            <option value="release_new">Newest</option>
-            <option value="release_old">Oldest</option>
-            <option value="rating">Rating</option>
-            <option value="popularity">Popularity</option>
-            <option value="name">Name A–Z</option>
-          </select>
-        </label>
-        <label>Platform
-          <input id="sfPlatform" list="sfPlatformList" type="text" placeholder="e.g. Switch, PC, PS5" autocomplete="off">
-          <datalist id="sfPlatformList"></datalist>
-        </label>
-        <label>Tags
-          <input id="sfTags" list="sfTagsList" type="text" placeholder='e.g. rpg "switch 2"' autocomplete="off">
-          <datalist id="sfTagsList"></datalist>
-        </label>
-        <label>Year from
-          <input id="sfYearFrom" type="number" min="1900" max="2100" inputmode="numeric" placeholder="1994">
-        </label>
-        <label>to
-          <input id="sfYearTo" type="number" min="1900" max="2100" inputmode="numeric" placeholder="2024">
-        </label>
-        <label>Release from
-          <input id="sfReleaseFrom" type="date" placeholder="YYYY-MM-DD">
-        </label>
-        <label>to
-          <input id="sfReleaseTo" type="date" placeholder="YYYY-MM-DD">
-        </label>
-        <label>Min rating
-          <select id="sfMinRating">
-            <option value="">Any</option>
-            <option value="60">60+</option>
-            <option value="75">75+</option>
-            <option value="85">85+</option>
-            <option value="95">95+</option>
-          </select>
-        </label>
-        <label>Library
-          <select id="sfInLibrary">
-            <option value="">All games</option>
-            <option value="owned">In my library</option>
-            <option value="not_owned">Not in library</option>
-          </select>
-        </label>
-        <label id="sfLibraryStatusWrap" style="display:none">Status
-          <select id="sfLibraryStatus">
-            <option value="">Any status</option>
-            <option value="wishlist">Wishlist</option>
-            <option value="backlog">Backlog</option>
-            <option value="playing">Playing</option>
-            <option value="completed">Completed</option>
-            <option value="abandoned">Abandoned</option>
-          </select>
-        </label>
-        <label class="sf-check"><input id="sfEditions" type="checkbox"> Include editions &amp; packs</label>
-        <button id="sfApply" class="btn btn-primary btn-inline" type="button">Apply</button>
-        <button id="sfClear" class="btn btn-secondary btn-inline" type="button">Clear</button>
+      <summary>
+        <span class="sf-summary-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg></span>
+        <span>Filters</span>
+        <span class="sf-badge" id="sfBadge" hidden>0</span>
+        <span class="sf-chevron" aria-hidden="true"></span>
+      </summary>
+      <div class="sf-panel">
+        <div class="sf-section">
+          <h4 class="sf-section-title">Sort &amp; Quality</h4>
+          <div class="sf-grid sf-grid--2">
+            <label class="sf-field">
+              <span class="sf-label">Sort by</span>
+              <select id="sfSort">
+                <option value="">Relevance</option>
+                <option value="release_new">Newest first</option>
+                <option value="release_old">Oldest first</option>
+                <option value="rating">Highest rated</option>
+                <option value="popularity">Most popular</option>
+                <option value="name">Name A–Z</option>
+              </select>
+            </label>
+            <label class="sf-field">
+              <span class="sf-label">Min rating</span>
+              <select id="sfMinRating">
+                <option value="">Any rating</option>
+                <option value="60">60+ Good</option>
+                <option value="75">75+ Great</option>
+                <option value="85">85+ Excellent</option>
+                <option value="95">95+ Masterpiece</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div class="sf-section">
+          <h4 class="sf-section-title">Platform &amp; Tags</h4>
+          <div class="sf-grid sf-grid--2">
+            <label class="sf-field">
+              <span class="sf-label">Platform</span>
+              <input id="sfPlatform" list="sfPlatformList" type="text" placeholder="e.g. Switch, PC, PS5" autocomplete="off" inputmode="search">
+              <datalist id="sfPlatformList"></datalist>
+            </label>
+            <label class="sf-field">
+              <span class="sf-label">Tags</span>
+              <input id="sfTags" list="sfTagsList" type="text" placeholder='e.g. rpg "co-op"' autocomplete="off" inputmode="search">
+              <datalist id="sfTagsList"></datalist>
+            </label>
+          </div>
+          <p class="sf-hint">Tags: space = AND, <code>|</code> = OR, quotes for multi-word.</p>
+        </div>
+
+        <div class="sf-section">
+          <h4 class="sf-section-title">Release Date</h4>
+          <div class="sf-grid sf-grid--range">
+            <label class="sf-field">
+              <span class="sf-label">Year from</span>
+              <input id="sfYearFrom" type="number" min="1900" max="2100" inputmode="numeric" placeholder="1994">
+            </label>
+            <label class="sf-field">
+              <span class="sf-label">Year to</span>
+              <input id="sfYearTo" type="number" min="1900" max="2100" inputmode="numeric" placeholder="2024">
+            </label>
+            <label class="sf-field">
+              <span class="sf-label">Exact from</span>
+              <input id="sfReleaseFrom" type="date">
+            </label>
+            <label class="sf-field">
+              <span class="sf-label">Exact to</span>
+              <input id="sfReleaseTo" type="date">
+            </label>
+          </div>
+          <p class="sf-hint">Year and exact date combine as a range. Leave empty for any date.</p>
+        </div>
+
+        <div class="sf-section">
+          <h4 class="sf-section-title">Library &amp; Editions</h4>
+          <div class="sf-grid sf-grid--2">
+            <label class="sf-field">
+              <span class="sf-label">Collection</span>
+              <select id="sfInLibrary">
+                <option value="">All games</option>
+                <option value="owned">In my library</option>
+                <option value="not_owned">Not in library</option>
+              </select>
+            </label>
+            <label class="sf-field" id="sfLibraryStatusWrap" style="display:none">
+              <span class="sf-label">Status</span>
+              <select id="sfLibraryStatus">
+                <option value="">Any status</option>
+                <option value="wishlist">Wishlist</option>
+                <option value="backlog">Backlog</option>
+                <option value="playing">Playing</option>
+                <option value="completed">Completed</option>
+                <option value="abandoned">Abandoned</option>
+              </select>
+            </label>
+          </div>
+          <label class="sf-check"><input id="sfEditions" type="checkbox"> <span>Include editions &amp; packs</span></label>
+        </div>
+
+        <div class="sf-actions">
+          <button id="sfClear" class="btn btn-secondary" type="button">Clear</button>
+          <button id="sfApply" class="btn btn-primary" type="button">Apply filters</button>
+        </div>
       </div>
     </details>`;
 }
@@ -370,6 +414,35 @@ function wireSearchFilterBar(header, query) {
   if (libraryStatus) libraryStatus.value = searchFilters.libraryStatus;
   if (libraryStatusWrap) libraryStatusWrap.style.display = searchFilters.inLibrary === 'owned' ? '' : 'none';
   if (editions) editions.checked = !!searchFilters.includeEditions;
+
+  const updateSearchBadge = () => {
+    const badge = header.querySelector('#sfBadge');
+    if (!badge) return;
+    const cur = {
+      sort: sortSel.value,
+      yearFrom: yearFrom.value.trim(),
+      yearTo: yearTo.value.trim(),
+      releaseFrom: releaseFrom ? releaseFrom.value.trim() : '',
+      releaseTo: releaseTo ? releaseTo.value.trim() : '',
+      minRating: minRating.value,
+      platform: platformEl ? platformEl.value.trim() : '',
+      tags: tagsEl ? tagsEl.value.trim() : '',
+      inLibrary: inLibrary ? inLibrary.value : '',
+      libraryStatus: libraryStatus ? libraryStatus.value : '',
+      editions: editions && editions.checked ? '1' : '',
+    };
+    const n = Object.values(cur).filter(Boolean).length;
+    badge.textContent = n;
+    badge.hidden = n === 0;
+    badge.setAttribute('aria-label', n ? `${n} filters active` : '');
+  };
+  updateSearchBadge();
+  // Live badge as user edits
+  [sortSel, yearFrom, yearTo, releaseFrom, releaseTo, minRating, platformEl, tagsEl, inLibrary, libraryStatus, editions].forEach(el => {
+    if (!el) return;
+    el.addEventListener('input', updateSearchBadge);
+    el.addEventListener('change', updateSearchBadge);
+  });
 
   // Populate datalists for platform/tags (best-effort).
   if (platformEl) {
@@ -481,36 +554,58 @@ function wireSearchFilterBar(header, query) {
 // --- library filter bar (release date range + platform/tags) ----------------
 
 // buildLibraryFilterBarHTML renders a collapsible filter bar for the library
-// view. It mirrors the search filter bar but without sort/rating/library
-// options — status is already the tabs, and rating is personal. Tags and
-// platform are offered as explicit inputs in addition to the $/@ prefixes.
+// view. Grouped, mobile-friendly layout mirroring the search filter.
 function buildLibraryFilterBarHTML() {
   return `
     <details class="search-filterbar library-filterbar" id="libraryFilterBar">
-      <summary>Filter</summary>
-      <div class="sf-controls">
-        <label>Platform
-          <input id="lfPlatform" type="text" placeholder="e.g. Switch, PC" autocomplete="off" list="lfPlatformList">
-          <datalist id="lfPlatformList"></datalist>
-        </label>
-        <label>Tags
-          <input id="lfTags" type="text" placeholder='e.g. rpg "co-op"' autocomplete="off" list="lfTagsList">
-          <datalist id="lfTagsList"></datalist>
-        </label>
-        <label>Year from
-          <input id="lfYearFrom" type="number" min="1900" max="2100" inputmode="numeric" placeholder="1994">
-        </label>
-        <label>to
-          <input id="lfYearTo" type="number" min="1900" max="2100" inputmode="numeric" placeholder="2024">
-        </label>
-        <label>Release from
-          <input id="lfReleaseFrom" type="date">
-        </label>
-        <label>to
-          <input id="lfReleaseTo" type="date">
-        </label>
-        <button id="lfApply" class="btn btn-primary btn-inline" type="button">Apply</button>
-        <button id="lfClear" class="btn btn-secondary btn-inline" type="button">Clear</button>
+      <summary>
+        <span class="sf-summary-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg></span>
+        <span>Filter library</span>
+        <span class="sf-badge" id="lfBadge" hidden>0</span>
+        <span class="sf-chevron" aria-hidden="true"></span>
+      </summary>
+      <div class="sf-panel">
+        <div class="sf-section">
+          <h4 class="sf-section-title">Platform &amp; Tags</h4>
+          <div class="sf-grid sf-grid--2">
+            <label class="sf-field">
+              <span class="sf-label">Platform</span>
+              <input id="lfPlatform" type="text" placeholder="e.g. Switch, PC" autocomplete="off" list="lfPlatformList" inputmode="search">
+              <datalist id="lfPlatformList"></datalist>
+            </label>
+            <label class="sf-field">
+              <span class="sf-label">Tags</span>
+              <input id="lfTags" type="text" placeholder='e.g. rpg "co-op"' autocomplete="off" list="lfTagsList" inputmode="search">
+              <datalist id="lfTagsList"></datalist>
+            </label>
+          </div>
+          <p class="sf-hint">Space = AND, <code>|</code> = OR, quotes for multi-word tags.</p>
+        </div>
+        <div class="sf-section">
+          <h4 class="sf-section-title">Release Date</h4>
+          <div class="sf-grid sf-grid--range">
+            <label class="sf-field">
+              <span class="sf-label">Year from</span>
+              <input id="lfYearFrom" type="number" min="1900" max="2100" inputmode="numeric" placeholder="1994">
+            </label>
+            <label class="sf-field">
+              <span class="sf-label">Year to</span>
+              <input id="lfYearTo" type="number" min="1900" max="2100" inputmode="numeric" placeholder="2024">
+            </label>
+            <label class="sf-field">
+              <span class="sf-label">Exact from</span>
+              <input id="lfReleaseFrom" type="date">
+            </label>
+            <label class="sf-field">
+              <span class="sf-label">Exact to</span>
+              <input id="lfReleaseTo" type="date">
+            </label>
+          </div>
+        </div>
+        <div class="sf-actions">
+          <button id="lfClear" class="btn btn-secondary" type="button">Clear</button>
+          <button id="lfApply" class="btn btn-primary" type="button">Apply</button>
+        </div>
       </div>
     </details>`;
 }
@@ -530,6 +625,28 @@ function wireLibraryFilterBar(bar) {
   ytEl.value = libraryFilters.yearTo;
   rfEl.value = libraryFilters.releaseFrom;
   rtEl.value = libraryFilters.releaseTo;
+
+  const updateLibraryBadge = () => {
+    const badge = bar.querySelector('#lfBadge');
+    if (!badge) return;
+    const n = [
+      platEl.value.trim(),
+      tagsEl.value.trim(),
+      yfEl.value.trim(),
+      ytEl.value.trim(),
+      rfEl.value.trim(),
+      rtEl.value.trim(),
+    ].filter(v => String(v||'').trim()).length;
+    badge.textContent = n;
+    badge.hidden = n === 0;
+    badge.setAttribute('aria-label', n ? `${n} filters active` : '');
+  };
+  updateLibraryBadge();
+  // Live badge update as user types
+  [platEl, tagsEl, yfEl, ytEl, rfEl, rtEl].forEach(el => {
+    el.addEventListener('input', updateLibraryBadge);
+    el.addEventListener('change', updateLibraryBadge);
+  });
 
   // Datalists
   const platList = bar.querySelector('#lfPlatformList');
@@ -604,6 +721,12 @@ function ensureLibraryFilterBar() {
     if (ytEl) ytEl.value = libraryFilters.yearTo || paginationState.yearTo || '';
     if (rfEl) rfEl.value = libraryFilters.releaseFrom || paginationState.releaseFrom || '';
     if (rtEl) rtEl.value = libraryFilters.releaseTo || paginationState.releaseTo || '';
+    const badge = bar.querySelector('#lfBadge');
+    if (badge) {
+      const n = [platEl?.value.trim(), tagsEl?.value.trim(), yfEl?.value.trim(), ytEl?.value.trim(), rfEl?.value.trim(), rtEl?.value.trim()].filter(v => v).length;
+      badge.textContent = n;
+      badge.hidden = n === 0;
+    }
     return bar;
   }
   const statusTabs = document.getElementById('statusTabs');
