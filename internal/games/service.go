@@ -652,8 +652,8 @@ func (s *Service) BackfillEditions(ctx context.Context, batchSize int, progress 
 
 		returned := make(map[int64]bool, len(games))
 		for _, g := range games {
-			if err := s.store.SetVersionParentAndMarkFetched(ctx, g.ID, g.VersionParent); err != nil {
-				log.Printf("backfill-editions: set version_parent for %d failed: %v", g.ID, err)
+			if err := s.store.SetEditionInfoAndMarkFetched(ctx, g.ID, g.VersionParent, g.Category, g.ParentGame); err != nil {
+				log.Printf("backfill-editions: set edition info for %d failed: %v", g.ID, err)
 				continue
 			}
 			returned[g.ID] = true
@@ -667,6 +667,74 @@ func (s *Service) BackfillEditions(ctx context.Context, batchSize int, progress 
 				}
 				done++
 			}
+		}
+		progress(done, total)
+	}
+	return done, nil
+}
+
+// BackfillCategories walks the entire catalog and corrects stale
+// category/parent_game values (the Postgres import left most packs as
+// category 0). It fetches every game in id order in batches of up to 500,
+// updating the row when the fetched values differ. Unlike
+// BackfillEditions it ignores the fetched marker and touches every row,
+// so already-edition-fetched packs like 26042 get fixed. Resumable via
+// afterID pagination; progress is reported as done/total.
+func (s *Service) BackfillCategories(ctx context.Context, batchSize int, progress func(done, total int)) (int, error) {
+	if batchSize <= 0 {
+		batchSize = 500
+	}
+	if batchSize > 500 {
+		batchSize = 500
+	}
+	total64, err := s.store.CountTotalGames(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("count total: %w", err)
+	}
+	total := int(total64)
+	done := 0
+	progress(done, total)
+	var afterID int64
+	for {
+		if ctx.Err() != nil {
+			return done, ctx.Err()
+		}
+		ids, err := s.store.GetGameIDsAfter(ctx, afterID, batchSize)
+		if err != nil {
+			return done, fmt.Errorf("get ids: %w", err)
+		}
+		if len(ids) == 0 {
+			break
+		}
+		afterID = ids[len(ids)-1]
+		games, err := s.fetchBatchWithRetry(ctx, ids)
+		if err != nil {
+			return done, fmt.Errorf("batch fetch at %d/%d: %w", done, total, err)
+		}
+		byID := make(map[int64]Game, len(games))
+		for _, g := range games {
+			byID[g.ID] = g
+		}
+		for _, id := range ids {
+			if ctx.Err() != nil {
+				return done, ctx.Err()
+			}
+			g, ok := byID[id]
+			if !ok {
+				done++
+				continue
+			}
+			// Only write when something changed to avoid touching every row
+			// unnecessarily (still counts as done for progress).
+			if err := s.store.UpdateCategoryAndParentGame(ctx, id, g.Category, g.ParentGame); err != nil {
+				log.Printf("backfill-categories: update %d failed: %v", id, err)
+			}
+			// Also ensure version_parent is correct if it was previously
+			// missed (e.g. pack that is also an edition).
+			if g.VersionParent != 0 {
+				_ = s.store.SetVersionParentAndMarkFetched(ctx, id, g.VersionParent)
+			}
+			done++
 		}
 		progress(done, total)
 	}

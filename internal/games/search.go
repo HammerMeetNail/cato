@@ -67,6 +67,57 @@ func ContainsEditionKeyword(normalized string) bool {
 	return false
 }
 
+// PackPhrases are normalized substrings that indicate an explicit search
+// for a pack/skin/bundle addon (IGDB game_type 13 pack, 3 bundle, etc).
+// Like editions, these are hidden by default unless the query asks for them
+// or the includeEditions toggle is on.
+var PackPhrases = []string{
+	"skin",
+	"skins",
+	"pack",
+	"bundle",
+	"costume",
+	"outfit",
+}
+
+// ContainsPackKeyword reports whether the already-normalized query
+// explicitly asks for a pack/skin/bundle.
+func ContainsPackKeyword(normalized string) bool {
+	fields := strings.Fields(normalized)
+	fieldSet := make(map[string]bool, len(fields))
+	for _, f := range fields {
+		fieldSet[f] = true
+	}
+	for _, p := range PackPhrases {
+		if strings.Contains(p, " ") {
+			if strings.Contains(normalized, p) {
+				return true
+			}
+		} else {
+			if fieldSet[p] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// AllowedCategories are the game_type values kept when editions/packs are
+// hidden: main (0), DLC (1), expansion (2), standalone_expansion (4),
+// remake (8), remaster (9), expanded_game (10), port (11). Everything
+// else (bundle 3, mod 5, episode 6, season 7, fork 12, pack 13, update 14)
+// is hidden as misc add-on.
+var AllowedCategories = map[int64]bool{
+	0:  true,
+	1:  true,
+	2:  true,
+	4:  true,
+	8:  true,
+	9:  true,
+	10: true,
+	11: true,
+}
+
 // fts5SpecialChars are characters FTS5 treats as part of its query syntax.
 // We strip them so user input can't accidentally construct a malformed or
 // overly-broad MATCH expression. See https://www.sqlite.org/fts5.html#full_text_query_syntax.

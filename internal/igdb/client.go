@@ -62,9 +62,11 @@ type igdbGame struct {
 	Follows               int64         `json:"follows"`
 	Hypes                 int64         `json:"hypes"`
 	Category              int64         `json:"category"`
+	GameType              int64         `json:"game_type"`
 	Status                int64         `json:"status"`
 	VersionParent         int64         `json:"version_parent"`
 	VersionTitle          string        `json:"version_title"`
+	ParentGame            int64         `json:"parent_game"`
 }
 
 // igdbFields is the IGDB API v4 fields clause requested on every games query.
@@ -85,7 +87,7 @@ type igdbGame struct {
 // follows, hypes, total_rating_count, category, and status. Do not add
 // `popularity` back to this list without first verifying via the
 // /popularity endpoint integration.
-const igdbFields = "id,name,slug,summary,storyline,cover.id,cover.image_id,alternative_names.name,first_release_date,aggregated_rating,aggregated_rating_count,platforms,genres,url,updated_at,rating,rating_count,total_rating,total_rating_count,follows,hypes,category,status,version_parent"
+const igdbFields = "id,name,slug,summary,storyline,cover.id,cover.image_id,alternative_names.name,first_release_date,aggregated_rating,aggregated_rating_count,platforms,genres,url,updated_at,rating,rating_count,total_rating,total_rating_count,follows,hypes,category,game_type,status,version_parent,version_title,parent_game"
 
 func NewClient(clientID, clientSecret string) *Client {
 	return &Client{
@@ -103,13 +105,21 @@ func (c *Client) SearchGames(ctx context.Context, query string, limit int, inclu
 
 	c.rateLimiter.Wait()
 
-	// Hide IGDB editions by default: `version_parent != null` marks a
-	// deluxe/collector/GOTY edition. The filter is bypassed when the query
-	// itself explicitly asks for an edition or the caller opts in.
-	include := includeEditions || games.ContainsEditionKeyword(query)
+	// Hide IGDB editions/packs by default: `version_parent` marks
+	// deluxe/collector editions, `game_type` packs/skins (13) etc. Bypass
+	// when the query explicitly asks for them or the caller opts in.
+	editionInclude := includeEditions || games.ContainsEditionKeyword(query)
+	packInclude := includeEditions || games.ContainsPackKeyword(query)
+	var whereParts []string
+	if !editionInclude {
+		whereParts = append(whereParts, "version_parent = null")
+	}
+	if !packInclude {
+		whereParts = append(whereParts, "game_type = (0,1,2,4,8,9,10,11)")
+	}
 	where := ""
-	if !include {
-		where = " where version_parent = null;"
+	if len(whereParts) > 0 {
+		where = " where " + strings.Join(whereParts, " & ") + ";"
 	}
 	body := fmt.Sprintf(`search "%s"; fields %s;%s limit %d;`, query, igdbFields, where, limit)
 
@@ -173,9 +183,10 @@ func (c *Client) GetGamesBatch(ctx context.Context, ids []int64) ([]games.Game, 
 
 	c.rateLimiter.Wait()
 
-	// Include version_parent so the edition backfill can populate legacy
-	// rows without a separate endpoint. Harmless for alias/cover batches.
-	body := fmt.Sprintf(`where id = (%s); fields id,name,alternative_names.name,cover.id,cover.image_id,version_parent,version_title,category; limit %d;`,
+	// Include version_parent/category/parent_game so edition/pack backfills
+	// can correct legacy rows without a separate endpoint. Harmless for
+	// alias/cover batches.
+	body := fmt.Sprintf(`where id = (%s); fields id,name,alternative_names.name,cover.id,cover.image_id,version_parent,version_title,category,game_type,parent_game; limit %d;`,
 		strings.Join(strs, ","), len(ids))
 
 	igdbGames, err := c.post(ctx, "games", body)
@@ -261,13 +272,21 @@ func (c *Client) toGame(g igdbGame) games.Game {
 		Follows:               g.Follows,
 		Hypes:                 g.Hypes,
 		IGDBPopularity:        0,
-		Category:              g.Category,
+		Category:              gameCategory(g),
 		Status:                g.Status,
 		VersionParent:         g.VersionParent,
+		ParentGame:            g.ParentGame,
 		PopularityScore: games.ComputePopularityScore(
-			g.Follows, g.Hypes, g.TotalRatingCount, g.Category, g.Status,
+			g.Follows, g.Hypes, g.TotalRatingCount, gameCategory(g), g.Status,
 		),
 	}
+}
+
+func gameCategory(g igdbGame) int64 {
+	if g.GameType != 0 {
+		return g.GameType
+	}
+	return g.Category
 }
 
 func (c *Client) authenticate(ctx context.Context) error {

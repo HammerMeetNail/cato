@@ -13,6 +13,17 @@ type Migration struct {
 
 var migrations = []Migration{
 	{
+		Version: 13,
+		// Pack/skin hiding: parent_game links DLC/packs to their main game,
+		// and category (now synced from IGDB game_type) distinguishes packs
+		// (13) from true DLC (1)/expansions (2). Search hides packs/mods
+		// etc by default alongside version_parent editions. Backfill corrects
+		// stale category=0 rows (import never set it).
+		Up: `ALTER TABLE games ADD COLUMN parent_game INTEGER NOT NULL DEFAULT 0;
+		     CREATE INDEX IF NOT EXISTS idx_games_parent_game ON games(parent_game);
+		     CREATE INDEX IF NOT EXISTS idx_games_category ON games(category);`,
+	},
+	{
 		Version: 12,
 		// Edition hiding: version_parent marks IGDB edition/version rows
 		// (IGDB "Deluxe Edition", "GOTY", etc. where version_parent != 0).

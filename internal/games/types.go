@@ -31,6 +31,7 @@ type Game struct {
 	Category              int64   `json:"category"`
 	Status                int64   `json:"status"`
 	VersionParent         int64   `json:"version_parent"`
+	ParentGame            int64   `json:"parent_game"`
 	PopularityScore       int64   `json:"popularity_score"`
 
 	// Aliases carries IGDB alternative_names (abbreviations, localized

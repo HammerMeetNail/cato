@@ -222,6 +222,9 @@ func buildFilterWhere(b *strings.Builder, args *[]interface{}, o searchOptions, 
 	if !o.includeEditions && !ContainsEditionKeyword(query) {
 		conds = append(conds, `g.version_parent = 0`)
 	}
+	if !o.includeEditions && !ContainsPackKeyword(query) {
+		conds = append(conds, `g.category IN (0,1,2,4,8,9,10,11)`)
+	}
 	if len(conds) == 0 {
 		return
 	}
@@ -331,7 +334,7 @@ func (s *Store) GetByID(ctx context.Context, id int64) (*Game, error) {
 		cover_id, cover_url, local_cover_path, first_release_date, aggregated_rating, aggregated_rating_count,
 		platforms_json, genres_json, trailer, igdb_url, source_updated_at,
 		rating, rating_count, total_rating, total_rating_count, follows, hypes, igdb_popularity,
-		category, status, version_parent, popularity_score
+		category, status, version_parent, parent_game, popularity_score
 		FROM games WHERE id = ?`, id).Scan(
 		&g.ID, &g.Name, &g.Slug, &g.SafeName, &g.NormalizedName,
 		&g.Summary, &g.Storyline, &g.CoverID, &g.CoverURL, &g.LocalCoverPath,
@@ -339,7 +342,7 @@ func (s *Store) GetByID(ctx context.Context, id int64) (*Game, error) {
 		&g.PlatformsJSON, &g.GenresJSON, &g.Trailer, &g.IGDBURL, &g.SourceUpdatedAt,
 		&g.Rating, &g.RatingCount, &g.TotalRating, &g.TotalRatingCount, &g.Follows,
 		&g.Hypes, &g.IGDBPopularity, &g.Category, &g.Status, &g.VersionParent,
-		&g.PopularityScore,
+		&g.ParentGame, &g.PopularityScore,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -369,9 +372,9 @@ func (s *Store) UpsertIGDBGame(ctx context.Context, g Game) error {
 		aggregated_rating_count, platforms_json, genres_json, trailer,
 		igdb_url, source_updated_at,
 		rating, rating_count, total_rating, total_rating_count, follows, hypes,
-		igdb_popularity, category, status, version_parent, popularity_score,
+		igdb_popularity, category, status, version_parent, parent_game, popularity_score,
 		popularity_fetched_at, aliases_fetched_at, version_parent_fetched_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		name = excluded.name,
 		slug = excluded.slug,
@@ -399,6 +402,7 @@ func (s *Store) UpsertIGDBGame(ctx context.Context, g Game) error {
 		category = excluded.category,
 		status = excluded.status,
 		version_parent = excluded.version_parent,
+		parent_game = excluded.parent_game,
 		popularity_score = excluded.popularity_score,
 		popularity_fetched_at = excluded.popularity_fetched_at,
 		aliases_fetched_at = excluded.aliases_fetched_at,
@@ -409,7 +413,7 @@ func (s *Store) UpsertIGDBGame(ctx context.Context, g Game) error {
 		g.PlatformsJSON, g.GenresJSON, g.Trailer, g.IGDBURL, g.SourceUpdatedAt,
 		g.Rating, g.RatingCount, g.TotalRating, g.TotalRatingCount, g.Follows,
 		g.Hypes, g.IGDBPopularity, g.Category, g.Status, g.VersionParent,
-		g.PopularityScore, now, now, now,
+		g.ParentGame, g.PopularityScore, now, now, now,
 	)
 	if err != nil {
 		return err
@@ -719,6 +723,56 @@ func (s *Store) SetVersionParentAndMarkFetched(ctx context.Context, gameID int64
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE games SET version_parent = ?, version_parent_fetched_at = ? WHERE id = ?`,
 		versionParent, time.Now().Unix(), gameID)
+	return err
+}
+
+// SetEditionInfoAndMarkFetched writes version_parent, category and
+// parent_game together and stamps the edition marker. Used when the batch
+// fetch returns the authoritative game_type/parent_game alongside
+// version_parent.
+func (s *Store) SetEditionInfoAndMarkFetched(ctx context.Context, gameID int64, versionParent, category, parentGame int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE games SET version_parent = ?, category = ?, parent_game = ?, version_parent_fetched_at = ? WHERE id = ?`,
+		versionParent, category, parentGame, time.Now().Unix(), gameID)
+	return err
+}
+
+// CountTotalGames returns the total number of games (for full backfills).
+func (s *Store) CountTotalGames(ctx context.Context) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM games`).Scan(&n)
+	return n, err
+}
+
+// GetGameIDsAfter returns up to `limit` game IDs after `afterID` (exclusive),
+// ordered by id. Used by full-catalog backfills that must touch every row
+// regardless of fetched markers.
+func (s *Store) GetGameIDsAfter(ctx context.Context, afterID int64, limit int) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id FROM games WHERE id > ? ORDER BY id ASC LIMIT ?`, afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// UpdateCategoryAndParentGame writes category and parent_game without
+// touching the edition marker. Used by the category backfill for rows
+// already marked as edition-fetched but with stale category.
+func (s *Store) UpdateCategoryAndParentGame(ctx context.Context, gameID int64, category, parentGame int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE games SET category = ?, parent_game = ? WHERE id = ?`,
+		category, parentGame, gameID)
 	return err
 }
 

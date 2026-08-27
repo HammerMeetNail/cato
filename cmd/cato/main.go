@@ -43,6 +43,10 @@ func main() {
 	editionBackfillDB := editionBackfillCmd.String("db", "data/cato.db", "SQLite database path")
 	editionBackfillBatch := editionBackfillCmd.Int("batch", 500, "game IDs per IGDB request (max 500)")
 
+	categoryBackfillCmd := flag.NewFlagSet("backfill-categories", flag.ExitOnError)
+	categoryBackfillDB := categoryBackfillCmd.String("db", "data/cato.db", "SQLite database path")
+	categoryBackfillBatch := categoryBackfillCmd.Int("batch", 500, "game IDs per IGDB request (max 500)")
+
 	if len(os.Args) >= 2 && os.Args[1] == "import-games" {
 		importCmd.Parse(os.Args[2:])
 		if *importInput == "" {
@@ -215,6 +219,46 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("backfill: fetched editions for %d games\n", done)
+		return
+	}
+
+	if len(os.Args) >= 2 && os.Args[1] == "backfill-categories" {
+		categoryBackfillCmd.Parse(os.Args[2:])
+		cfg := config.Load()
+		if cfg.IGDBClientID == "" {
+			fmt.Fprintln(os.Stderr, "backfill-categories requires IGDB_CLIENT_ID (or TWITCH_OAUTH_ID)")
+			os.Exit(1)
+		}
+		database, err := db.Open(*categoryBackfillDB)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "open db: %v\n", err)
+			os.Exit(1)
+		}
+		defer database.Close()
+		if err := db.Migrate(database); err != nil {
+			fmt.Fprintf(os.Stderr, "migrate: %v\n", err)
+			os.Exit(1)
+		}
+		store := games.NewStore(database)
+		igdbClient := igdb.NewClient(cfg.IGDBClientID, cfg.IGDBClientSecret)
+		svc := games.NewService(store, igdbClient, database)
+
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer cancel()
+
+		progress := func(done, total int) {
+			if total == 0 {
+				log.Printf("backfill: no pending rows")
+				return
+			}
+			log.Printf("backfill: %d/%d (%.1f%%)", done, total, 100*float64(done)/float64(total))
+		}
+		done, err := svc.BackfillCategories(ctx, *categoryBackfillBatch, progress)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "backfill stopped: %v (completed %d — safe to re-run)\n", err, done)
+			os.Exit(1)
+		}
+		fmt.Printf("backfill: corrected categories for %d games\n", done)
 		return
 	}
 

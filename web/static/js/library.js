@@ -265,7 +265,7 @@ function buildSearchFilterBarHTML() {
             <option value="95">95+</option>
           </select>
         </label>
-        <label class="sf-check"><input id="sfEditions" type="checkbox"> Include editions</label>
+        <label class="sf-check"><input id="sfEditions" type="checkbox"> Include editions &amp; packs</label>
         <button id="sfApply" class="btn btn-primary btn-inline" type="button">Apply</button>
         <button id="sfClear" class="btn btn-secondary btn-inline" type="button">Clear</button>
       </div>
