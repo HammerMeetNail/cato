@@ -55,13 +55,15 @@ func (h *GameHandler) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	includeEditions := parseIncludeEditions(r)
+
 	// Branch on full=1 for paginated full results vs. dropdown.
 	if r.URL.Query().Get("full") == "1" {
-		h.handleSearchFull(w, r, query)
+		h.handleSearchFull(w, r, query, includeEditions)
 		return
 	}
 
-	results, err := h.service.Search(r.Context(), query)
+	results, err := h.service.Search(r.Context(), query, includeEditions)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errResp("search_error", "Search failed"))
 		return
@@ -78,7 +80,7 @@ func (h *GameHandler) handleSearch(w http.ResponseWriter, r *http.Request) {
 // Optional sort/year_from/year_to/min_rating filters are applied server-side
 // (SEARCH_IMPROVEMENTS.md §4.4); the total match count is returned in
 // X-Total-Count, mirroring the library list endpoint's convention.
-func (h *GameHandler) handleSearchFull(w http.ResponseWriter, r *http.Request, query string) {
+func (h *GameHandler) handleSearchFull(w http.ResponseWriter, r *http.Request, query string, includeEditions bool) {
 	limit := 24
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
 		if parsed, err := strconv.Atoi(limitStr); err == nil {
@@ -122,6 +124,7 @@ func (h *GameHandler) handleSearchFull(w http.ResponseWriter, r *http.Request, q
 		parseYearParam(r.URL.Query().Get("year_to"), true),
 		parseMinRatingParam(r.URL.Query().Get("min_rating")),
 		platform,
+		includeEditions,
 	)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errResp("search_error", "Search failed"))
@@ -170,6 +173,16 @@ func parseMinRatingParam(raw string) int64 {
 	return n
 }
 
+func parseIncludeEditions(r *http.Request) bool {
+	for _, key := range []string{"include_editions", "editions", "includeEditions"} {
+		v := strings.ToLower(strings.TrimSpace(r.URL.Query().Get(key)))
+		if v == "1" || v == "true" || v == "yes" {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *GameHandler) handleGameByID(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, errResp("method_not_allowed", "Method not allowed"))
@@ -204,7 +217,7 @@ func (h *GameHandler) handleGameByID(w http.ResponseWriter, r *http.Request) {
 
 type noopIGDBClient struct{}
 
-func (c *noopIGDBClient) SearchGames(ctx context.Context, query string, limit int) ([]games.Game, error) {
+func (c *noopIGDBClient) SearchGames(ctx context.Context, query string, limit int, includeEditions bool) ([]games.Game, error) {
 	return nil, nil
 }
 

@@ -13,6 +13,18 @@ type Migration struct {
 
 var migrations = []Migration{
 	{
+		Version: 12,
+		// Edition hiding: version_parent marks IGDB edition/version rows
+		// (IGDB "Deluxe Edition", "GOTY", etc. where version_parent != 0).
+		// Search hides these by default (WHERE version_parent = 0) and the
+		// backfill populates legacy rows that were imported with 0. The
+		// marker column makes the backfill resumable; the index makes the
+		// hide filter an index scan.
+		Up: `ALTER TABLE games ADD COLUMN version_parent_fetched_at INTEGER NOT NULL DEFAULT 0;
+		     CREATE INDEX IF NOT EXISTS idx_games_version_parent ON games(version_parent);
+		     CREATE INDEX IF NOT EXISTS idx_games_version_parent_fetched ON games(version_parent_fetched_at) WHERE version_parent_fetched_at = 0;`,
+	},
+	{
 		Version: 11,
 		// Multi-platform ownership: a game can be owned on several consoles,
 		// so ownership becomes an array (same pattern as tags_json). The old

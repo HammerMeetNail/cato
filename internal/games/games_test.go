@@ -19,7 +19,7 @@ type fakeIGDB struct {
 	platformCalls int
 }
 
-func (f *fakeIGDB) SearchGames(ctx context.Context, query string, limit int) ([]Game, error) {
+func (f *fakeIGDB) SearchGames(ctx context.Context, query string, limit int, includeEditions bool) ([]Game, error) {
 	f.searchCalls++
 	if f.searchFunc != nil {
 		return f.searchFunc(ctx, query, limit)
@@ -118,7 +118,7 @@ func TestSearchCallsIGDBForNewQueryEvenWithLocalResults(t *testing.T) {
 	igdb := &fakeIGDB{}
 	svc := NewService(store, igdb, database)
 
-	results, err := svc.Search(context.Background(), "zelda")
+	results, err := svc.Search(context.Background(), "zelda", false)
 	if err != nil {
 		t.Fatalf("search failed: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestSearchCallsIGDBWhenLocalResultsAreWeak(t *testing.T) {
 	}
 	svc := NewService(store, igdb, database)
 
-	results, err := svc.Search(context.Background(), "only match")
+	results, err := svc.Search(context.Background(), "only match", false)
 	if err != nil {
 		t.Fatalf("search failed: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestSearchDoesNotCallIGDBForShortQueries(t *testing.T) {
 	svc := NewService(store, igdb, database)
 
 	// Query < 3 chars, even with 0 local results, IGDB should not be called
-	_, _ = svc.Search(context.Background(), "ab")
+	_, _ = svc.Search(context.Background(), "ab", false)
 	if igdb.searchCalls != 0 {
 		t.Errorf("expected no IGDB calls for query length < 3, got %d", igdb.searchCalls)
 	}
@@ -184,7 +184,7 @@ func TestSearchIGDBFailureDoesNotBreakLocal(t *testing.T) {
 	}
 	svc := NewService(store, igdb, database)
 
-	results, err := svc.Search(context.Background(), "only match")
+	results, err := svc.Search(context.Background(), "only match", false)
 	if err != nil {
 		t.Fatalf("search should not fail when IGDB fails: %v", err)
 	}
@@ -206,7 +206,7 @@ func TestSearchCachesIGDBAndSkipsOnRepeat(t *testing.T) {
 	}
 	svc := NewService(store, igdb, database)
 
-	results, err := svc.Search(context.Background(), "cached result")
+	results, err := svc.Search(context.Background(), "cached result", false)
 	if err != nil {
 		t.Fatalf("first search failed: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestSearchCachesIGDBAndSkipsOnRepeat(t *testing.T) {
 	}
 	_ = results
 
-	results2, err2 := svc.Search(context.Background(), "cached result")
+	results2, err2 := svc.Search(context.Background(), "cached result", false)
 	if err2 != nil {
 		t.Fatalf("second search failed: %v", err2)
 	}

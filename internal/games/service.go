@@ -12,7 +12,7 @@ import (
 )
 
 type IGDBClient interface {
-	SearchGames(ctx context.Context, query string, limit int) ([]Game, error)
+	SearchGames(ctx context.Context, query string, limit int, includeEditions bool) ([]Game, error)
 	GetGame(ctx context.Context, id int64) (*Game, error)
 	// GetGamesBatch fetches many games per rate-limited request (IGDB allows
 	// up to 500 ids/query), requesting only id/name/alternative_names.
@@ -36,23 +36,25 @@ func NewService(store *Store, igdb IGDBClient, db *db.DB) *Service {
 	}
 }
 
-func (s *Service) Search(ctx context.Context, query string) ([]GameResult, error) {
+func (s *Service) Search(ctx context.Context, query string, includeEditions bool) ([]GameResult, error) {
 	query = NormalizeName(query)
 	if len(query) < 2 {
 		return nil, nil
 	}
 
-	local, err := s.store.SearchLocal(ctx, query, 10)
+	effectiveInclude := includeEditions || ContainsEditionKeyword(query)
+
+	local, err := s.store.SearchLocalWithEditions(ctx, query, 10, effectiveInclude)
 	if err != nil {
 		return nil, err
 	}
-	if !s.shouldAskIGDB(query) {
+	if !s.shouldAskIGDB(query, effectiveInclude) {
 		return local, nil
 	}
 
-	s.refreshFromIGDB(ctx, query)
+	s.refreshFromIGDB(ctx, query, effectiveInclude)
 
-	return s.store.SearchLocal(ctx, query, 10)
+	return s.store.SearchLocalWithEditions(ctx, query, 10, effectiveInclude)
 }
 
 // SearchPaged performs a paginated search with a relevance floor applied to
@@ -60,7 +62,7 @@ func (s *Service) Search(ctx context.Context, query string) ([]GameResult, error
 // it runs the IGDB live fallback before returning results; on deeper pages,
 // it returns pure local DB results (no IGDB hammering).
 func (s *Service) SearchPaged(ctx context.Context, query string, limit, offset int) ([]GameResult, error) {
-	results, _, err := s.SearchPagedFull(ctx, query, limit, offset, "", 0, 0, 0, "")
+	results, _, err := s.SearchPagedFull(ctx, query, limit, offset, "", 0, 0, 0, "", false)
 	return results, err
 }
 
@@ -70,21 +72,24 @@ func (s *Service) SearchPaged(ctx context.Context, query string, limit, offset i
 // a platform name/abbreviation) restricts to games available on it. As in
 // SearchPaged, the IGDB live fallback runs on page 1 only; deeper pages are
 // pure local queries.
-func (s *Service) SearchPagedFull(ctx context.Context, query string, limit, offset int, sort string, yearFrom, yearTo, minRating int64, platform string) ([]GameResult, int64, error) {
+func (s *Service) SearchPagedFull(ctx context.Context, query string, limit, offset int, sort string, yearFrom, yearTo, minRating int64, platform string, includeEditions bool) ([]GameResult, int64, error) {
 	query = NormalizeName(query)
 	if len(query) < 2 {
 		return nil, 0, nil
 	}
 
+	effectiveInclude := includeEditions || ContainsEditionKeyword(query)
+
 	opts := func() searchOptions {
 		return searchOptions{
-			limit:     limit,
-			offset:    offset,
-			sort:      sort,
-			yearFrom:  yearFrom,
-			yearTo:    yearTo,
-			minRating: minRating,
-			platform:  platform,
+			limit:           limit,
+			offset:          offset,
+			sort:            sort,
+			yearFrom:        yearFrom,
+			yearTo:          yearTo,
+			minRating:       minRating,
+			platform:        platform,
+			includeEditions: effectiveInclude,
 		}
 	}
 
@@ -94,12 +99,12 @@ func (s *Service) SearchPagedFull(ctx context.Context, query string, limit, offs
 	}
 
 	// Only ask IGDB on page 1 and only if the query is long enough and not cached.
-	if offset > 0 || !s.shouldAskIGDB(query) {
+	if offset > 0 || !s.shouldAskIGDB(query, effectiveInclude) {
 		return local, total, nil
 	}
 
 	// Page 1: refresh from IGDB, then re-query locally.
-	s.refreshFromIGDB(ctx, query)
+	s.refreshFromIGDB(ctx, query, effectiveInclude)
 
 	return s.store.SearchGamesPaged(ctx, query, opts())
 }
@@ -107,8 +112,8 @@ func (s *Service) SearchPagedFull(ctx context.Context, query string, limit, offs
 // refreshFromIGDB fetches a query from IGDB, upserts all results, and records
 // the search in the cache. (The per-game "igdb:" cache entries the old version
 // also wrote were never read by anything — removed.)
-func (s *Service) refreshFromIGDB(ctx context.Context, query string) {
-	remote, err := s.igdb.SearchGames(ctx, query, 10)
+func (s *Service) refreshFromIGDB(ctx context.Context, query string, includeEditions bool) {
+	remote, err := s.igdb.SearchGames(ctx, query, 10, includeEditions)
 	if err != nil {
 		return
 	}
@@ -122,7 +127,7 @@ func (s *Service) refreshFromIGDB(ctx context.Context, query string) {
 		}
 	}
 
-	cacheSearchResultsDB(ctx, s.db, query, remote)
+	cacheSearchResultsDB(ctx, s.db, query, remote, includeEditions)
 }
 
 func (s *Service) GetGame(ctx context.Context, id int64) (*Game, error) {
@@ -607,6 +612,67 @@ func (s *Service) BackfillAliases(ctx context.Context, batchSize int, progress f
 	return done, nil
 }
 
+// BackfillEditions populates version_parent for every catalog row in bulk,
+// fetching up to `batchSize` (max 500) games per rate-limited request.
+// Resumable via version_parent_fetched_at — each processed row gets the
+// marker stamped, including rows IGDB no longer knows, so re-running skips
+// done rows. Like BackfillAliases it never touches other game columns.
+func (s *Service) BackfillEditions(ctx context.Context, batchSize int, progress func(done, total int)) (int, error) {
+	if batchSize <= 0 {
+		batchSize = 500
+	}
+	if batchSize > 500 {
+		batchSize = 500
+	}
+
+	pending, err := s.store.CountPendingEditionBackfill(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("count pending: %w", err)
+	}
+	total := int(pending)
+	done := 0
+	progress(done, total)
+
+	for {
+		if ctx.Err() != nil {
+			return done, ctx.Err()
+		}
+		ids, err := s.store.GetEditionBackfillCandidates(ctx, batchSize)
+		if err != nil {
+			return done, fmt.Errorf("get candidates: %w", err)
+		}
+		if len(ids) == 0 {
+			break
+		}
+
+		games, err := s.fetchBatchWithRetry(ctx, ids)
+		if err != nil {
+			return done, fmt.Errorf("batch fetch at %d/%d: %w", done, total, err)
+		}
+
+		returned := make(map[int64]bool, len(games))
+		for _, g := range games {
+			if err := s.store.SetVersionParentAndMarkFetched(ctx, g.ID, g.VersionParent); err != nil {
+				log.Printf("backfill-editions: set version_parent for %d failed: %v", g.ID, err)
+				continue
+			}
+			returned[g.ID] = true
+			done++
+		}
+		for _, id := range ids {
+			if !returned[id] {
+				if err := s.store.MarkEditionFetched(ctx, id); err != nil {
+					log.Printf("backfill-editions: mark %d failed: %v", id, err)
+					continue
+				}
+				done++
+			}
+		}
+		progress(done, total)
+	}
+	return done, nil
+}
+
 func (s *Service) refreshStaleGames(maxPerDay int) {
 	ctx := context.Background()
 
@@ -654,8 +720,8 @@ func (s *Service) refreshStaleGames(maxPerDay int) {
 	log.Printf("stale refresh: refreshed %d/%d games", refreshed, len(ids))
 }
 
-func (s *Service) shouldAskIGDB(query string) bool {
-	cached, err := getCachedSearchDB(context.Background(), s.db, query)
+func (s *Service) shouldAskIGDB(query string, includeEditions bool) bool {
+	cached, err := getCachedSearchDB(context.Background(), s.db, query, includeEditions)
 	if err == nil && cached {
 		return false
 	}
@@ -674,20 +740,22 @@ func PurgeExpiredQueryCache(database *db.DB) (int64, error) {
 	return res.RowsAffected()
 }
 
-func cacheSearchResultsDB(ctx context.Context, db *db.DB, query string, games []Game) {
+func cacheSearchResultsDB(ctx context.Context, db *db.DB, query string, games []Game, includeEditions bool) {
 	if len(games) == 0 {
 		return
 	}
 	data, _ := json.Marshal(map[string]interface{}{"query": query, "cached": true})
+	key := cacheKey(query, includeEditions)
 	db.ExecContext(ctx, `INSERT OR REPLACE INTO igdb_query_cache (normalized_query, response_json, expires_at)
-		VALUES (?, ?, ?)`, "search:"+query, string(data), time.Now().Add(24*time.Hour).Format(time.RFC3339))
+		VALUES (?, ?, ?)`, key, string(data), time.Now().Add(24*time.Hour).Format(time.RFC3339))
 }
 
-func getCachedSearchDB(ctx context.Context, db *db.DB, query string) (bool, error) {
+func getCachedSearchDB(ctx context.Context, db *db.DB, query string, includeEditions bool) (bool, error) {
+	key := cacheKey(query, includeEditions)
 	var expiresAt string
 	err := db.QueryRowContext(ctx,
 		"SELECT expires_at FROM igdb_query_cache WHERE normalized_query = ?",
-		"search:"+query).Scan(&expiresAt)
+		key).Scan(&expiresAt)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}
@@ -699,8 +767,15 @@ func getCachedSearchDB(ctx context.Context, db *db.DB, query string) (bool, erro
 		return false, nil
 	}
 	if time.Now().After(t) {
-		db.ExecContext(ctx, "DELETE FROM igdb_query_cache WHERE normalized_query = ?", "search:"+query)
+		db.ExecContext(ctx, "DELETE FROM igdb_query_cache WHERE normalized_query = ?", key)
 		return false, nil
 	}
 	return true, nil
+}
+
+func cacheKey(query string, includeEditions bool) string {
+	if includeEditions {
+		return "search:" + query + ":editions"
+	}
+	return "search:" + query
 }

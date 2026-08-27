@@ -13,6 +13,60 @@ func NormalizeName(input string) string {
 	return strings.Join(fields, " ")
 }
 
+// EditionPhrases are normalized substrings that indicate an explicit
+// search for an edition/version (IGDB version_parent). When a query contains
+// one of these, the default edition hiding is bypassed — e.g. searching
+// "batman deluxe edition" should return the deluxe edition even though
+// "batman" alone hides editions. Single-word entries (deluxe, goty, etc.)
+// are matched on word boundaries to avoid false positives like "golden".
+var EditionPhrases = []string{
+	"deluxe edition",
+	"deluxe",
+	"collectors edition",
+	"collector edition",
+	"collectors",
+	"collector",
+	"complete edition",
+	"definitive edition",
+	"definitive",
+	"game of the year edition",
+	"game of the year",
+	"goty edition",
+	"goty",
+	"ultimate edition",
+	"gold edition",
+	"premium edition",
+	"special edition",
+	"limited edition",
+	"legendary edition",
+	"enhanced edition",
+	"anniversary edition",
+	"anniversary",
+	"directors cut",
+}
+
+// ContainsEditionKeyword reports whether the already-normalized query
+// explicitly asks for an edition.
+func ContainsEditionKeyword(normalized string) bool {
+	fields := strings.Fields(normalized)
+	fieldSet := make(map[string]bool, len(fields))
+	for _, f := range fields {
+		fieldSet[f] = true
+	}
+	for _, p := range EditionPhrases {
+		if strings.Contains(p, " ") {
+			if strings.Contains(normalized, p) {
+				return true
+			}
+		} else {
+			if fieldSet[p] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // fts5SpecialChars are characters FTS5 treats as part of its query syntax.
 // We strip them so user input can't accidentally construct a malformed or
 // overly-broad MATCH expression. See https://www.sqlite.org/fts5.html#full_text_query_syntax.

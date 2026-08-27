@@ -517,6 +517,19 @@ a { color: var(--accent); text-decoration: none; }
   border-radius: 6px;
 }
 
+.sf-controls .sf-check {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+}
+
+.sf-controls .sf-check input {
+  min-width: auto;
+  width: 16px;
+  height: 16px;
+}
+
 .sf-controls .btn-inline { padding: 6px 14px; font-size: 0.85rem; }
 
 /* Tag autocomplete in search dropdown */

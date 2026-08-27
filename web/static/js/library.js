@@ -79,7 +79,7 @@ let scrollListenerAttached = false;
 
 // Active sort/filters for search mode (SEARCH_IMPROVEMENTS.md §5). Scoped to
 // one query: switching searches resets them.
-const searchFilters = { sort: '', yearFrom: '', yearTo: '', minRating: '' };
+const searchFilters = { sort: '', yearFrom: '', yearTo: '', minRating: '', includeEditions: false };
 let searchFiltersQuery = '';
 
 function resetSearchFilters(query) {
@@ -89,6 +89,7 @@ function resetSearchFilters(query) {
   searchFilters.yearFrom = '';
   searchFilters.yearTo = '';
   searchFilters.minRating = '';
+  searchFilters.includeEditions = false;
 }
 
 // itemsById indexes the currently rendered library items by game_id so that a
@@ -223,6 +224,7 @@ function filterParams() {
   if (searchFilters.yearFrom) p.yearFrom = Number(searchFilters.yearFrom);
   if (searchFilters.yearTo) p.yearTo = Number(searchFilters.yearTo);
   if (searchFilters.minRating) p.minRating = Number(searchFilters.minRating);
+  if (searchFilters.includeEditions) p.includeEditions = true;
   return p;
 }
 
@@ -263,6 +265,7 @@ function buildSearchFilterBarHTML() {
             <option value="95">95+</option>
           </select>
         </label>
+        <label class="sf-check"><input id="sfEditions" type="checkbox"> Include editions</label>
         <button id="sfApply" class="btn btn-primary btn-inline" type="button">Apply</button>
         <button id="sfClear" class="btn btn-secondary btn-inline" type="button">Clear</button>
       </div>
@@ -276,12 +279,14 @@ function wireSearchFilterBar(header, query) {
   const yearFrom = header.querySelector('#sfYearFrom');
   const yearTo = header.querySelector('#sfYearTo');
   const minRating = header.querySelector('#sfMinRating');
+  const editions = header.querySelector('#sfEditions');
   if (!sortSel) return;
 
   sortSel.value = searchFilters.sort;
   yearFrom.value = searchFilters.yearFrom;
   yearTo.value = searchFilters.yearTo;
   minRating.value = searchFilters.minRating;
+  if (editions) editions.checked = !!searchFilters.includeEditions;
 
   const apply = () => {
     const clampYear = (v) => {
@@ -292,14 +297,17 @@ function wireSearchFilterBar(header, query) {
     searchFilters.yearFrom = clampYear(yearFrom.value);
     searchFilters.yearTo = clampYear(yearTo.value);
     searchFilters.minRating = minRating.value;
+    searchFilters.includeEditions = !!(editions && editions.checked);
     loadSearchResults(query);
   };
   header.querySelector('#sfApply').addEventListener('click', apply);
+  if (editions) editions.addEventListener('change', apply);
   header.querySelector('#sfClear').addEventListener('click', () => {
     sortSel.value = '';
     yearFrom.value = '';
     yearTo.value = '';
     minRating.value = '';
+    if (editions) editions.checked = false;
     apply();
   });
 }

@@ -125,7 +125,7 @@ func TestSyncPlatforms(t *testing.T) {
 
 	// Curated shortnames are applied by SyncPlatforms: the Switch 2 game is
 	// findable by "sw2" even though IGDB's abbreviation is "Switch 2".
-	_, total, err := svc.SearchPagedFull(ctx, "title", 10, 0, "", 0, 0, 0, "sw2")
+	_, total, err := svc.SearchPagedFull(ctx, "title", 10, 0, "", 0, 0, 0, "sw2", false)
 	if err != nil || total != 1 {
 		t.Errorf("shortname filter sw2: total=%d err=%v, want 1", total, err)
 	}
@@ -212,7 +212,7 @@ func TestSearchPlatformFilter(t *testing.T) {
 	}
 
 	// Substring match against resolved names ("switch" hits both Switches).
-	_, total, err := svc.SearchPagedFull(ctx, "mario", 10, 0, "", 0, 0, 0, "switch")
+	_, total, err := svc.SearchPagedFull(ctx, "mario", 10, 0, "", 0, 0, 0, "switch", false)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -221,36 +221,36 @@ func TestSearchPlatformFilter(t *testing.T) {
 	}
 
 	// Curated shortname match ("win" → PC even though IGDB's abbr is "PC").
-	_, total, err = svc.SearchPagedFull(ctx, "celeste", 10, 0, "", 0, 0, 0, "win")
+	_, total, err = svc.SearchPagedFull(ctx, "celeste", 10, 0, "", 0, 0, 0, "win", false)
 	if err != nil || total != 1 {
 		t.Errorf("abbrev filter: total=%d err=%v, want 1", total, err)
 	}
 
 	// Gamer-style codes: sw2/switch2 → Nintendo Switch 2 (Celeste), xsx →
 	// Xbox Series X|S.
-	_, total, err = svc.SearchPagedFull(ctx, "celeste", 10, 0, "", 0, 0, 0, "sw2")
+	_, total, err = svc.SearchPagedFull(ctx, "celeste", 10, 0, "", 0, 0, 0, "sw2", false)
 	if err != nil || total != 1 {
 		t.Errorf("shortname sw2: total=%d err=%v, want 1", total, err)
 	}
-	_, total, err = svc.SearchPagedFull(ctx, "xbox exclusive", 10, 0, "", 0, 0, 0, "xsx")
+	_, total, err = svc.SearchPagedFull(ctx, "xbox exclusive", 10, 0, "", 0, 0, 0, "xsx", false)
 	if err != nil || total != 1 {
 		t.Errorf("shortname xsx: total=%d err=%v, want 1", total, err)
 	}
 
 	// Legacy string rows (names instead of IDs) match by text.
-	_, total, err = svc.SearchPagedFull(ctx, "legacy", 10, 0, "", 0, 0, 0, "pc")
+	_, total, err = svc.SearchPagedFull(ctx, "legacy", 10, 0, "", 0, 0, 0, "pc", false)
 	if err != nil || total != 1 {
 		t.Errorf("legacy row filter: total=%d err=%v, want 1", total, err)
 	}
 
 	// Unknown IDs match nothing even when the raw text would ("99999").
-	_, total, err = svc.SearchPagedFull(ctx, "celeste", 10, 0, "", 0, 0, 0, "99999")
+	_, total, err = svc.SearchPagedFull(ctx, "celeste", 10, 0, "", 0, 0, 0, "99999", false)
 	if err != nil || total != 0 {
 		t.Errorf("unknown id filter: total=%d err=%v, want 0", total, err)
 	}
 
 	// Empty platform = no filtering.
-	_, total, err = svc.SearchPagedFull(ctx, "celeste", 10, 0, "", 0, 0, 0, "")
+	_, total, err = svc.SearchPagedFull(ctx, "celeste", 10, 0, "", 0, 0, 0, "", false)
 	if err != nil || total != 1 {
 		t.Errorf("no filter: total=%d err=%v, want 1", total, err)
 	}

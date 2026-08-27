@@ -46,19 +46,28 @@ var ValidSorts = map[string]bool{
 
 // searchOptions controls one search execution.
 type searchOptions struct {
-	limit      int
-	offset     int
-	applyFloor bool  // hide weak tier-3 substring matches unless popular
-	sort       string
-	yearFrom   int64 // unix seconds, inclusive; 0 = unset
-	yearTo     int64 // unix seconds, inclusive; 0 = unset
-	minRating  int64 // aggregated_rating >= minRating with count > 0; 0 = unset
-	platform   string // availability filter: substring of platform name/abbrev
-	withTotal  bool  // also run the COUNT query
+	limit           int
+	offset          int
+	applyFloor      bool  // hide weak tier-3 substring matches unless popular
+	sort            string
+	yearFrom        int64 // unix seconds, inclusive; 0 = unset
+	yearTo          int64 // unix seconds, inclusive; 0 = unset
+	minRating       int64 // aggregated_rating >= minRating with count > 0; 0 = unset
+	platform        string // availability filter: substring of platform name/abbrev
+	withTotal       bool   // also run the COUNT query
+	includeEditions bool   // when false, hide IGDB editions (version_parent != 0) unless query explicitly asks for one
 }
 
 func (s *Store) SearchLocal(ctx context.Context, query string, limit int) ([]GameResult, error) {
 	results, _, err := s.search(ctx, query, searchOptions{limit: limit})
+	return results, err
+}
+
+// SearchLocalWithEditions is the edition-aware variant of SearchLocal.
+// When includeEditions is false, edition rows (version_parent != 0) are
+// hidden unless the query itself explicitly asks for an edition.
+func (s *Store) SearchLocalWithEditions(ctx context.Context, query string, limit int, includeEditions bool) ([]GameResult, error) {
+	results, _, err := s.search(ctx, query, searchOptions{limit: limit, includeEditions: includeEditions})
 	return results, err
 }
 
@@ -210,6 +219,9 @@ func buildFilterWhere(b *strings.Builder, args *[]interface{}, o searchOptions, 
 		conds = append(conds, frag)
 		*args = append(*args, fargs...)
 	}
+	if !o.includeEditions && !ContainsEditionKeyword(query) {
+		conds = append(conds, `g.version_parent = 0`)
+	}
 	if len(conds) == 0 {
 		return
 	}
@@ -358,8 +370,8 @@ func (s *Store) UpsertIGDBGame(ctx context.Context, g Game) error {
 		igdb_url, source_updated_at,
 		rating, rating_count, total_rating, total_rating_count, follows, hypes,
 		igdb_popularity, category, status, version_parent, popularity_score,
-		popularity_fetched_at, aliases_fetched_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		popularity_fetched_at, aliases_fetched_at, version_parent_fetched_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		name = excluded.name,
 		slug = excluded.slug,
@@ -389,14 +401,15 @@ func (s *Store) UpsertIGDBGame(ctx context.Context, g Game) error {
 		version_parent = excluded.version_parent,
 		popularity_score = excluded.popularity_score,
 		popularity_fetched_at = excluded.popularity_fetched_at,
-		aliases_fetched_at = excluded.aliases_fetched_at`,
+		aliases_fetched_at = excluded.aliases_fetched_at,
+		version_parent_fetched_at = excluded.version_parent_fetched_at`,
 		g.ID, g.Name, g.Slug, g.SafeName, g.NormalizedName,
 		g.Summary, g.Storyline, g.CoverID, g.CoverURL,
 		g.FirstReleaseDate, g.AggregatedRating, g.AggregatedRatingCount,
 		g.PlatformsJSON, g.GenresJSON, g.Trailer, g.IGDBURL, g.SourceUpdatedAt,
 		g.Rating, g.RatingCount, g.TotalRating, g.TotalRatingCount, g.Follows,
 		g.Hypes, g.IGDBPopularity, g.Category, g.Status, g.VersionParent,
-		g.PopularityScore, now, now,
+		g.PopularityScore, now, now, now,
 	)
 	if err != nil {
 		return err
@@ -654,6 +667,58 @@ func (s *Store) MarkPopularityFetched(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE games SET popularity_fetched_at = ? WHERE id = ?`,
 		time.Now().Unix(), id)
+	return err
+}
+
+// GetEditionBackfillCandidates returns up to `limit` games whose
+// version_parent has never been fetched from IGDB. Ordered by id for
+// stable, resumable paging. Used by backfill-editions to populate legacy
+// rows imported with version_parent=0.
+func (s *Store) GetEditionBackfillCandidates(ctx context.Context, limit int) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id FROM games WHERE version_parent_fetched_at = 0 ORDER BY id ASC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// CountPendingEditionBackfill reports how many rows still need their
+// version_parent fetched (for progress reporting).
+func (s *Store) CountPendingEditionBackfill(ctx context.Context) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM games WHERE version_parent_fetched_at = 0`).Scan(&n)
+	return n, err
+}
+
+// MarkEditionFetched stamps the completion marker without touching the
+// version_parent — used when IGDB no longer knows a game (deleted
+// upstream), so the backfill queue advances.
+func (s *Store) MarkEditionFetched(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE games SET version_parent_fetched_at = ? WHERE id = ?`,
+		time.Now().Unix(), id)
+	return err
+}
+
+// SetVersionParentAndMarkFetched writes the authoritative version_parent
+// and stamps the marker in one statement. Used by the edition backfill,
+// which fetches only id/version_parent/version_title.
+func (s *Store) SetVersionParentAndMarkFetched(ctx context.Context, gameID int64, versionParent int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE games SET version_parent = ?, version_parent_fetched_at = ? WHERE id = ?`,
+		versionParent, time.Now().Unix(), gameID)
 	return err
 }
 

@@ -64,6 +64,7 @@ type igdbGame struct {
 	Category              int64         `json:"category"`
 	Status                int64         `json:"status"`
 	VersionParent         int64         `json:"version_parent"`
+	VersionTitle          string        `json:"version_title"`
 }
 
 // igdbFields is the IGDB API v4 fields clause requested on every games query.
@@ -95,14 +96,22 @@ func NewClient(clientID, clientSecret string) *Client {
 	}
 }
 
-func (c *Client) SearchGames(ctx context.Context, query string, limit int) ([]games.Game, error) {
+func (c *Client) SearchGames(ctx context.Context, query string, limit int, includeEditions bool) ([]games.Game, error) {
 	if c.clientID == "" {
 		return nil, nil
 	}
 
 	c.rateLimiter.Wait()
 
-	body := fmt.Sprintf(`search "%s"; fields %s; limit %d;`, query, igdbFields, limit)
+	// Hide IGDB editions by default: `version_parent != null` marks a
+	// deluxe/collector/GOTY edition. The filter is bypassed when the query
+	// itself explicitly asks for an edition or the caller opts in.
+	include := includeEditions || games.ContainsEditionKeyword(query)
+	where := ""
+	if !include {
+		where = " where version_parent = null;"
+	}
+	body := fmt.Sprintf(`search "%s"; fields %s;%s limit %d;`, query, igdbFields, where, limit)
 
 	igdbGames, err := c.post(ctx, "games", body)
 	if err != nil {
@@ -164,7 +173,9 @@ func (c *Client) GetGamesBatch(ctx context.Context, ids []int64) ([]games.Game, 
 
 	c.rateLimiter.Wait()
 
-	body := fmt.Sprintf(`where id = (%s); fields id,name,alternative_names.name,cover.id,cover.image_id; limit %d;`,
+	// Include version_parent so the edition backfill can populate legacy
+	// rows without a separate endpoint. Harmless for alias/cover batches.
+	body := fmt.Sprintf(`where id = (%s); fields id,name,alternative_names.name,cover.id,cover.image_id,version_parent,version_title,category; limit %d;`,
 		strings.Join(strs, ","), len(ids))
 
 	igdbGames, err := c.post(ctx, "games", body)

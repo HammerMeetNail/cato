@@ -115,18 +115,21 @@ export async function getGame(id) {
   return api.get(`/api/games/${id}`);
 }
 
-export async function searchGames(query, signal) {
+export async function searchGames(query, signal, includeEditions = false) {
   if (!query || query.length < 2) return [];
-  return api.get(`/api/games/search?q=${encodeURIComponent(query)}`, { signal });
+  const params = new URLSearchParams({ q: query });
+  if (includeEditions) params.set('include_editions', '1');
+  return api.get(`/api/games/search?${params.toString()}`, { signal });
 }
 
 // searchGamesFull fetches a page of full search results plus the total match
 // count (X-Total-Count header). opts: limit, offset, sort ('relevance' |
 // 'release_new' | 'release_old' | 'rating' | 'popularity' | 'name'),
-// yearFrom/yearTo (numbers), minRating (number).
+// yearFrom/yearTo (numbers), minRating (number), includeEditions (boolean).
 export async function searchGamesFull(query, {
   limit = 24, offset = 0,
   sort = '', yearFrom = null, yearTo = null, minRating = null,
+  includeEditions = false,
   signal,
 } = {}) {
   if (!query || query.length < 2) return { results: [], total: 0 };
@@ -139,6 +142,7 @@ export async function searchGamesFull(query, {
   if (yearFrom) params.append('year_from', yearFrom);
   if (yearTo) params.append('year_to', yearTo);
   if (minRating) params.append('min_rating', minRating);
+  if (includeEditions) params.append('include_editions', '1');
   const { data, res } = await api.getFull(`/api/games/search?${params.toString()}`, { signal });
   return {
     results: data,
