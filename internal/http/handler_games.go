@@ -61,21 +61,48 @@ func (h *GameHandler) handlePlatforms(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pattern := "%" + games.EscapeLike(q) + "%"
-	rows, err := h.db.Query(`SELECT name FROM platforms
+	rows, err := h.db.Query(`SELECT name, COALESCE(shortname,'') FROM platforms
 		WHERE name != '' AND (LOWER(name) LIKE ? ESCAPE '\'
 		   OR LOWER(COALESCE(abbreviation,'')) LIKE ? ESCAPE '\'
 		   OR LOWER(COALESCE(shortname,'')) LIKE ? ESCAPE '\')
-		ORDER BY name LIMIT 8`, pattern, pattern, pattern)
+		ORDER BY name LIMIT 16`, pattern, pattern, pattern)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to fetch platforms"))
 		return
 	}
 	defer rows.Close()
-	platforms := make([]string, 0)
+	// Collect names and matching shortname tokens (e.g. "ps5" for PlayStation 5)
+	// so the datalist offers both forms and shortname filtering is discoverable.
+	seen := make(map[string]bool, 16)
+	platforms := make([]string, 0, 8)
 	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err == nil {
+		var name, sn string
+		if err := rows.Scan(&name, &sn); err != nil {
+			continue
+		}
+		if !seen[name] {
+			seen[name] = true
 			platforms = append(platforms, name)
+			if len(platforms) >= 8 {
+				break
+			}
+		}
+		// Add any shortname token that contains the query as substring
+		for _, tok := range strings.Fields(sn) {
+			tok = strings.TrimSpace(tok)
+			if tok == "" || seen[tok] {
+				continue
+			}
+			if strings.Contains(strings.ToLower(tok), q) {
+				seen[tok] = true
+				platforms = append(platforms, tok)
+				if len(platforms) >= 8 {
+					break
+				}
+			}
+		}
+		if len(platforms) >= 8 {
+			break
 		}
 	}
 	writeJSON(w, http.StatusOK, platforms)

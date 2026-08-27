@@ -15,6 +15,7 @@ import (
 func TestPlatformIDsResolveToNames(t *testing.T) {
 	database := setupLibraryTestDB(t)
 	defer database.Close()
+	database.Exec(`DELETE FROM platforms`)
 	sessionID := createLibrarySession(t, database, "user-1")
 	mux := newTestLibraryMux(database)
 
@@ -63,6 +64,7 @@ func TestPlatformIDsResolveToNames(t *testing.T) {
 func TestPlatformsEmptyWhenLookupMissing(t *testing.T) {
 	database := setupLibraryTestDB(t)
 	defer database.Close()
+	database.Exec(`DELETE FROM platforms`)
 	sessionID := createLibrarySession(t, database, "user-1")
 	mux := newTestLibraryMux(database)
 
@@ -86,12 +88,13 @@ func TestPlatformsEmptyWhenLookupMissing(t *testing.T) {
 func TestLibraryPlatformFilter(t *testing.T) {
 	database := setupLibraryTestDB(t)
 	defer database.Close()
+	database.Exec(`DELETE FROM platforms`)
 	sessionID := createLibrarySession(t, database, "user-1")
 	mux := newTestLibraryMux(database)
 
 	database.Exec(`INSERT INTO platforms (id, name) VALUES (130, 'Nintendo Switch')`)
 	database.Exec(`UPDATE games SET platforms_json = '[6,130]' WHERE id = 1`)
-	database.Exec(`UPDATE games SET platforms_json = '[49]' WHERE id = 2`) // 49 unknown → matches nothing
+	database.Exec(`UPDATE games SET platforms_json = '[99999]' WHERE id = 2`) // 99999 unknown → matches nothing
 
 	postLibraryItem(t, mux, database, sessionID, 1, `{"status":"backlog"}`)
 	postLibraryItem(t, mux, database, sessionID, 2, `{"status":"backlog"}`)
@@ -127,6 +130,7 @@ func TestLibraryPlatformFilter(t *testing.T) {
 func TestPlatformSuggestions(t *testing.T) {
 	database := setupLibraryTestDB(t)
 	defer database.Close()
+	database.Exec(`DELETE FROM platforms`)
 	sessionID := createLibrarySession(t, database, "user-1")
 	mux := newTestLibraryMux(database)
 

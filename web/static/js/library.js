@@ -316,7 +316,7 @@ function buildSearchFilterBarHTML() {
           <div class="sf-grid sf-grid--2">
             <label class="sf-field">
               <span class="sf-label">Platform</span>
-              <input id="sfPlatform" list="sfPlatformList" type="text" placeholder="e.g. Switch, PC, PS5" autocomplete="off" inputmode="search">
+              <input id="sfPlatform" list="sfPlatformList" type="text" placeholder="e.g. ps5, sw2, xsx, win" autocomplete="off" inputmode="search">
               <datalist id="sfPlatformList"></datalist>
             </label>
             <label class="sf-field">
@@ -325,7 +325,7 @@ function buildSearchFilterBarHTML() {
               <datalist id="sfTagsList"></datalist>
             </label>
           </div>
-          <p class="sf-hint">Tags: space = AND, <code>|</code> = OR, quotes for multi-word.</p>
+          <p class="sf-hint">Platform: names or shortnames (<code>ps5</code>, <code>xsx</code>, <code>sw2</code>, <code>win</code>…). Tags: space = AND, <code>|</code> = OR, quotes for multi-word.</p>
         </div>
 
         <div class="sf-section">
@@ -570,7 +570,7 @@ function buildLibraryFilterBarHTML() {
           <div class="sf-grid sf-grid--2">
             <label class="sf-field">
               <span class="sf-label">Platform</span>
-              <input id="lfPlatform" type="text" placeholder="e.g. Switch, PC" autocomplete="off" list="lfPlatformList" inputmode="search">
+              <input id="lfPlatform" type="text" placeholder="e.g. ps5, sw2, xsx, win" autocomplete="off" list="lfPlatformList" inputmode="search">
               <datalist id="lfPlatformList"></datalist>
             </label>
             <label class="sf-field">
@@ -579,7 +579,7 @@ function buildLibraryFilterBarHTML() {
               <datalist id="lfTagsList"></datalist>
             </label>
           </div>
-          <p class="sf-hint">Space = AND, <code>|</code> = OR, quotes for multi-word tags.</p>
+          <p class="sf-hint">Platform: names or shortnames (<code>ps5</code>, <code>xsx</code>, <code>sw2</code>, <code>win</code>…). Tags: space = AND, <code>|</code> = OR.</p>
         </div>
         <div class="sf-section">
           <h4 class="sf-section-title">Release Date</h4>

@@ -32,6 +32,8 @@
 
 html {
   font-size: 16px;
+  overflow-x: hidden;
+  max-width: 100%;
 }
 
 body {
@@ -39,6 +41,8 @@ body {
   background: var(--bg);
   color: var(--text);
   min-height: 100vh;
+  overflow-x: hidden;
+  max-width: 100%;
 }
 
 a { color: var(--accent); text-decoration: none; }
@@ -553,6 +557,13 @@ a { color: var(--accent); text-decoration: none; }
   padding: 16px;
   border-top: 1px solid var(--surface2);
   background: var(--surface);
+  /* Lock to vertical scroll only – prevent x-axis drift when scrolling */
+  overflow-x: hidden;
+  overflow-y: visible;
+  overscroll-behavior-x: none;
+  touch-action: pan-y;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .sf-section {
@@ -680,8 +691,18 @@ a { color: var(--accent); text-decoration: none; }
     gap: 16px;
     max-height: 72dvh;
     overflow-y: auto;
-    overscroll-behavior: contain;
+    overflow-x: hidden;
+    overscroll-behavior-y: contain;
+    overscroll-behavior-x: none;
     -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+  }
+
+  .sf-grid,
+  .sf-grid--2,
+  .sf-grid--range,
+  .sf-field {
+    min-width: 0;
   }
 
   .sf-grid,

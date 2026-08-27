@@ -13,6 +13,44 @@ type Migration struct {
 
 var migrations = []Migration{
 	{
+		Version: 14,
+		// Seed curated shortname platforms so the platform filter works even
+		// before the IGDB sync runs or when IGDB is not configured. The
+		// shortnames (ps5, xsx, sw2, win, …) are gamer-style codes that
+		// IGDB abbreviations don't cover. INSERT OR IGNORE keeps existing
+		// IGDB rows intact; the UPDATE then stamps the shortnames.
+		Up: `INSERT OR IGNORE INTO platforms (id, name, abbreviation) VALUES
+		     (6, 'PC (Microsoft Windows)', 'PC'),
+		     (7, 'PlayStation', 'PS'),
+		     (8, 'PlayStation 2', 'PS2'),
+		     (9, 'PlayStation 3', 'PS3'),
+		     (12, 'Xbox 360', 'X360'),
+		     (38, 'PlayStation Portable', 'PSP'),
+		     (46, 'PlayStation Vita', 'PS Vita'),
+		     (48, 'PlayStation 4', 'PS4'),
+		     (49, 'Xbox One', 'XONE'),
+		     (130, 'Nintendo Switch', 'Switch'),
+		     (167, 'PlayStation 5', 'PS5'),
+		     (169, 'Xbox Series X|S', 'XSX'),
+		     (508, 'Nintendo Switch 2', 'Switch 2');
+		     UPDATE platforms SET shortname = CASE id
+		       WHEN 6 THEN 'win'
+		       WHEN 7 THEN 'ps1 psx'
+		       WHEN 8 THEN 'ps2'
+		       WHEN 9 THEN 'ps3'
+		       WHEN 12 THEN 'x360 360'
+		       WHEN 38 THEN 'psp'
+		       WHEN 46 THEN 'psvita vita psv'
+		       WHEN 48 THEN 'ps4'
+		       WHEN 49 THEN 'xb1 xone'
+		       WHEN 130 THEN 'ns swi switch1'
+		       WHEN 167 THEN 'ps5'
+		       WHEN 169 THEN 'xsx xss seriesx'
+		       WHEN 508 THEN 'sw2 ns2 switch2'
+		       ELSE shortname END
+		     WHERE id IN (6,7,8,9,12,38,46,48,49,130,167,169,508);`,
+	},
+	{
 		Version: 13,
 		// Pack/skin hiding: parent_game links DLC/packs to their main game,
 		// and category (now synced from IGDB game_type) distinguishes packs

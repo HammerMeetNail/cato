@@ -55,6 +55,8 @@ func TestResolvePlatformNames(t *testing.T) {
 func TestUpsertPlatformsAndNames(t *testing.T) {
 	database, store := setupGameDB(t)
 	defer database.Close()
+	// Clear curated seed (migration 14) so the test can assert exact counts.
+	database.Exec(`DELETE FROM platforms`)
 
 	ctx := context.Background()
 	err := store.UpsertPlatforms(ctx, []Platform{
@@ -89,7 +91,7 @@ func TestUpsertPlatformsAndNames(t *testing.T) {
 func TestSyncPlatforms(t *testing.T) {
 	database, store := setupGameDB(t)
 	defer database.Close()
-
+	database.Exec(`DELETE FROM platforms`)
 	fake := &fakeIGDB{}
 	svc := NewService(store, fake, database)
 	ctx := context.Background()
@@ -192,6 +194,7 @@ func TestMigratePlatformTags(t *testing.T) {
 func TestSearchPlatformFilter(t *testing.T) {
 	database, store := setupGameDB(t)
 	defer database.Close()
+	database.Exec(`DELETE FROM platforms`)
 
 	database.Exec(`INSERT INTO games (id, name, slug, normalized_name, popularity_score, platforms_json) VALUES
 		(1, 'Hollow Knight', 'hollow-knight', 'hollow knight', 50, '[6,130]'),
