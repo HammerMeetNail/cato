@@ -73,12 +73,25 @@ func (s *Service) SearchPaged(ctx context.Context, query string, limit, offset i
 // SearchPaged, the IGDB live fallback runs on page 1 only; deeper pages are
 // pure local queries.
 func (s *Service) SearchPagedFull(ctx context.Context, query string, limit, offset int, sort string, yearFrom, yearTo, minRating int64, platform string, includeEditions bool) ([]GameResult, int64, error) {
+	return s.SearchPagedFullWithFilters(ctx, query, limit, offset, sort, yearFrom, yearTo, minRating, platform, nil, "", "", nil, "", includeEditions)
+}
+
+// SearchPagedFullWithFilters extends SearchPagedFull with personal-library
+// filters: tags/tagOp (library tags), libraryUserID/inLibrary/libraryStatus.
+// tags and library filters are applied only when libraryUserID is non-empty;
+// callers should obtain it from the session when present. Personal filters are
+// honored on both the initial and the IGDB-refreshed query so pagination stays
+// consistent.
+func (s *Service) SearchPagedFullWithFilters(ctx context.Context, query string, limit, offset int, sort string, yearFrom, yearTo, minRating int64, platform string, tags []string, tagOp string, libraryUserID string, inLibrary *bool, libraryStatus string, includeEditions bool) ([]GameResult, int64, error) {
 	query = NormalizeName(query)
 	if len(query) < 2 {
 		return nil, 0, nil
 	}
 
 	effectiveInclude := includeEditions || ContainsEditionKeyword(query)
+	if tagOp != "or" {
+		tagOp = "and"
+	}
 
 	opts := func() searchOptions {
 		return searchOptions{
@@ -89,6 +102,11 @@ func (s *Service) SearchPagedFull(ctx context.Context, query string, limit, offs
 			yearTo:          yearTo,
 			minRating:       minRating,
 			platform:        platform,
+			tags:            tags,
+			tagOp:           tagOp,
+			libraryUserID:   libraryUserID,
+			inLibrary:       inLibrary,
+			libraryStatus:   libraryStatus,
 			includeEditions: effectiveInclude,
 		}
 	}

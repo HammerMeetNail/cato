@@ -54,6 +54,11 @@ type searchOptions struct {
 	yearTo          int64 // unix seconds, inclusive; 0 = unset
 	minRating       int64 // aggregated_rating >= minRating with count > 0; 0 = unset
 	platform        string // availability filter: substring of platform name/abbrev
+	tags            []string
+	tagOp           string // "and" (default) or "or"
+	libraryUserID   string // when set, enable library-scoped filters below
+	inLibrary       *bool  // nil = no filter; true = only owned, false = not owned
+	libraryStatus   string // when set with libraryUserID, filter to that library status
 	withTotal       bool   // also run the COUNT query
 	includeEditions bool   // when false, hide IGDB editions (version_parent != 0) unless query explicitly asks for one
 }
@@ -193,6 +198,15 @@ func buildSearchUnion(b *strings.Builder, args *[]interface{}, engine, match, qu
 	}
 }
 
+// ValidLibraryStatuses whitelists library status values for search filtering.
+var ValidLibraryStatuses = map[string]bool{
+	"wishlist":  true,
+	"backlog":   true,
+	"playing":   true,
+	"completed": true,
+	"abandoned": true,
+}
+
 // buildFilterWhere emits the WHERE clause shared by results and COUNT queries
 // (relevance floor + year/rating filters), or "" when nothing applies.
 func buildFilterWhere(b *strings.Builder, args *[]interface{}, o searchOptions, query, prefix, wordPrefix string) {
@@ -218,6 +232,44 @@ func buildFilterWhere(b *strings.Builder, args *[]interface{}, o searchOptions, 
 		frag, fargs := PlatformFilter("g", p)
 		conds = append(conds, frag)
 		*args = append(*args, fargs...)
+	}
+	// Tag filtering (personal library tags) — only when a user is known.
+	if len(o.tags) > 0 && o.libraryUserID != "" {
+		placeholders := make([]string, len(o.tags))
+		for i := range placeholders {
+			placeholders[i] = "?"
+		}
+		inClause := strings.Join(placeholders, ", ")
+		if o.tagOp == "or" {
+			conds = append(conds, `EXISTS (SELECT 1 FROM library_items li_t WHERE li_t.game_id = g.id AND li_t.user_id = ? AND EXISTS (SELECT 1 FROM json_each(li_t.tags_json) WHERE value IN (`+inClause+`)))`)
+			*args = append(*args, o.libraryUserID)
+			for _, t := range o.tags {
+				*args = append(*args, t)
+			}
+		} else {
+			conds = append(conds, `EXISTS (SELECT 1 FROM library_items li_t WHERE li_t.game_id = g.id AND li_t.user_id = ? AND (SELECT COUNT(DISTINCT value) FROM json_each(li_t.tags_json) WHERE value IN (`+inClause+`)) = ?)`)
+			*args = append(*args, o.libraryUserID)
+			for _, t := range o.tags {
+				*args = append(*args, t)
+			}
+			*args = append(*args, len(o.tags))
+		}
+	}
+	// Library membership filters — only when a user is known.
+	if o.libraryUserID != "" {
+		if o.inLibrary != nil {
+			if *o.inLibrary {
+				conds = append(conds, `EXISTS (SELECT 1 FROM library_items li_f WHERE li_f.game_id = g.id AND li_f.user_id = ?)`)
+				*args = append(*args, o.libraryUserID)
+			} else {
+				conds = append(conds, `NOT EXISTS (SELECT 1 FROM library_items li_f WHERE li_f.game_id = g.id AND li_f.user_id = ?)`)
+				*args = append(*args, o.libraryUserID)
+			}
+		}
+		if o.libraryStatus != "" && ValidLibraryStatuses[o.libraryStatus] {
+			conds = append(conds, `EXISTS (SELECT 1 FROM library_items li_s WHERE li_s.game_id = g.id AND li_s.user_id = ? AND li_s.status = ?)`)
+			*args = append(*args, o.libraryUserID, o.libraryStatus)
+		}
 	}
 	if !o.includeEditions && !ContainsEditionKeyword(query) {
 		conds = append(conds, `g.version_parent = 0`)

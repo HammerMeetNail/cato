@@ -130,6 +130,24 @@ func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, use
 		whereArgs = append(whereArgs, fargs...)
 	}
 
+	// Release date range filters (on g.first_release_date, like search).
+	if yf := parseLibraryYearParam(r.URL.Query().Get("year_from"), false); yf != 0 {
+		where += " AND g.first_release_date >= ?"
+		whereArgs = append(whereArgs, yf)
+	}
+	if yt := parseLibraryYearParam(r.URL.Query().Get("year_to"), true); yt != 0 {
+		where += " AND g.first_release_date <= ?"
+		whereArgs = append(whereArgs, yt)
+	}
+	if rf := parseLibraryDateParam(r.URL.Query().Get("release_from"), false); rf != 0 {
+		where += " AND g.first_release_date >= ?"
+		whereArgs = append(whereArgs, rf)
+	}
+	if rt := parseLibraryDateParam(r.URL.Query().Get("release_to"), true); rt != 0 {
+		where += " AND g.first_release_date <= ?"
+		whereArgs = append(whereArgs, rt)
+	}
+
 	// Total matching items for the current filter — surfaced via the
 	// X-Total-Count header so clients can show "N games" per tab and know
 	// when infinite scroll is done without coming up one item short.
@@ -1167,4 +1185,44 @@ func isValidStatus(status string) bool {
 		return true
 	}
 	return false
+}
+
+// parseLibraryYearParam mirrors handler_games.parseYearParam for library filtering.
+func parseLibraryYearParam(raw string, end bool) int64 {
+	if raw == "" {
+		return 0
+	}
+	y, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || y < 1900 || y > 2100 {
+		return 0
+	}
+	if !end {
+		return time.Date(y, time.January, 1, 0, 0, 0, 0, time.UTC).Unix()
+	}
+	return time.Date(y+1, time.January, 1, 0, 0, 0, 0, time.UTC).Unix() - 1
+}
+
+// parseLibraryDateParam parses YYYY-MM-DD or RFC3339 into unix seconds.
+// When end is true, bare dates are inclusive to end-of-day (23:59:59 UTC).
+func parseLibraryDateParam(raw string, end bool) int64 {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0
+	}
+	if t, err := time.Parse("2006-01-02", raw); err == nil {
+		if end {
+			return t.Add(24*time.Hour - time.Second).Unix()
+		}
+		return t.UTC().Unix()
+	}
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return t.Unix()
+	}
+	if y, err := strconv.Atoi(raw); err == nil && y >= 1900 && y <= 2100 {
+		if end {
+			return time.Date(y+1, time.January, 1, 0, 0, 0, 0, time.UTC).Unix() - 1
+		}
+		return time.Date(y, time.January, 1, 0, 0, 0, 0, time.UTC).Unix()
+	}
+	return 0
 }

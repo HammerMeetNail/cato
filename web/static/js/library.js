@@ -1,4 +1,4 @@
-import { library, getCoverURL, getGame, searchGamesFull, parseTagQuery, formatTagForQuery, autocompleteTags } from './api.js';
+import { library, getCoverURL, getGame, searchGamesFull, parseTagQuery, formatTagForQuery, autocompleteTags, autocompletePlatforms, autocompleteGlobalPlatforms } from './api.js';
 import { formatYear, releaseLabel, releaseStatus, modalReleaseLabel } from './dates.js';
 
 const VALID_STATUSES = ['wishlist', 'backlog', 'playing', 'completed', 'abandoned'];
@@ -73,13 +73,30 @@ let paginationState = {
   pageSize: PAGE_SIZE,
   mode: 'library', // 'library' or 'search'
   searchQuery: '',
+  yearFrom: '',
+  yearTo: '',
+  releaseFrom: '',
+  releaseTo: '',
+};
+
+// Library release-date filters (persist across reloads in this session).
+const libraryFilters = {
+  yearFrom: '',
+  yearTo: '',
+  releaseFrom: '',
+  releaseTo: '',
 };
 
 let scrollListenerAttached = false;
 
 // Active sort/filters for search mode (SEARCH_IMPROVEMENTS.md §5). Scoped to
 // one query: switching searches resets them.
-const searchFilters = { sort: '', yearFrom: '', yearTo: '', minRating: '', includeEditions: false };
+const searchFilters = {
+  sort: '', yearFrom: '', yearTo: '', minRating: '', includeEditions: false,
+  platform: '', tags: '', tagOp: 'and',
+  releaseFrom: '', releaseTo: '',
+  inLibrary: '', libraryStatus: '',
+};
 let searchFiltersQuery = '';
 
 function resetSearchFilters(query) {
@@ -90,6 +107,13 @@ function resetSearchFilters(query) {
   searchFilters.yearTo = '';
   searchFilters.minRating = '';
   searchFilters.includeEditions = false;
+  searchFilters.platform = '';
+  searchFilters.tags = '';
+  searchFilters.tagOp = 'and';
+  searchFilters.releaseFrom = '';
+  searchFilters.releaseTo = '';
+  searchFilters.inLibrary = '';
+  searchFilters.libraryStatus = '';
 }
 
 // itemsById indexes the currently rendered library items by game_id so that a
@@ -162,9 +186,11 @@ export async function loadSearchResults(query) {
     searchQuery: query,
   };
 
-  // Hide status tabs
+  // Hide status tabs and library filter bar while in search mode
   const statusTabs = document.getElementById('statusTabs');
   if (statusTabs) statusTabs.style.display = 'none';
+  const libBar = document.getElementById('libraryFilterBar');
+  if (libBar) libBar.style.display = 'none';
   hideHero();
 
   // Create and show results header (+ sort/filter bar + total count)
@@ -223,7 +249,19 @@ function filterParams() {
   if (searchFilters.sort) p.sort = searchFilters.sort;
   if (searchFilters.yearFrom) p.yearFrom = Number(searchFilters.yearFrom);
   if (searchFilters.yearTo) p.yearTo = Number(searchFilters.yearTo);
+  if (searchFilters.releaseFrom) p.releaseFrom = searchFilters.releaseFrom;
+  if (searchFilters.releaseTo) p.releaseTo = searchFilters.releaseTo;
   if (searchFilters.minRating) p.minRating = Number(searchFilters.minRating);
+  if (searchFilters.platform) p.platform = searchFilters.platform;
+  if (searchFilters.tags) {
+    // tags is raw string like 'rpg "switch 2"'; parse into list for API
+    const parsed = parseTagQuery(searchFilters.tags);
+    p.tags = parsed.tags;
+    p.tagOp = parsed.op;
+  }
+  if (searchFilters.inLibrary === 'owned') p.inLibrary = true;
+  else if (searchFilters.inLibrary === 'not_owned') p.inLibrary = false;
+  if (searchFilters.libraryStatus) p.libraryStatus = searchFilters.libraryStatus;
   if (searchFilters.includeEditions) p.includeEditions = true;
   return p;
 }
@@ -250,11 +288,25 @@ function buildSearchFilterBarHTML() {
             <option value="name">Name A–Z</option>
           </select>
         </label>
+        <label>Platform
+          <input id="sfPlatform" list="sfPlatformList" type="text" placeholder="e.g. Switch, PC, PS5" autocomplete="off">
+          <datalist id="sfPlatformList"></datalist>
+        </label>
+        <label>Tags
+          <input id="sfTags" list="sfTagsList" type="text" placeholder='e.g. rpg "switch 2"' autocomplete="off">
+          <datalist id="sfTagsList"></datalist>
+        </label>
         <label>Year from
           <input id="sfYearFrom" type="number" min="1900" max="2100" inputmode="numeric" placeholder="1994">
         </label>
         <label>to
           <input id="sfYearTo" type="number" min="1900" max="2100" inputmode="numeric" placeholder="2024">
+        </label>
+        <label>Release from
+          <input id="sfReleaseFrom" type="date" placeholder="YYYY-MM-DD">
+        </label>
+        <label>to
+          <input id="sfReleaseTo" type="date" placeholder="YYYY-MM-DD">
         </label>
         <label>Min rating
           <select id="sfMinRating">
@@ -263,6 +315,23 @@ function buildSearchFilterBarHTML() {
             <option value="75">75+</option>
             <option value="85">85+</option>
             <option value="95">95+</option>
+          </select>
+        </label>
+        <label>Library
+          <select id="sfInLibrary">
+            <option value="">All games</option>
+            <option value="owned">In my library</option>
+            <option value="not_owned">Not in library</option>
+          </select>
+        </label>
+        <label id="sfLibraryStatusWrap" style="display:none">Status
+          <select id="sfLibraryStatus">
+            <option value="">Any status</option>
+            <option value="wishlist">Wishlist</option>
+            <option value="backlog">Backlog</option>
+            <option value="playing">Playing</option>
+            <option value="completed">Completed</option>
+            <option value="abandoned">Abandoned</option>
           </select>
         </label>
         <label class="sf-check"><input id="sfEditions" type="checkbox"> Include editions &amp; packs</label>
@@ -278,43 +347,288 @@ function wireSearchFilterBar(header, query) {
   const sortSel = header.querySelector('#sfSort');
   const yearFrom = header.querySelector('#sfYearFrom');
   const yearTo = header.querySelector('#sfYearTo');
+  const releaseFrom = header.querySelector('#sfReleaseFrom');
+  const releaseTo = header.querySelector('#sfReleaseTo');
   const minRating = header.querySelector('#sfMinRating');
+  const platformEl = header.querySelector('#sfPlatform');
+  const tagsEl = header.querySelector('#sfTags');
+  const inLibrary = header.querySelector('#sfInLibrary');
+  const libraryStatusWrap = header.querySelector('#sfLibraryStatusWrap');
+  const libraryStatus = header.querySelector('#sfLibraryStatus');
   const editions = header.querySelector('#sfEditions');
   if (!sortSel) return;
 
   sortSel.value = searchFilters.sort;
   yearFrom.value = searchFilters.yearFrom;
   yearTo.value = searchFilters.yearTo;
+  if (releaseFrom) releaseFrom.value = searchFilters.releaseFrom;
+  if (releaseTo) releaseTo.value = searchFilters.releaseTo;
   minRating.value = searchFilters.minRating;
+  if (platformEl) platformEl.value = searchFilters.platform;
+  if (tagsEl) tagsEl.value = searchFilters.tags;
+  if (inLibrary) inLibrary.value = searchFilters.inLibrary;
+  if (libraryStatus) libraryStatus.value = searchFilters.libraryStatus;
+  if (libraryStatusWrap) libraryStatusWrap.style.display = searchFilters.inLibrary === 'owned' ? '' : 'none';
   if (editions) editions.checked = !!searchFilters.includeEditions;
+
+  // Populate datalists for platform/tags (best-effort).
+  if (platformEl) {
+    const platList = header.querySelector('#sfPlatformList');
+    autocompleteGlobalPlatforms('').then(list => {
+      if (platList && Array.isArray(list)) {
+        platList.innerHTML = list.slice(0, 20).map(p => `<option value="${escapeHTML(p)}"></option>`).join('');
+      }
+    }).catch(() => {});
+    // Live autocomplete as user types (debounced) — global list for search.
+    let platTimer = null;
+    platformEl.addEventListener('input', () => {
+      clearTimeout(platTimer);
+      platTimer = setTimeout(async () => {
+        const q = platformEl.value.trim();
+        if (q.length < 1) return;
+        try {
+          const list = await autocompleteGlobalPlatforms(q);
+          if (platList && Array.isArray(list)) {
+            platList.innerHTML = list.map(p => `<option value="${escapeHTML(p)}"></option>`).join('');
+          }
+        } catch {}
+      }, 250);
+    });
+  }
+  if (tagsEl) {
+    const tagsList = header.querySelector('#sfTagsList');
+    autocompleteTags('', 100).then(list => {
+      if (tagsList && Array.isArray(list)) {
+        tagsList.innerHTML = list.map(t => `<option value="${escapeHTML(t)}"></option>`).join('');
+      }
+    }).catch(() => {});
+    let tagTimer = null;
+    tagsEl.addEventListener('input', () => {
+      clearTimeout(tagTimer);
+      const raw = tagsEl.value;
+      // Extract last segment being typed for autocomplete
+      const last = raw.split(/[\s|]+/).pop().replace(/^"|"$/g, '').trim();
+      if (last.length < 1) return;
+      tagTimer = setTimeout(async () => {
+        try {
+          const list = await autocompleteTags(last);
+          if (tagsList && Array.isArray(list)) {
+            tagsList.innerHTML = list.map(t => `<option value="${escapeHTML(t)}"></option>`).join('');
+          }
+        } catch {}
+      }, 250);
+    });
+  }
 
   const apply = () => {
     const clampYear = (v) => {
       const n = parseInt(v, 10);
       return Number.isFinite(n) && n >= 1900 && n <= 2100 ? String(n) : '';
     };
+    const clampDate = (v) => {
+      const s = String(v || '').trim();
+      if (!s) return '';
+      // accept YYYY-MM-DD or YYYY
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+      if (/^\d{4}$/.test(s)) {
+        const y = parseInt(s, 10);
+        return y >= 1900 && y <= 2100 ? `${y}-01-01` : '';
+      }
+      return '';
+    };
     searchFilters.sort = sortSel.value;
     searchFilters.yearFrom = clampYear(yearFrom.value);
     searchFilters.yearTo = clampYear(yearTo.value);
+    searchFilters.releaseFrom = releaseFrom ? clampDate(releaseFrom.value) : '';
+    searchFilters.releaseTo = releaseTo ? clampDate(releaseTo.value) : '';
     searchFilters.minRating = minRating.value;
+    searchFilters.platform = platformEl ? platformEl.value.trim().slice(0, 64) : '';
+    searchFilters.tags = tagsEl ? tagsEl.value.trim().slice(0, 200) : '';
+    searchFilters.inLibrary = inLibrary ? inLibrary.value : '';
+    searchFilters.libraryStatus = libraryStatus ? libraryStatus.value : '';
+    if (searchFilters.inLibrary !== 'owned') searchFilters.libraryStatus = '';
     searchFilters.includeEditions = !!(editions && editions.checked);
     loadSearchResults(query);
   };
   header.querySelector('#sfApply').addEventListener('click', apply);
   if (editions) editions.addEventListener('change', apply);
+  if (inLibrary) inLibrary.addEventListener('change', () => {
+    if (libraryStatusWrap) libraryStatusWrap.style.display = inLibrary.value === 'owned' ? '' : 'none';
+    // Don't auto-apply on change to allow picking status, but if switching away from owned, apply immediately to clear status
+    if (inLibrary.value !== 'owned' && searchFilters.libraryStatus) apply();
+  });
+  // Enter on any input applies
+  [yearFrom, yearTo, releaseFrom, releaseTo, platformEl, tagsEl].forEach(el => {
+    if (el) el.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); apply(); } });
+  });
   header.querySelector('#sfClear').addEventListener('click', () => {
     sortSel.value = '';
     yearFrom.value = '';
     yearTo.value = '';
+    if (releaseFrom) releaseFrom.value = '';
+    if (releaseTo) releaseTo.value = '';
     minRating.value = '';
+    if (platformEl) platformEl.value = '';
+    if (tagsEl) tagsEl.value = '';
+    if (inLibrary) inLibrary.value = '';
+    if (libraryStatus) libraryStatus.value = '';
+    if (libraryStatusWrap) libraryStatusWrap.style.display = 'none';
     if (editions) editions.checked = false;
     apply();
   });
 }
 
-export async function loadLibrary(status, tag = '', platform = '') {
+// --- library filter bar (release date range + platform/tags) ----------------
+
+// buildLibraryFilterBarHTML renders a collapsible filter bar for the library
+// view. It mirrors the search filter bar but without sort/rating/library
+// options — status is already the tabs, and rating is personal. Tags and
+// platform are offered as explicit inputs in addition to the $/@ prefixes.
+function buildLibraryFilterBarHTML() {
+  return `
+    <details class="search-filterbar library-filterbar" id="libraryFilterBar">
+      <summary>Filter</summary>
+      <div class="sf-controls">
+        <label>Platform
+          <input id="lfPlatform" type="text" placeholder="e.g. Switch, PC" autocomplete="off" list="lfPlatformList">
+          <datalist id="lfPlatformList"></datalist>
+        </label>
+        <label>Tags
+          <input id="lfTags" type="text" placeholder='e.g. rpg "co-op"' autocomplete="off" list="lfTagsList">
+          <datalist id="lfTagsList"></datalist>
+        </label>
+        <label>Year from
+          <input id="lfYearFrom" type="number" min="1900" max="2100" inputmode="numeric" placeholder="1994">
+        </label>
+        <label>to
+          <input id="lfYearTo" type="number" min="1900" max="2100" inputmode="numeric" placeholder="2024">
+        </label>
+        <label>Release from
+          <input id="lfReleaseFrom" type="date">
+        </label>
+        <label>to
+          <input id="lfReleaseTo" type="date">
+        </label>
+        <button id="lfApply" class="btn btn-primary btn-inline" type="button">Apply</button>
+        <button id="lfClear" class="btn btn-secondary btn-inline" type="button">Clear</button>
+      </div>
+    </details>`;
+}
+
+function wireLibraryFilterBar(bar) {
+  const platEl = bar.querySelector('#lfPlatform');
+  const tagsEl = bar.querySelector('#lfTags');
+  const yfEl = bar.querySelector('#lfYearFrom');
+  const ytEl = bar.querySelector('#lfYearTo');
+  const rfEl = bar.querySelector('#lfReleaseFrom');
+  const rtEl = bar.querySelector('#lfReleaseTo');
+  if (!platEl) return;
+  platEl.value = paginationState.platformFilter || libraryFilters.platform || '';
+  // library tags are stored in paginationState.tagFilter raw string
+  tagsEl.value = paginationState.tagFilter || '';
+  yfEl.value = libraryFilters.yearFrom;
+  ytEl.value = libraryFilters.yearTo;
+  rfEl.value = libraryFilters.releaseFrom;
+  rtEl.value = libraryFilters.releaseTo;
+
+  // Datalists
+  const platList = bar.querySelector('#lfPlatformList');
+  autocompletePlatforms('').then(list => {
+    if (platList && Array.isArray(list)) platList.innerHTML = list.slice(0,20).map(p=>`<option value="${escapeHTML(p)}"></option>`).join('');
+  }).catch(()=>{});
+  const tagsList = bar.querySelector('#lfTagsList');
+  autocompleteTags('', 100).then(list => {
+    if (tagsList && Array.isArray(list)) tagsList.innerHTML = list.map(t=>`<option value="${escapeHTML(t)}"></option>`).join('');
+  }).catch(()=>{});
+
+  const apply = () => {
+    const clampYear = v => {
+      const n = parseInt(v, 10);
+      return Number.isFinite(n) && n >=1900 && n<=2100 ? String(n) : '';
+    };
+    const clampDate = v => {
+      const s = String(v||'').trim();
+      if (!s) return '';
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+      if (/^\d{4}$/.test(s)) {
+        const y = parseInt(s,10);
+        return y>=1900&&y<=2100 ? `${y}-01-01` : '';
+      }
+      return '';
+    };
+    const newTag = tagsEl.value.trim().slice(0,200);
+    const newPlat = platEl.value.trim().slice(0,64);
+    libraryFilters.yearFrom = clampYear(yfEl.value);
+    libraryFilters.yearTo = clampYear(ytEl.value);
+    libraryFilters.releaseFrom = clampDate(rfEl.value);
+    libraryFilters.releaseTo = clampDate(rtEl.value);
+    paginationState.yearFrom = libraryFilters.yearFrom;
+    paginationState.yearTo = libraryFilters.yearTo;
+    paginationState.releaseFrom = libraryFilters.releaseFrom;
+    paginationState.releaseTo = libraryFilters.releaseTo;
+    const activeTab = document.querySelector('.tab.active');
+    loadLibrary(activeTab?.dataset?.status || '', newTag, newPlat);
+  };
+  bar.querySelector('#lfApply').addEventListener('click', apply);
+  bar.querySelector('#lfClear').addEventListener('click', () => {
+    platEl.value = ''; tagsEl.value = ''; yfEl.value=''; ytEl.value=''; rfEl.value=''; rtEl.value='';
+    libraryFilters.yearFrom=''; libraryFilters.yearTo=''; libraryFilters.releaseFrom=''; libraryFilters.releaseTo='';
+    paginationState.yearFrom=''; paginationState.yearTo=''; paginationState.releaseFrom=''; paginationState.releaseTo='';
+    const activeTab = document.querySelector('.tab.active');
+    loadLibrary(activeTab?.dataset?.status || '', '', '');
+  });
+  [platEl, tagsEl, yfEl, ytEl, rfEl, rtEl].forEach(el=>{
+    el.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); apply(); }});
+  });
+}
+
+function ensureLibraryFilterBar() {
+  if (paginationState.mode !== 'library') {
+    const existing = document.getElementById('libraryFilterBar');
+    if (existing) existing.style.display = 'none';
+    return null;
+  }
+  let bar = document.getElementById('libraryFilterBar');
+  if (bar) {
+    bar.style.display = '';
+    // Sync inputs to current pagination state (e.g., after chip filter)
+    const platEl = bar.querySelector('#lfPlatform');
+    const tagsEl = bar.querySelector('#lfTags');
+    const yfEl = bar.querySelector('#lfYearFrom');
+    const ytEl = bar.querySelector('#lfYearTo');
+    const rfEl = bar.querySelector('#lfReleaseFrom');
+    const rtEl = bar.querySelector('#lfReleaseTo');
+    if (platEl) platEl.value = paginationState.platformFilter || '';
+    if (tagsEl) tagsEl.value = paginationState.tagFilter || '';
+    if (yfEl) yfEl.value = libraryFilters.yearFrom || paginationState.yearFrom || '';
+    if (ytEl) ytEl.value = libraryFilters.yearTo || paginationState.yearTo || '';
+    if (rfEl) rfEl.value = libraryFilters.releaseFrom || paginationState.releaseFrom || '';
+    if (rtEl) rtEl.value = libraryFilters.releaseTo || paginationState.releaseTo || '';
+    return bar;
+  }
+  const statusTabs = document.getElementById('statusTabs');
+  const anchor = statusTabs && statusTabs.style.display !== 'none' ? statusTabs : document.querySelector('.search-wrap');
+  if (!anchor) return null;
+  const wrap = document.createElement('div');
+  wrap.innerHTML = buildLibraryFilterBarHTML();
+  bar = wrap.firstElementChild;
+  anchor.insertAdjacentElement('afterend', bar);
+  wireLibraryFilterBar(bar);
+  return bar;
+}
+
+export async function loadLibrary(status, tag = '', platform = '', extraOpts = null) {
   const grid = document.getElementById('gameGrid');
   if (!grid) return;
+
+  // Merge extraOpts (release filters) into libraryFilters if provided,
+  // otherwise keep current libraryFilters (persisted across pagination).
+  if (extraOpts && typeof extraOpts === 'object') {
+    if ('yearFrom' in extraOpts) libraryFilters.yearFrom = extraOpts.yearFrom || '';
+    if ('yearTo' in extraOpts) libraryFilters.yearTo = extraOpts.yearTo || '';
+    if ('releaseFrom' in extraOpts) libraryFilters.releaseFrom = extraOpts.releaseFrom || '';
+    if ('releaseTo' in extraOpts) libraryFilters.releaseTo = extraOpts.releaseTo || '';
+  }
 
   // Reset pagination state
   paginationState = {
@@ -330,6 +644,10 @@ export async function loadLibrary(status, tag = '', platform = '') {
     pageSize: PAGE_SIZE,
     mode: 'library',
     searchQuery: '',
+    yearFrom: libraryFilters.yearFrom,
+    yearTo: libraryFilters.yearTo,
+    releaseFrom: libraryFilters.releaseFrom,
+    releaseTo: libraryFilters.releaseTo,
   };
 
   // Hide search results header and show tabs
@@ -339,12 +657,18 @@ export async function loadLibrary(status, tag = '', platform = '') {
   if (statusTabs) statusTabs.style.display = '';
   activateStatusTab(status || '');
   updateTagFilterBar();
+  ensureLibraryFilterBar();
   loadHero();
 
   grid.innerHTML = '<div class="loading">Loading library...</div>';
 
   try {
-    const { items, total, hasMore } = await library.list(status || '', PAGE_SIZE, 0, tag || '', platform || '');
+    const { items, total, hasMore } = await library.list(status || '', PAGE_SIZE, 0, tag || '', platform || '', {
+      yearFrom: libraryFilters.yearFrom || null,
+      yearTo: libraryFilters.yearTo || null,
+      releaseFrom: libraryFilters.releaseFrom || null,
+      releaseTo: libraryFilters.releaseTo || null,
+    });
     renderPagedItems(grid, items, true, hasMore);
     refreshTabCounts();
   } catch (err) {
@@ -423,7 +747,12 @@ export function renderLibraryItems(items, status = '') {
     pageSize: PAGE_SIZE,
     mode: 'library',
     searchQuery: '',
+    yearFrom: libraryFilters.yearFrom,
+    yearTo: libraryFilters.yearTo,
+    releaseFrom: libraryFilters.releaseFrom,
+    releaseTo: libraryFilters.releaseTo,
   };
+  ensureLibraryFilterBar();
 
   loadHero();
 
@@ -469,7 +798,13 @@ async function loadMore() {
         paginationState.pageSize,
         paginationState.offset,
         paginationState.tagFilter,
-        paginationState.platformFilter
+        paginationState.platformFilter,
+        {
+          yearFrom: paginationState.yearFrom || libraryFilters.yearFrom || null,
+          yearTo: paginationState.yearTo || libraryFilters.yearTo || null,
+          releaseFrom: paginationState.releaseFrom || libraryFilters.releaseFrom || null,
+          releaseTo: paginationState.releaseTo || libraryFilters.releaseTo || null,
+        }
       );
       renderPagedItems(grid, items, false, hasMore);
     }

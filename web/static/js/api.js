@@ -125,11 +125,17 @@ export async function searchGames(query, signal, includeEditions = false) {
 // searchGamesFull fetches a page of full search results plus the total match
 // count (X-Total-Count header). opts: limit, offset, sort ('relevance' |
 // 'release_new' | 'release_old' | 'rating' | 'popularity' | 'name'),
-// yearFrom/yearTo (numbers), minRating (number), includeEditions (boolean).
+// yearFrom/yearTo (numbers), minRating (number), includeEditions (boolean),
+// platform (string), tags (string[] or string), tagOp ('and'|'or'),
+// inLibrary (true/false/null), libraryStatus (string),
+// releaseFrom/releaseTo (YYYY-MM-DD or year number).
 export async function searchGamesFull(query, {
   limit = 24, offset = 0,
   sort = '', yearFrom = null, yearTo = null, minRating = null,
   includeEditions = false,
+  platform = '', tags = null, tagOp = null,
+  inLibrary = null, libraryStatus = '',
+  releaseFrom = null, releaseTo = null,
   signal,
 } = {}) {
   if (!query || query.length < 2) return { results: [], total: 0 };
@@ -141,7 +147,20 @@ export async function searchGamesFull(query, {
   if (sort && sort !== 'relevance') params.append('sort', sort);
   if (yearFrom) params.append('year_from', yearFrom);
   if (yearTo) params.append('year_to', yearTo);
+  if (releaseFrom) params.append('release_from', releaseFrom);
+  if (releaseTo) params.append('release_to', releaseTo);
   if (minRating) params.append('min_rating', minRating);
+  if (platform) params.append('platform', platform);
+  if (tags) {
+    const list = Array.isArray(tags) ? tags : parseTagQuery(String(tags)).tags;
+    for (const t of list) params.append('tag', t);
+    if (tagOp === 'or') params.append('tag_op', 'or');
+    else if (Array.isArray(tags) && tagOp) params.append('tag_op', tagOp);
+    else if (!Array.isArray(tags) && String(tags).includes('|')) params.append('tag_op', 'or');
+  }
+  if (inLibrary === true) params.append('in_library', '1');
+  else if (inLibrary === false) params.append('in_library', '0');
+  if (libraryStatus) params.append('library_status', libraryStatus);
   if (includeEditions) params.append('include_editions', '1');
   const { data, res } = await api.getFull(`/api/games/search?${params.toString()}`, { signal });
   return {
@@ -207,6 +226,23 @@ export async function autocompletePlatforms(prefix) {
   return api.get(`/api/library/platforms?q=${encodeURIComponent(prefix)}`);
 }
 
+// autocompleteGlobalPlatforms suggests platform names from the global
+// platforms table (all IGDB platforms), for the search filter bar.
+// Public, works without auth and for fresh libraries.
+export async function autocompleteGlobalPlatforms(prefix) {
+  if (!prefix || prefix.length < 1) return [];
+  try {
+    return await api.get(`/api/platforms?q=${encodeURIComponent(prefix)}`);
+  } catch {
+    // Fallback to library suggestions if global fails (e.g., empty table)
+    try {
+      return await autocompletePlatforms(prefix);
+    } catch {
+      return [];
+    }
+  }
+}
+
 export function getCoverURL(game) {
   if (game.local_cover_path) return game.local_cover_path;
   if (game.cover_url) return game.cover_url;
@@ -230,7 +266,22 @@ export const library = {
   // list returns { items, total, hasMore }. total/hasMore come from the
   // X-Total-Count / X-Has-More response headers; hasMore is exact even when
   // the item count is a multiple of the page size.
-  async list(status, limit = 60, offset = 0, tag = '', platform = '') {
+  // Extra filters via opts: { yearFrom, yearTo, releaseFrom, releaseTo } (all optional).
+  async list(status, limit = 60, offset = 0, tag = '', platform = '', opts = null) {
+    // Back-compat: if 6th arg is a number, it's legacy yearFrom; collect variadic.
+    let yearFrom = null, yearTo = null, releaseFrom = null, releaseTo = null;
+    if (opts && typeof opts === 'object') {
+      yearFrom = opts.yearFrom ?? null;
+      yearTo = opts.yearTo ?? null;
+      releaseFrom = opts.releaseFrom ?? null;
+      releaseTo = opts.releaseTo ?? null;
+    } else if (arguments.length > 6) {
+      // Legacy positional: list(..., yearFrom, yearTo, releaseFrom, releaseTo)
+      yearFrom = arguments[5] ?? null;
+      yearTo = arguments[6] ?? null;
+      releaseFrom = arguments[7] ?? null;
+      releaseTo = arguments[8] ?? null;
+    }
     const params = new URLSearchParams();
     if (status) params.append('status', status);
     if (tag) {
@@ -241,6 +292,10 @@ export const library = {
       }
     }
     if (platform) params.append('platform', platform);
+    if (yearFrom) params.append('year_from', yearFrom);
+    if (yearTo) params.append('year_to', yearTo);
+    if (releaseFrom) params.append('release_from', releaseFrom);
+    if (releaseTo) params.append('release_to', releaseTo);
     params.append('limit', limit);
     params.append('offset', offset);
     const qs = params.toString() ? `?${params.toString()}` : '';

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"cato/internal/auth"
 	"cato/internal/config"
 	"cato/internal/db"
 	"cato/internal/games"
@@ -15,6 +16,7 @@ import (
 
 type GameHandler struct {
 	service *games.Service
+	db      *db.DB
 }
 
 func NewGameHandler(db *db.DB, cfg *config.Config) *GameHandler {
@@ -35,12 +37,48 @@ func NewGameHandler(db *db.DB, cfg *config.Config) *GameHandler {
 		// and the dead cato host (needs a real IGDB client).
 		svc.StartCoverRepair()
 	}
-	return &GameHandler{service: svc}
+	return &GameHandler{service: svc, db: db}
 }
 
 func (h *GameHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/games/search", h.handleSearch)
+	mux.HandleFunc("/api/platforms", h.handlePlatforms)
 	mux.HandleFunc("/api/games/", h.handleGameByID)
+}
+
+// handlePlatforms serves GET /api/platforms?q= — global platform name
+// suggestions (distinct names from the platforms lookup table), matched
+// against name/abbreviation/shortname. Public (no auth) so the search
+// filter can autocomplete even for anonymous users or fresh libraries.
+func (h *GameHandler) handlePlatforms(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, errResp("method_not_allowed", "Method not allowed"))
+		return
+	}
+	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	if q == "" {
+		writeJSON(w, http.StatusOK, []string{})
+		return
+	}
+	pattern := "%" + games.EscapeLike(q) + "%"
+	rows, err := h.db.Query(`SELECT name FROM platforms
+		WHERE name != '' AND (LOWER(name) LIKE ? ESCAPE '\'
+		   OR LOWER(COALESCE(abbreviation,'')) LIKE ? ESCAPE '\'
+		   OR LOWER(COALESCE(shortname,'')) LIKE ? ESCAPE '\')
+		ORDER BY name LIMIT 8`, pattern, pattern, pattern)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to fetch platforms"))
+		return
+	}
+	defer rows.Close()
+	platforms := make([]string, 0)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err == nil {
+			platforms = append(platforms, name)
+		}
+	}
+	writeJSON(w, http.StatusOK, platforms)
 }
 
 func (h *GameHandler) handleSearch(w http.ResponseWriter, r *http.Request) {
@@ -118,12 +156,91 @@ func (h *GameHandler) handleSearchFull(w http.ResponseWriter, r *http.Request, q
 		platform = ""
 	}
 
-	results, total, err := h.service.SearchPagedFull(r.Context(), query,
+	// Tag filtering (personal library tags).
+	tags := r.URL.Query()["tag"]
+	if len(tags) == 0 {
+		// Also accept comma-separated "tags" param for convenience.
+		if raw := strings.TrimSpace(r.URL.Query().Get("tags")); raw != "" {
+			for _, part := range strings.Split(raw, ",") {
+				if t := strings.TrimSpace(part); t != "" {
+					tags = append(tags, t)
+				}
+			}
+		}
+	}
+	// Cap tag list to avoid abuse.
+	if len(tags) > 16 {
+		tags = tags[:16]
+	}
+	tagOp := r.URL.Query().Get("tag_op")
+	if tagOp != "or" {
+		tagOp = "and"
+	}
+
+	// Library membership filters.
+	inLibrary := parseInLibraryParam(r)
+	libraryStatus := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("library_status")))
+	if libraryStatus == "" {
+		libraryStatus = strings.ToLower(strings.TrimSpace(r.URL.Query().Get("libraryStatus")))
+	}
+	if libraryStatus != "" && !games.ValidLibraryStatuses[libraryStatus] {
+		libraryStatus = ""
+	}
+	// Also allow filtering by library status via plain "status" when it looks
+	// like a library status (keeps old clients working that sent status=...).
+	if libraryStatus == "" {
+		if s := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status"))); games.ValidLibraryStatuses[s] {
+			libraryStatus = s
+		}
+	}
+
+	// Release date range: support both year_* and exact date params.
+	yearFrom := parseYearParam(r.URL.Query().Get("year_from"), false)
+	yearTo := parseYearParam(r.URL.Query().Get("year_to"), true)
+	if df := parseDateParam(r.URL.Query().Get("release_from"), false); df != 0 {
+		if df > yearFrom {
+			yearFrom = df
+		} else if yearFrom == 0 {
+			yearFrom = df
+		}
+	}
+	if dt := parseDateParam(r.URL.Query().Get("release_to"), true); dt != 0 {
+		if yearTo == 0 || dt < yearTo {
+			yearTo = dt
+		}
+	}
+
+	// Resolve optional user for personal filters (tags / library).
+	libraryUserID := ""
+	if len(tags) > 0 || inLibrary != nil || libraryStatus != "" {
+		if uid := tryGetUserID(r, h.db); uid != "" {
+			libraryUserID = uid
+		} else {
+			writeJSON(w, http.StatusUnauthorized, errResp("auth_required", "Login required for tag/library filters"))
+			return
+		}
+		// Normalize tags: trim, drop empties.
+		filtered := tags[:0]
+		for _, t := range tags {
+			if t = strings.TrimSpace(t); t != "" {
+				filtered = append(filtered, t)
+			}
+		}
+		tags = filtered
+	} else {
+		// Still try to populate libraryUserID if a session exists, so
+		// authenticated users can filter by owned status without extra hop,
+		// but don't require it.
+		libraryUserID = tryGetUserID(r, h.db)
+		// If they sent library filters but we stripped them (invalid), ignore.
+	}
+
+	results, total, err := h.service.SearchPagedFullWithFilters(r.Context(), query,
 		limit, offset, sort,
-		parseYearParam(r.URL.Query().Get("year_from"), false),
-		parseYearParam(r.URL.Query().Get("year_to"), true),
+		yearFrom, yearTo,
 		parseMinRatingParam(r.URL.Query().Get("min_rating")),
 		platform,
+		tags, tagOp, libraryUserID, inLibrary, libraryStatus,
 		includeEditions,
 	)
 	if err != nil {
@@ -181,6 +298,83 @@ func parseIncludeEditions(r *http.Request) bool {
 		}
 	}
 	return false
+}
+
+func parseInLibraryParam(r *http.Request) *bool {
+	for _, key := range []string{"in_library", "inLibrary", "owned", "library"} {
+		raw := strings.ToLower(strings.TrimSpace(r.URL.Query().Get(key)))
+		if raw == "" {
+			continue
+		}
+		v := raw == "1" || raw == "true" || raw == "yes" || raw == "owned" || raw == "only"
+		if raw == "0" || raw == "false" || raw == "no" || raw == "exclude" || raw == "not" {
+			v = false
+		} else if v == false && raw != "0" && raw != "false" && raw != "no" && raw != "exclude" && raw != "not" {
+			// Unknown value: treat as true if param present but not recognized false
+			v = true
+		}
+		// Distinguish "only owned" vs "exclude owned": "0"/false means not in library
+		if raw == "0" || raw == "false" || raw == "no" || raw == "exclude" || raw == "not" {
+			v = false
+			return &v
+		}
+		if raw == "1" || raw == "true" || raw == "yes" || raw == "owned" || raw == "only" {
+			v = true
+			return &v
+		}
+		// Bare presence like ?in_library (no value) -> true
+		if raw == "" {
+			v = true
+			return &v
+		}
+		return &v
+	}
+	// Also support ?in_library without value (Has check)
+	for _, key := range []string{"in_library", "inLibrary", "owned"} {
+		if _, ok := r.URL.Query()[key]; ok {
+			v := true
+			// If the value is explicitly falsy, handled above; otherwise true
+			return &v
+		}
+	}
+	return nil
+}
+
+func tryGetUserID(r *http.Request, database *db.DB) string {
+	cookie, err := r.Cookie("cato_session")
+	if err != nil || cookie.Value == "" {
+		return ""
+	}
+	sess, err := auth.GetSession(database, cookie.Value)
+	if err != nil || sess == nil {
+		return ""
+	}
+	return sess.UserID
+}
+
+// parseDateParam parses YYYY-MM-DD or RFC3339 (or a year) into unix seconds.
+// When end is true, bare dates are inclusive to end-of-day.
+func parseDateParam(raw string, end bool) int64 {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0
+	}
+	if t, err := time.Parse("2006-01-02", raw); err == nil {
+		if end {
+			return t.Add(24*time.Hour - time.Second).Unix()
+		}
+		return t.UTC().Unix()
+	}
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return t.Unix()
+	}
+	if y, err := strconv.Atoi(raw); err == nil && y >= 1900 && y <= 2100 {
+		if end {
+			return time.Date(y+1, time.January, 1, 0, 0, 0, 0, time.UTC).Unix() - 1
+		}
+		return time.Date(y, time.January, 1, 0, 0, 0, 0, time.UTC).Unix()
+	}
+	return 0
 }
 
 func (h *GameHandler) handleGameByID(w http.ResponseWriter, r *http.Request) {
