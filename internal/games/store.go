@@ -983,6 +983,31 @@ func isMissingTableErr(err error) bool {
 	return isBenignRepairErr(err)
 }
 
+// GetStaleQueries returns up to `limit` igdb_query_cache keys whose
+// soft expiry has passed (stale-while-revalidate candidates). Ordered by
+// oldest expiry first so the most overdue queries are refreshed first.
+func (s *Store) GetStaleQueries(ctx context.Context, limit int) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT normalized_query FROM igdb_query_cache WHERE expires_at < ? ORDER BY expires_at ASC LIMIT ?`,
+		time.Now().Format(time.RFC3339), limit)
+	if err != nil {
+		if isMissingTableErr(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer rows.Close()
+	var keys []string
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			return nil, err
+		}
+		keys = append(keys, k)
+	}
+	return keys, rows.Err()
+}
+
 // RepairNormalizedAliases re-normalizes stored alias rows that contain
 // diacritics. The alias table only stores the normalized form, so we
 // re-apply NormalizeName to the already-normalized value — this is

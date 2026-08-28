@@ -37,6 +37,7 @@ func NewGameHandler(db *db.DB, cfg *config.Config) *GameHandler {
 		// request) so game platforms render as names, not bare IDs.
 		svc.StartPlatformSync()
 		svc.StartStaleRefresh()
+		svc.StartQueryCacheRefresh()
 		// One-shot startup repair of covers broken by the old URL guessing
 		// and the dead cato host (needs a real IGDB client).
 		svc.StartCoverRepair()

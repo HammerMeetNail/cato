@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -174,9 +175,14 @@ func (s *Service) startAsyncRefresh(query string, includeEditions bool) {
 // both non-empty and empty successful searches in the cache. It always receives
 // a detached bounded context: an HTTP client canceling its request must not
 // cancel a refresh that is already responsible for warming the catalog/cache.
+//
+// On IGDB failure the stale cache entry is kept (not deleted) and its expiry
+// is pushed by 1 hour to avoid hammering the API on every request while it
+// is down. The next request after the backoff window will retry.
 func (s *Service) refreshFromIGDB(ctx context.Context, query string, includeEditions bool) {
 	remote, err := s.igdb.SearchGames(ctx, query, 10, includeEditions)
 	if err != nil {
+		cacheSearchFailureBackoff(ctx, s.db, query, includeEditions)
 		return
 	}
 
@@ -257,6 +263,58 @@ func (s *Service) StartStaleRefresh() {
 			time.Sleep(interval)
 		}
 	}()
+}
+
+// StartQueryCacheRefresh proactively refreshes stale igdb_query_cache entries
+// once per day in the background (up to 50 per cycle, rate-limited via the
+// IGDB limiter). This keeps popular search queries fresh without waiting for
+// a user to trigger the stale-while-revalidate path, so the first search
+// after the 24h window still hits a fresh cache. Only call it when a real
+// IGDB client is configured.
+func (s *Service) StartQueryCacheRefresh() {
+	go func() {
+		// Run once shortly after startup so a restart doesn't wait a full day
+		// to refresh queries that expired while the container was down.
+		time.Sleep(30 * time.Second)
+		for {
+			s.refreshStaleQueries(50)
+			time.Sleep(24 * time.Hour)
+		}
+	}()
+}
+
+func (s *Service) refreshStaleQueries(limit int) {
+	ctx := context.Background()
+	keys, err := s.store.GetStaleQueries(ctx, limit)
+	if err != nil {
+		log.Printf("query cache refresh: list failed: %v", err)
+		return
+	}
+	if len(keys) == 0 {
+		return
+	}
+	log.Printf("query cache refresh: refreshing %d stale queries", len(keys))
+	refreshed := 0
+	for _, key := range keys {
+		if ctx.Err() != nil {
+			break
+		}
+		query, includeEditions := parseCacheKey(key)
+		s.refreshFromIGDB(ctx, query, includeEditions)
+		refreshed++
+	}
+	log.Printf("query cache refresh: refreshed %d/%d stale queries", refreshed, len(keys))
+}
+
+func parseCacheKey(key string) (string, bool) {
+	if !strings.HasPrefix(key, "search:") {
+		return key, false
+	}
+	trimmed := strings.TrimPrefix(key, "search:")
+	if strings.HasSuffix(trimmed, ":editions") {
+		return strings.TrimSuffix(trimmed, ":editions"), true
+	}
+	return trimmed, false
 }
 
 // StartCoverRepair runs RepairCovers once in the background at startup.
@@ -907,12 +965,15 @@ func (s *Service) shouldAskIGDB(ctx context.Context, query string, includeEditio
 	return len(query) >= 3
 }
 
-// PurgeExpiredQueryCache deletes igdb_query_cache rows past their expiry.
-// The read path deletes lazily per-key; this sweep keeps the table bounded
-// overall. Call it periodically (e.g. from a daily maintenance ticker).
+// PurgeExpiredQueryCache deletes igdb_query_cache rows that have been stale
+// for a long time. The read path treats expired rows as stale-while-revalidate
+// (triggers an async refresh but still serves local results immediately), so
+// this sweep keeps the table bounded without deleting entries that are merely
+// awaiting their daily refresh. Only rows expired for more than 30 days are
+// removed — rare queries that haven't been searched in a month.
 func PurgeExpiredQueryCache(database *db.DB) (int64, error) {
 	res, err := database.Exec("DELETE FROM igdb_query_cache WHERE expires_at < ?",
-		time.Now().Format(time.RFC3339))
+		time.Now().Add(-30*24*time.Hour).Format(time.RFC3339))
 	if err != nil {
 		return 0, err
 	}
@@ -924,6 +985,21 @@ func cacheSearchResultsDB(ctx context.Context, db *db.DB, query string, games []
 	key := cacheKey(query, includeEditions)
 	db.ExecContext(ctx, `INSERT OR REPLACE INTO igdb_query_cache (normalized_query, response_json, expires_at)
 		VALUES (?, ?, ?)`, key, string(data), time.Now().Add(24*time.Hour).Format(time.RFC3339))
+}
+
+// cacheSearchFailureBackoff extends the expiry after a failed IGDB fetch so
+// the next request doesn't immediately retry and hammer the API. If the
+// query has never been cached, a short-lived placeholder is inserted so the
+// backoff still applies. The entry remains stale (will trigger a refresh
+// after the backoff window) but avoids tight retry loops when IGDB is down.
+func cacheSearchFailureBackoff(ctx context.Context, db *db.DB, query string, includeEditions bool) {
+	key := cacheKey(query, includeEditions)
+	data, _ := json.Marshal(map[string]interface{}{"query": query, "failed": true})
+	expires := time.Now().Add(1 * time.Hour).Format(time.RFC3339)
+	db.ExecContext(ctx, `INSERT INTO igdb_query_cache (normalized_query, response_json, expires_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(normalized_query) DO UPDATE SET expires_at = excluded.expires_at`,
+		key, string(data), expires)
 }
 
 func getCachedSearchDB(ctx context.Context, db *db.DB, query string, includeEditions bool) (bool, error) {
@@ -943,7 +1019,13 @@ func getCachedSearchDB(ctx context.Context, db *db.DB, query string, includeEdit
 		return false, nil
 	}
 	if time.Now().After(t) {
-		db.ExecContext(ctx, "DELETE FROM igdb_query_cache WHERE normalized_query = ?", key)
+		// Soft expiry: stale-while-revalidate. Keep the row so the cache
+		// doesn't appear empty until the background refresh succeeds (see
+		// cacheSearchResultsDB). The caller will trigger an async refresh
+		// but still serves the local DB snapshot immediately, so the first
+		// request after the 24h window is no slower than a cache hit. The
+		// row is eventually refreshed or, if abandoned for 30 days,
+		// collected by PurgeExpiredQueryCache.
 		return false, nil
 	}
 	return true, nil
