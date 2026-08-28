@@ -9,7 +9,7 @@ const SEARCH_DEBOUNCE_MS = 200;
 const DROPDOWN_MAX = 8;
 const RESULT_CACHE_MAX = 50;
 const RECENTS_KEY = 'cato-recent-searches';
-const RECENTS_MAX = 8;
+const RECENTS_MAX = 5;
 
 let searchTimer = null;
 let activeController = null;
@@ -51,7 +51,7 @@ function saveRecentSearches(list) {
 // Exported so hash-route loads (#search/q) can record too.
 export function recordRecentSearch(query) {
   const q = String(query || '').trim();
-  if (!q || q.startsWith('$')) return;
+  if (!q) return;
   const list = getRecentSearches().filter(x => x.toLowerCase() !== q.toLowerCase());
   list.unshift(q);
   saveRecentSearches(list);
@@ -684,6 +684,7 @@ function renderTagSuggestions(tagSuggestions, items, resultsEl, onSelect, prefix
     footerRow.addEventListener('click', () => {
       closeDropdown(activeInputEl, resultsEl);
       activeInputEl?.blur();
+      recordRecentSearch('$' + raw);
       const event = new CustomEvent('tagfilter', { detail: { tag: raw } });
       resultsEl.dispatchEvent(event);
     });
@@ -735,6 +736,7 @@ function renderPlatformSuggestions(suggestions, resultsEl, raw) {
     footerRow.addEventListener('click', () => {
       closeDropdown(activeInputEl, resultsEl);
       activeInputEl?.blur();
+      recordRecentSearch('@' + raw);
       resultsEl.dispatchEvent(new CustomEvent('platformfilter', { detail: { platform: raw } }));
     });
   }
@@ -770,6 +772,7 @@ function handleKeyboard(e, inputEl, resultsEl, onSelect, onSubmit, onTagLookup) 
         if (tag) {
           closeDropdown(inputEl, resultsEl);
           inputEl.blur();
+          recordRecentSearch(currentQuery);
           const event = new CustomEvent('tagfilter', { detail: { tag } });
           resultsEl.dispatchEvent(event);
         }
@@ -779,6 +782,7 @@ function handleKeyboard(e, inputEl, resultsEl, onSelect, onSubmit, onTagLookup) 
         if (platform) {
           closeDropdown(inputEl, resultsEl);
           inputEl.blur();
+          recordRecentSearch(currentQuery);
           const event = new CustomEvent('platformfilter', { detail: { platform } });
           resultsEl.dispatchEvent(event);
         }

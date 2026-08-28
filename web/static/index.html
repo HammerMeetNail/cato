@@ -210,6 +210,7 @@
         if (tag) {
           searchInput.value = '';
           searchInput.blur();
+          recordRecentSearch(query);
           filterByTag(tag);
           return;
         }
@@ -219,6 +220,7 @@
         if (platform) {
           searchInput.value = '';
           searchInput.blur();
+          recordRecentSearch(query);
           filterByPlatform(platform);
           return;
         }
@@ -247,6 +249,7 @@
 
     // Listen for tagfilter events from search.js ($tag Enter or "Filter library" click)
     searchResults.addEventListener('tagfilter', (e) => {
+      recordRecentSearch('$' + e.detail.tag);
       searchInput.value = '';
       searchInput.blur();
       filterByTag(e.detail.tag);
@@ -254,6 +257,7 @@
 
     // Listen for platformfilter events from search.js (@platform Enter or footer)
     searchResults.addEventListener('platformfilter', (e) => {
+      recordRecentSearch('@' + e.detail.platform);
       searchInput.value = '';
       searchInput.blur();
       filterByPlatform(e.detail.platform);
