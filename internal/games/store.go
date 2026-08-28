@@ -884,3 +884,180 @@ func (s *Store) EnqueueMissingCoverJobs(ctx context.Context) (int64, error) {
 	}
 	return res.RowsAffected()
 }
+
+// RepairNormalizedNames re-normalizes stored names that contain diacritics
+// or legacy punctuation. Older rows stored "pokémon go" with the accent
+// intact, so a query for "pokemon go" (without accent) missed them via
+// both LIKE and FTS (the trigram index is accent-sensitive). The new
+// NormalizeName strips accents via NFD, so we update any row where the
+// stored normalized_name differs from the current normalization of its
+// display name. The games_fts trigram index is maintained by triggers
+// on UPDATE, so no manual reindex is needed. Returns the number of
+// games updated.
+func (s *Store) RepairNormalizedNames(ctx context.Context) (int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, safe_name, normalized_name FROM games`)
+	if err != nil && isMissingTableErr(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	type fix struct {
+		id       int64
+		expected string
+	}
+	var fixes []fix
+	for rows.Next() {
+		var id int64
+		var name, safeName, normalized string
+		if err := rows.Scan(&id, &name, &safeName, &normalized); err != nil {
+			if isBenignRepairErr(err) {
+				return 0, nil
+			}
+			return 0, err
+		}
+		src := name
+		if src == "" {
+			src = safeName
+		}
+		expected := NormalizeName(src)
+		if expected != normalized {
+			fixes = append(fixes, fix{id: id, expected: expected})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		if isBenignRepairErr(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	if len(fixes) == 0 {
+		return 0, nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		if isBenignRepairErr(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.Prepare(`UPDATE games SET normalized_name = ? WHERE id = ?`)
+	if err != nil {
+		if isBenignRepairErr(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	defer stmt.Close()
+	var updated int64
+	for _, f := range fixes {
+		if _, err := stmt.Exec(f.expected, f.id); err != nil {
+			if isBenignRepairErr(err) {
+				return updated, nil
+			}
+			return updated, err
+		}
+		updated++
+	}
+	if err := tx.Commit(); err != nil {
+		if isBenignRepairErr(err) {
+			return updated, nil
+		}
+		return updated, err
+	}
+	return updated, nil
+}
+
+func isBenignRepairErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "no such table") || strings.Contains(msg, "database is closed") || strings.Contains(msg, "bad connection")
+}
+
+func isMissingTableErr(err error) bool {
+	return isBenignRepairErr(err)
+}
+
+// RepairNormalizedAliases re-normalizes stored alias rows that contain
+// diacritics. The alias table only stores the normalized form, so we
+// re-apply NormalizeName to the already-normalized value — this is
+// idempotent for accent-free rows but strips any surviving accents.
+// Returns the number of aliases updated (old row deleted + new inserted).
+func (s *Store) RepairNormalizedAliases(ctx context.Context) (int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT game_id, normalized_alias FROM game_aliases`)
+	if err != nil && isMissingTableErr(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	type fix struct {
+		gameID int64
+		old    string
+		nw     string
+	}
+	var fixes []fix
+	for rows.Next() {
+		var gid int64
+		var alias string
+		if err := rows.Scan(&gid, &alias); err != nil {
+			if isBenignRepairErr(err) {
+				return 0, nil
+			}
+			return 0, err
+		}
+		expected := NormalizeName(alias)
+		if expected != alias && expected != "" {
+			fixes = append(fixes, fix{gameID: gid, old: alias, nw: expected})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		if isBenignRepairErr(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	if len(fixes) == 0 {
+		return 0, nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		if isBenignRepairErr(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	defer tx.Rollback()
+	var updated int64
+	for _, f := range fixes {
+		// Delete old, insert new. Use OR IGNORE to handle collisions where
+		// two different accented aliases collapse to the same accent-free form.
+		if _, err := tx.Exec(`DELETE FROM game_aliases WHERE game_id = ? AND normalized_alias = ?`, f.gameID, f.old); err != nil {
+			if isBenignRepairErr(err) {
+				return updated, nil
+			}
+			return updated, err
+		}
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO game_aliases (game_id, normalized_alias) VALUES (?, ?)`, f.gameID, f.nw); err != nil {
+			if isBenignRepairErr(err) {
+				return updated, nil
+			}
+			return updated, err
+		}
+		updated++
+	}
+	if err := tx.Commit(); err != nil {
+		if isBenignRepairErr(err) {
+			return updated, nil
+		}
+		return updated, err
+	}
+	return updated, nil
+}

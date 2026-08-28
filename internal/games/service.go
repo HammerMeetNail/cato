@@ -522,6 +522,49 @@ func (s *Service) EnqueueMissingCovers() {
 	}
 }
 
+// StartNormalizationRepair runs the accent-stripping normalization fix
+// in the background. Older rows stored normalized_name with accents
+// (e.g. "pokémon go") so a query for "pokemon go" missed them via
+// FTS/LIKE. The new NormalizeName strips diacritics, so we update any
+// mismatched rows. Safe to run repeatedly; idempotent.
+func (s *Service) StartNormalizationRepair() {
+	// Quick synchronous check: if the games table doesn't exist (e.g. a
+	// fresh DB in tests that hasn't been migrated) skip the background
+	// work entirely to avoid noisy logs and file-handle races during
+	// TempDir cleanup.
+	var cnt int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='games'`).Scan(&cnt); err != nil || cnt == 0 {
+		return
+	}
+	go func() {
+		ctx := context.Background()
+		if n, err := s.store.RepairNormalizedNames(ctx); err != nil {
+			log.Printf("normalization repair: games failed: %v", err)
+		} else if n > 0 {
+			log.Printf("normalization repair: fixed %d game names", n)
+		}
+		if n, err := s.store.RepairNormalizedAliases(ctx); err != nil {
+			log.Printf("normalization repair: aliases failed: %v", err)
+		} else if n > 0 {
+			log.Printf("normalization repair: fixed %d aliases", n)
+		}
+	}()
+}
+
+// RepairNormalization is the synchronous variant used by tests and the
+// backfill subcommand. It returns the total number of rows updated.
+func (s *Service) RepairNormalization(ctx context.Context) (int64, error) {
+	n1, err := s.store.RepairNormalizedNames(ctx)
+	if err != nil {
+		return n1, err
+	}
+	n2, err := s.store.RepairNormalizedAliases(ctx)
+	if err != nil {
+		return n1 + n2, err
+	}
+	return n1 + n2, nil
+}
+
 // BackfillPopularity walks backfill-candidate rows (see GetBackfillCandidates)
 // and re-fetches each from IGDB so the new popularity fields (follows, hypes,
 // total_rating_count, category, status) get populated. Respects the IGDB rate

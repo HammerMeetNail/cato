@@ -4,6 +4,31 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+	"unicode"
+
+	"golang.org/x/text/transform"
+	"golang.org/x/text/unicode/norm"
+)
+
+func stripDiacritics(s string) string {
+	t := transform.Chain(norm.NFD, transform.RemoveFunc(func(r rune) bool {
+		return unicode.Is(unicode.Mn, r)
+	}), norm.NFC)
+	result, _, _ := transform.String(t, s)
+	return result
+}
+
+var nonDecomposingReplacer = strings.NewReplacer(
+	"æ", "ae",
+	"œ", "oe",
+	"ø", "o",
+	"å", "a",
+	"ß", "ss",
+	"ł", "l",
+	"đ", "d",
+	"þ", "th",
+	"ð", "d",
+	"ı", "i",
 )
 
 func pgArrayToJSONText(input string) string {
@@ -35,7 +60,13 @@ func pgArrayToJSONText(input string) string {
 
 func normalizeName(input string) string {
 	input = strings.ToLower(input)
+	input = stripDiacritics(input)
+	input = nonDecomposingReplacer.Replace(input)
+	input = strings.ReplaceAll(input, "’", "")
+	input = strings.ReplaceAll(input, "‘", "")
 	input = strings.ReplaceAll(input, "'", "")
+	input = strings.ReplaceAll(input, "–", " ")
+	input = strings.ReplaceAll(input, "—", " ")
 	input = strings.ReplaceAll(input, "-", " ")
 	input = strings.ReplaceAll(input, ":", " ")
 	fields := strings.Fields(input)
