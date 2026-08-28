@@ -259,7 +259,7 @@ a { color: var(--accent); text-decoration: none; }
   color: var(--text);
 }
 
-/* --- Search UX v2 (SEARCH_IMPROVEMENTS.md §1-§3) ------------------------- */
+/* --- Search UX v2 ------------------------- */
 
 /* Sticky search bar: the input stays reachable while the library scrolls.
    The topbar is sticky too (~53px tall), so the wrap parks right under it. */

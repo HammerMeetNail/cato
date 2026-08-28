@@ -72,7 +72,7 @@ type igdbGame struct {
 // igdbFields is the IGDB API v4 fields clause requested on every games query.
 // Extended to include popularity signals (follows, hypes,
 // total_rating_count, etc.) used to compute Game.PopularityScore, and
-// alternative_names.name for alias-aware search (SEARCH_IMPROVEMENTS.md §4.1).
+// alternative_names.name for alias-aware search.
 //
 // cover.image_id is requested as a nested field: game.cover is an ID into the
 // covers table, and the CDN URL must be built from that record's image_id

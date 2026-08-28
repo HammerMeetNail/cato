@@ -75,10 +75,10 @@ func (s *Service) SearchPaged(ctx context.Context, query string, limit, offset i
 }
 
 // SearchPagedFull is the full-results-page search: paginated, floored,
-// optionally sorted/filtered (SEARCH_IMPROVEMENTS.md §4.4), and returning the
-// total match count so the UI can display "N results". platform (substring of
-// a platform name/abbreviation) restricts to games available on it. As in
-// SearchPaged, refreshes are asynchronous on page 1 only.
+// optionally sorted/filtered, and returning the total match count so the UI
+// can display "N results". platform (substring of a platform name/abbreviation)
+// restricts to games available on it. As in SearchPaged, refreshes are
+// asynchronous on page 1 only.
 func (s *Service) SearchPagedFull(ctx context.Context, query string, limit, offset int, sort string, yearFrom, yearTo, minRating int64, platform string, includeEditions bool) ([]GameResult, int64, error) {
 	return s.SearchPagedFullWithFilters(ctx, query, limit, offset, sort, yearFrom, yearTo, minRating, platform, nil, "", "", nil, "", includeEditions)
 }
@@ -566,18 +566,6 @@ func PurgeDeadCoverSources(database *db.DB) (int64, error) {
 	n, _ := res.RowsAffected()
 	database.Exec(`DELETE FROM cover_jobs WHERE source_url LIKE '%//images.cato.com/%'`)
 	return n, nil
-}
-
-func (s *Service) EnqueueMissingCovers() {
-	ctx := context.Background()
-	count, err := s.store.EnqueueMissingCoverJobs(ctx)
-	if err != nil {
-		log.Printf("cover backfill: failed to enqueue missing cover jobs: %v", err)
-		return
-	}
-	if count > 0 {
-		log.Printf("cover backfill: enqueued %d cover download jobs", count)
-	}
 }
 
 // StartNormalizationRepair runs the accent-stripping normalization fix

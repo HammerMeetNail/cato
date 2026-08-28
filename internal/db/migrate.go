@@ -194,23 +194,22 @@ var migrations = []Migration{
 	},
 	{
 		Version: 8,
-		// Completion marker for alias backfill (SEARCH_IMPROVEMENTS.md §7).
-		// 0 = this row's alias set has never been fetched from IGDB;
-		// non-zero (unix seconds) = fetched, even when upstream had no
-		// aliases — otherwise zero-alias games would be re-fetched forever.
-		// Set by UpsertIGDBGame (whose igdbFields always include
-		// alternative_names.name) and by the resumable backfill-aliases
-		// subcommand.
+		// Completion marker for alias backfill. 0 = this row's alias set has
+		// never been fetched from IGDB; non-zero (unix seconds) = fetched,
+		// even when upstream had no aliases — otherwise zero-alias games would
+		// be re-fetched forever. Set by UpsertIGDBGame (whose igdbFields
+		// always include alternative_names.name) and by the resumable
+		// backfill-aliases subcommand.
 		Up: `ALTER TABLE games ADD COLUMN aliases_fetched_at INTEGER NOT NULL DEFAULT 0;`,
 	},
 	{
 		Version: 7,
-		// Game aliases for search (SEARCH_IMPROVEMENTS.md §4.1). Populated
-		// from IGDB alternative_names by the IGDB refresh paths; lets short
-		// abbreviations ("botw") and localized titles find the main game.
-		// aliases_fts is a standalone (content-managed) trigram table kept in
-		// step by triggers on game_aliases. Alias rows always reference an
-		// existing game, so ON DELETE CASCADE keeps both tables consistent.
+		// Game aliases for search. Populated from IGDB alternative_names by
+		// the IGDB refresh paths; lets short abbreviations ("botw") and
+		// localized titles find the main game. aliases_fts is a standalone
+		// (content-managed) trigram table kept in step by triggers on
+		// game_aliases. Alias rows always reference an existing game, so ON
+		// DELETE CASCADE keeps both tables consistent.
 		Up: `CREATE TABLE IF NOT EXISTS game_aliases (
 		     game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
 		     normalized_alias TEXT NOT NULL,

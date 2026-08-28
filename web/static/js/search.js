@@ -2,9 +2,9 @@ import { searchGames, getCoverThumbnailURL, autocompleteTags, autocompletePlatfo
 import { escapeHTML, showToast, formatPlatformName, statusBadgeLabel, openLibraryItemModal, refreshTabCounts } from './library.js';
 import { releaseLabel, releaseStatus } from './dates.js';
 
-// Tuning knobs (SEARCH_IMPROVEMENTS.md §1): 200ms feels responsive without
-// hammering the API; the dropdown renders at most 8 rows; the client-side
-// result cache makes backspacing instant without any network round-trip.
+// Tuning knobs: 200ms feels responsive without hammering the API; the
+// dropdown renders at most 8 rows; the client-side result cache makes
+// backspacing instant without any network round-trip.
 const SEARCH_DEBOUNCE_MS = 200;
 const DROPDOWN_MAX = 8;
 const RESULT_CACHE_MAX = 50;
@@ -19,8 +19,7 @@ let currentQuery = '';
 let activeInputEl = null;
 let activeOnSubmit = null;
 // How many result rows are actually rendered in the dropdown. The games list
-// renders only the first 8 results while ArrowDown used to index into all 10,
-// letting the selection become invisible (FINDINGS §3.6).
+// renders only the first 8 results; ArrowDown is clamped to visible rows.
 let renderedCount = 0;
 
 // resultCache maps raw query -> results array (per page session). Serving a
@@ -220,8 +219,8 @@ export function initSearch(inputEl, resultsEl, onSelect, onSubmit, onTagLookup) 
   activeInputEl = inputEl;
   activeOnSubmit = onSubmit;
 
-  // ARIA combobox wiring (SEARCH_IMPROVEMENTS.md §1.8). The static HTML
-  // carries these too; setting them here keeps the contract in one place.
+  // ARIA combobox wiring. The static HTML carries these too; setting them
+  // here keeps the contract in one place.
   inputEl.setAttribute('role', 'combobox');
   inputEl.setAttribute('aria-autocomplete', 'list');
   inputEl.setAttribute('aria-controls', resultsEl.id || 'searchResults');
@@ -748,8 +747,8 @@ function handleKeyboard(e, inputEl, resultsEl, onSelect, onSubmit, onTagLookup) 
     case 'ArrowDown':
       if (!resultsEl.classList.contains('active') || renderedCount === 0) return;
       e.preventDefault();
-      // Clamp to the RENDERED rows — ArrowDown used to index past the
-      // visible items, producing an invisible selection (FINDINGS §3.6).
+      // Clamp to the RENDERED rows — don't let ArrowDown index past visible
+      // items.
       selectedIndex = Math.min(selectedIndex + 1, renderedCount - 1);
       updateSelection(resultsEl);
       break;

@@ -42,7 +42,7 @@ func TestSearchLocalLikeWildcardEscaping(t *testing.T) {
 }
 
 // TestMarkRefreshed verifies stale-queue advancement for permanently-failed
-// refreshes (FINDINGS §3.1 treadmill).
+// refreshes that would otherwise block the queue forever.
 func TestMarkRefreshed(t *testing.T) {
 	database, store := setupGameDB(t)
 	defer database.Close()

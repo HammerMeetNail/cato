@@ -30,9 +30,9 @@ func seedZelda(t *testing.T, database *db.DB) {
 		(3, 'Zelda II: The Adventure of Link', 'zelda-ii', 'zelda ii the adventure of link', 567993600, 75, 200, 0, 300)`)
 }
 
-// TestAliasSearchFindsMainGame covers SEARCH_IMPROVEMENTS.md §4.1: a game
-// upserted with IGDB alternative_names is findable by abbreviation and by
-// localized title, ranked below direct name matches.
+// TestAliasSearchFindsMainGame: a game upserted with IGDB alternative_names
+// is findable by abbreviation and by localized title, ranked below direct
+// name matches.
 func TestAliasSearchFindsMainGame(t *testing.T) {
 	database, store := setupGameDB(t)
 	defer database.Close()

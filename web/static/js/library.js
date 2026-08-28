@@ -89,8 +89,8 @@ const libraryFilters = {
 
 let scrollListenerAttached = false;
 
-// Active sort/filters for search mode (SEARCH_IMPROVEMENTS.md §5). Scoped to
-// one query: switching searches resets them.
+// Active sort/filters for search mode. Scoped to one query: switching
+// searches resets them.
 const searchFilters = {
   sort: '', yearFrom: '', yearTo: '', minRating: '', includeEditions: false,
   platform: '', tags: '', tagOp: 'and',
@@ -2450,7 +2450,7 @@ function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status
 // escapeHTML escapes all five HTML-sensitive characters. The previous
 // implementation (div.textContent = s; return div.innerHTML) left quotes
 // untouched, which allowed attribute injection in data-tag="..."/alt="..."
-// contexts — a verified stored-XSS vector (FINDINGS §1.5).
+// contexts — a verified stored-XSS vector.
 export function escapeHTML(str) {
   return String(str ?? '').replace(/[&<>"']/g, c => ({
     '&': '&amp;',

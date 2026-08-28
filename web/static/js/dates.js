@@ -1,6 +1,6 @@
 // Timestamp helpers for library dates.
 //
-// The DB contains mixed formats (FINDINGS §2.2):
+// The DB contains mixed legacy formats:
 //   "2026-08-21 02:11:10"            — SQLite CURRENT_TIMESTAMP, UTC, no zone
 //   "2024-01-04 22:13:59.054264"     — same with microseconds
 //   "2026-08-20T22:11:10-04:00"      — RFC3339, server-local offset

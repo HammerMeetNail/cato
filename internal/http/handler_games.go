@@ -147,9 +147,9 @@ func (h *GameHandler) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 // handleSearchFull handles paginated full-results search with the relevance floor.
 // Parses limit (default 24, clamped [1,60]) and offset (default 0, clamped >=0).
-// Optional sort/year_from/year_to/min_rating filters are applied server-side
-// (SEARCH_IMPROVEMENTS.md §4.4); the total match count is returned in
-// X-Total-Count, mirroring the library list endpoint's convention.
+// Optional sort/year_from/year_to/min_rating filters are applied server-side;
+// the total match count is returned in X-Total-Count, mirroring the library
+// list endpoint's convention.
 func (h *GameHandler) handleSearchFull(w http.ResponseWriter, r *http.Request, query string, includeEditions bool) {
 	limit := 24
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {

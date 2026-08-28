@@ -1130,7 +1130,7 @@ func (h *LibraryHandler) handleLibraryStats(w http.ResponseWriter, r *http.Reque
 // parseTimestampInput interprets an optional client-supplied timestamp.
 // nil -> not provided; "" -> explicit clear; otherwise it must parse as
 // RFC3339 or YYYY-MM-DD and is normalized to UTC RFC3339 so stored values
-// are consistent regardless of client timezone (FINDINGS §2.2/§3.2).
+// are consistent regardless of client timezone.
 func parseTimestampInput(v *string) (clear bool, value string, err error) {
 	if v == nil {
 		return false, "", nil

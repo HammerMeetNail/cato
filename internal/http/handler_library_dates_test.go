@@ -65,8 +65,8 @@ func libReq(mux *http.ServeMux, sessionID, csrf, method, path, body string) *htt
 }
 
 // TestLibraryUpdatePreservesTimestamps is the regression test for the
-// data-loss bug (FINDINGS §1.3): a UI-style edit sends no timestamps, and the
-// upsert used to write NULL over started_at/completed_at.
+// data-loss bug where a UI-style edit sends no timestamps and the upsert
+// used to write NULL over started_at/completed_at.
 func TestLibraryUpdatePreservesTimestamps(t *testing.T) {
 	database, mux, sessionID := setupDatesTestDB(t)
 	defer database.Close()

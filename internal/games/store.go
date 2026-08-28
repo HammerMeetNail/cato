@@ -875,16 +875,6 @@ func (s *Store) EnqueueCoverJob(ctx context.Context, gameID int64, sourceURL str
 	return err
 }
 
-func (s *Store) EnqueueMissingCoverJobs(ctx context.Context) (int64, error) {
-	res, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO cover_jobs (game_id, source_url)
-		SELECT id, cover_url FROM games
-		WHERE cover_url != '' AND id NOT IN (SELECT game_id FROM cover_jobs)`)
-	if err != nil {
-		return 0, err
-	}
-	return res.RowsAffected()
-}
-
 // RepairNormalizedNames re-normalizes stored names that contain diacritics
 // or legacy punctuation. Older rows stored "pokémon go" with the accent
 // intact, so a query for "pokemon go" (without accent) missed them via
