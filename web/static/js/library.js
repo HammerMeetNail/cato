@@ -818,14 +818,13 @@ function buildLibFilterPanelHTML() {
               <datalist id="lfTagsList"></datalist>
             </label>
           </div>
-          <p class="lib-filter-hint"><span class="lib-filter-hint-dot"></span> <code>ps5</code> <code>sw2</code> <code>win</code> — space = AND, <code>|</code> = OR, quotes for multi-word</p>
         </div>
         <div class="lib-filter-card">
           <h4 class="lib-filter-section-title">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
             Release Date
           </h4>
-          <div class="lib-filter-grid lib-filter-grid--range">
+          <div class="lib-filter-grid lib-filter-grid--2">
             <label class="lib-filter-field">
               <span class="lib-filter-label">Year from</span>
               <input id="lfYearFrom" type="number" min="1900" max="2100" inputmode="numeric" placeholder="1994">
@@ -834,16 +833,7 @@ function buildLibFilterPanelHTML() {
               <span class="lib-filter-label">Year to</span>
               <input id="lfYearTo" type="number" min="1900" max="2100" inputmode="numeric" placeholder="2024">
             </label>
-            <label class="lib-filter-field">
-              <span class="lib-filter-label">Exact from</span>
-              <input id="lfReleaseFrom" type="date">
-            </label>
-            <label class="lib-filter-field">
-              <span class="lib-filter-label">Exact to</span>
-              <input id="lfReleaseTo" type="date">
-            </label>
           </div>
-          <p class="lib-filter-hint">Year and exact date combine into one range</p>
         </div>
       </div>
       <div class="lib-filter-footer">
@@ -861,8 +851,6 @@ function updateLibFilterBadge() {
     paginationState.tagFilter,
     libraryFilters.yearFrom,
     libraryFilters.yearTo,
-    libraryFilters.releaseFrom,
-    libraryFilters.releaseTo,
   ].filter(v => String(v || '').trim()).length;
   badge.textContent = n > 9 ? '9+' : String(n);
   badge.hidden = n === 0;
@@ -944,32 +932,25 @@ function wireLibFilterPanel(panel) {
       const n = parseInt(v, 10);
       return Number.isFinite(n) && n >= 1900 && n <= 2100 ? String(n) : '';
     };
-    const clampDate = v => {
-      const s = String(v || '').trim();
-      if (!s) return '';
-      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-      if (/^\d{4}$/.test(s)) {
-        const y = parseInt(s, 10);
-        return y >= 1900 && y <= 2100 ? `${y}-01-01` : '';
-      }
-      return '';
-    };
     const newTag = tagsEl.value.trim().slice(0, 200);
     const newPlat = platEl.value.trim().slice(0, 64);
-    libraryFilters.yearFrom = clampYear(yfEl.value);
-    libraryFilters.yearTo = clampYear(ytEl.value);
-    libraryFilters.releaseFrom = clampDate(rfEl.value);
-    libraryFilters.releaseTo = clampDate(rtEl.value);
+    libraryFilters.yearFrom = clampYear(yfEl ? yfEl.value : '');
+    libraryFilters.yearTo = clampYear(ytEl ? ytEl.value : '');
+    // Exact dates removed — clear any legacy exact range
+    libraryFilters.releaseFrom = '';
+    libraryFilters.releaseTo = '';
     paginationState.yearFrom = libraryFilters.yearFrom;
     paginationState.yearTo = libraryFilters.yearTo;
-    paginationState.releaseFrom = libraryFilters.releaseFrom;
-    paginationState.releaseTo = libraryFilters.releaseTo;
+    paginationState.releaseFrom = '';
+    paginationState.releaseTo = '';
     closeLibFilterPanel();
     loadLibrary(paginationState.statuses, newTag, newPlat);
   };
 
   const clear = () => {
-    platEl.value = ''; tagsEl.value = ''; yfEl.value = ''; ytEl.value = ''; rfEl.value = ''; rtEl.value = '';
+    platEl.value = ''; tagsEl.value = '';
+    if (yfEl) yfEl.value = ''; if (ytEl) ytEl.value = '';
+    if (rfEl) rfEl.value = ''; if (rtEl) rtEl.value = '';
     libraryFilters.yearFrom = ''; libraryFilters.yearTo = ''; libraryFilters.releaseFrom = ''; libraryFilters.releaseTo = '';
     paginationState.yearFrom = ''; paginationState.yearTo = ''; paginationState.releaseFrom = ''; paginationState.releaseTo = '';
     closeLibFilterPanel();
@@ -979,7 +960,7 @@ function wireLibFilterPanel(panel) {
   panel.querySelector('#lfApply')?.addEventListener('click', apply);
   panel.querySelector('#lfClear')?.addEventListener('click', clear);
   panel.querySelector('#libFilterClose')?.addEventListener('click', closeLibFilterPanel);
-  [platEl, tagsEl, yfEl, ytEl, rfEl, rtEl].forEach(el => {
+  [platEl, tagsEl, yfEl, ytEl, rfEl, rtEl].filter(Boolean).forEach(el => {
     el.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); apply(); } });
   });
 }
