@@ -1,6 +1,6 @@
 // Bump on any release that changes shipped static assets so the new SW purges
 // the previous cache on activate. Prevents stale JS/CSS after deploys.
-const CACHE_NAME = "cato-static-v3";
+const CACHE_NAME = "cato-static-v4";
 const OFFLINE_URL = "/offline.html";
 const STATIC_ASSETS = [
   "/css/app.css",
