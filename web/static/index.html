@@ -24,49 +24,59 @@
           </button>
           <div class="user-menu-dropdown" id="userMenuDropdown" hidden>
             <span class="user-menu-name" id="userDisplay"></span>
-            <a href="/settings">Settings</a>
+            <a href="#settings" id="settingsLink">Settings</a>
             <a href="#" id="logoutLink">Logout</a>
           </div>
         </div>
       </nav>
     </header>
 
-    <main class="container">
-      <div class="search-wrap">
-        <input type="text" id="searchInput" placeholder="Search games…"
-               autocomplete="off" enterkeyhint="search"
-               spellcheck="false" autocapitalize="none" autocorrect="off"
-               role="combobox" aria-expanded="false"
-               aria-autocomplete="list" aria-controls="searchResults">
-        <button type="button" class="search-clear" id="searchClear" aria-label="Clear search">&times;</button>
-        <button type="button" class="voice-btn" id="voiceBtn" aria-label="Search by voice" style="display:none">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-            <rect x="9" y="3" width="6" height="11" rx="3"></rect>
-            <path d="M5 11a7 7 0 0 0 14 0"></path>
-            <line x1="12" y1="18" x2="12" y2="21"></line>
-          </svg>
-        </button>
-        <div class="search-hint">
-          <span><kbd>$</kbd> filters your library by tag, e.g. <kbd>$rpg</kbd></span>
-          <span><kbd>@</kbd> filters by platform, e.g. <kbd>@switch</kbd> · tags with spaces need quotes: <kbd>$"switch 2"</kbd></span>
+    <nav class="main-tabs" id="mainTabs" aria-label="Main sections">
+      <a href="#" class="tab active" data-route="library">Library</a>
+      <a href="#stats" class="tab" data-route="stats">Stats</a>
+      <a href="#settings" class="tab" data-route="settings">Settings</a>
+    </nav>
+
+    <main class="container" id="mainContainer">
+      <div id="libraryView">
+        <div class="search-wrap">
+          <input type="text" id="searchInput" placeholder="Search games…"
+                 autocomplete="off" enterkeyhint="search"
+                 spellcheck="false" autocapitalize="none" autocorrect="off"
+                 role="combobox" aria-expanded="false"
+                 aria-autocomplete="list" aria-controls="searchResults">
+          <button type="button" class="search-clear" id="searchClear" aria-label="Clear search">&times;</button>
+          <button type="button" class="voice-btn" id="voiceBtn" aria-label="Search by voice" style="display:none">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+              <rect x="9" y="3" width="6" height="11" rx="3"></rect>
+              <path d="M5 11a7 7 0 0 0 14 0"></path>
+              <line x1="12" y1="18" x2="12" y2="21"></line>
+            </svg>
+          </button>
+          <div class="search-hint">
+            <span><kbd>$</kbd> filters your library by tag, e.g. <kbd>$rpg</kbd></span>
+            <span><kbd>@</kbd> filters by platform, e.g. <kbd>@switch</kbd> · tags with spaces need quotes: <kbd>$"switch 2"</kbd></span>
+          </div>
+          <div class="search-results" id="searchResults"></div>
         </div>
-        <div class="search-results" id="searchResults"></div>
-      </div>
 
-      <div class="tabs" id="statusTabs">
-        <button class="tab active" data-status="">All</button>
-        <button class="tab" data-status="wishlist">Wishlist</button>
-        <button class="tab" data-status="backlog">Backlog</button>
-        <button class="tab" data-status="playing">Playing</button>
-        <button class="tab" data-status="completed">Completed</button>
-        <button class="tab" data-status="abandoned">Abandoned</button>
-      </div>
+        <div class="tabs" id="statusTabs">
+          <button class="tab active" data-status="">All</button>
+          <button class="tab" data-status="wishlist">Wishlist</button>
+          <button class="tab" data-status="backlog">Backlog</button>
+          <button class="tab" data-status="playing">Playing</button>
+          <button class="tab" data-status="completed">Completed</button>
+          <button class="tab" data-status="abandoned">Abandoned</button>
+        </div>
 
-      <div class="stats-strip" id="statsStrip" style="display:none"></div>
+        <div class="stats-strip" id="statsStrip" style="display:none"></div>
 
-      <div class="game-grid" id="gameGrid">
-        <div class="loading">Loading library...</div>
+        <div class="game-grid" id="gameGrid">
+          <div class="loading">Loading library...</div>
+        </div>
       </div>
+      <div id="statsView" hidden></div>
+      <div id="settingsView" hidden></div>
     </main>
   </div>
 
@@ -81,8 +91,9 @@
   <script type="module">
     import { checkAuth, logout, library } from '/js/api.js';
     import { initSearch, initVoiceSearch, recordRecentSearch } from '/js/search.js';
-    import { loadLibrary, loadSearchResults, addGameToLibrary, renderLibraryItems, getHashStatus, getHashGameId, getHashSearch, openGameModal, activateStatusTab, openLibraryItemModal, filterByTag, filterByPlatform, refreshTabCounts, loadHero, initHeroActions } from '/js/library.js';
-    import { openStatsDialog } from '/js/stats.js';
+    import { loadLibrary, loadSearchResults, addGameToLibrary, getHashStatus, getHashGameId, getHashSearch, openGameModal, openLibraryItemModal, filterByTag, filterByPlatform, refreshTabCounts, loadHero, initHeroActions } from '/js/library.js';
+    import { renderStatsView } from '/js/stats.js';
+    import { renderSettingsView } from '/js/settings.js';
 
     const searchInput = document.getElementById('searchInput');
     const searchResults = document.getElementById('searchResults');
@@ -91,9 +102,59 @@
     const userMenuBtn = document.getElementById('userMenuBtn');
     const userMenuDropdown = document.getElementById('userMenuDropdown');
     const logoutLink = document.getElementById('logoutLink');
+    const settingsLink = document.getElementById('settingsLink');
     const statusTabs = document.getElementById('statusTabs');
+    const mainTabs = document.getElementById('mainTabs');
+    const libraryView = document.getElementById('libraryView');
+    const statsView = document.getElementById('statsView');
+    const settingsView = document.getElementById('settingsView');
+    const fabAdd = document.getElementById('fabAdd');
+
+    function updateMainTabs(route) {
+      if (!mainTabs) return;
+      mainTabs.querySelectorAll('.tab').forEach(tab => {
+        const r = tab.dataset.route || '';
+        tab.classList.toggle('active', r === route);
+      });
+    }
+
+    function showView(name) {
+      if (libraryView) libraryView.hidden = name !== 'library';
+      if (statsView) statsView.hidden = name !== 'stats';
+      if (settingsView) settingsView.hidden = name !== 'settings';
+      if (fabAdd) fabAdd.style.display = name === 'library' ? '' : 'none';
+      // Switching top-level tabs should not leave a stale game modal overlaying
+      // the new view (e.g. open #game/123 on Library then click Stats).
+      if (name !== 'library') {
+        const existingModal = document.getElementById('addGameModal');
+        if (existingModal) {
+          existingModal.remove();
+          document.body.classList.remove('modal-open');
+        }
+        // Legacy stats dialog (pre-tabbed) — belt-and-suspenders.
+        document.getElementById('statsDialog')?.remove();
+      }
+    }
 
     async function handleRoute() {
+      const raw = window.location.hash.slice(1);
+      if (raw === 'stats') {
+        updateMainTabs('stats');
+        showView('stats');
+        await renderStatsView(statsView);
+        return;
+      }
+      if (raw === 'settings') {
+        updateMainTabs('settings');
+        showView('settings');
+        await renderSettingsView(settingsView);
+        return;
+      }
+
+      // Default: Library view (covers "", status names, #search/..., #game/...)
+      updateMainTabs('library');
+      showView('library');
+
       const searchQuery = getHashSearch();
       if (searchQuery) {
         searchInput.value = searchQuery;
@@ -110,19 +171,7 @@
       }
     }
 
-    const initialSearch = getHashSearch();
-    const initialStatus = getHashStatus();
-    const initialGameId = getHashGameId();
-
-    // Fire auth check and library fetch simultaneously so neither waits for
-    // the other.  On a fresh page load this cuts the visible wait time from
-    // sum(auth + library) to roughly max(auth, library).
-    // library.list() will return a 401 for unauthenticated users; we catch
-    // that so it doesn't surface as an unhandled rejection.
-    const [auth, lib] = await Promise.all([
-      checkAuth(),
-      initialSearch ? null : library.list(initialStatus).catch(() => null),
-    ]);
+    const auth = await checkAuth();
 
     if (!auth.authenticated) {
       window.location.href = '/login' + window.location.hash;
@@ -155,6 +204,11 @@
       }
     });
 
+    // Close user menu when navigating via its Settings link (hash nav).
+    if (settingsLink) {
+      settingsLink.addEventListener('click', () => setUserMenu(false));
+    }
+
     // "Playing now" strip: one-tap time logging + finish. Handlers are
     // delegated inside library.js; this just arms them once.
     initHeroActions();
@@ -165,25 +219,40 @@
       const tag = document.activeElement?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       e.preventDefault();
-      searchInput.focus();
+      // Only focus search when library is visible; otherwise switch to library first.
+      if (libraryView.hidden) {
+        window.location.hash = '';
+        // handleRoute will show library; focus after it renders
+        setTimeout(() => searchInput.focus(), 0);
+      } else {
+        searchInput.focus();
+      }
     });
 
-    // Mobile "+" jumps to the search box.
-    document.getElementById('fabAdd')?.addEventListener('click', () => {
+    // Mobile "+" jumps to the search box (only visible on library).
+    fabAdd?.addEventListener('click', () => {
+      if (libraryView.hidden) {
+        window.location.hash = '';
+        setTimeout(() => {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          searchInput.focus();
+        }, 0);
+        return;
+      }
       window.scrollTo({ top: 0, behavior: 'smooth' });
       searchInput.focus();
     });
 
-    // The stats strip doubles as the entry point to the stats dialog.
+    // The stats strip now navigates to the Stats tab instead of a modal.
     const statsStrip = document.getElementById('statsStrip');
     if (statsStrip) {
       statsStrip.setAttribute('role', 'button');
       statsStrip.setAttribute('tabindex', '0');
       statsStrip.title = 'View detailed stats';
-      const openStats = () => openStatsDialog();
-      statsStrip.addEventListener('click', openStats);
+      const goStats = () => { window.location.hash = '#stats'; };
+      statsStrip.addEventListener('click', goStats);
       statsStrip.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openStats(); }
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goStats(); }
       });
     }
 
@@ -277,26 +346,8 @@
       });
     });
 
-    // Render with already-loaded data; fall back to a fresh fetch if the
-    // parallel request failed for a non-auth reason (e.g. transient error).
-    if (initialSearch) {
-      searchInput.value = initialSearch;
-      await loadSearchResults(initialSearch);
-    } else {
-      activateStatusTab(initialStatus);
-      refreshTabCounts();
-      if (lib !== null) {
-        renderLibraryItems(lib.items, initialStatus);
-      } else {
-        loadLibrary(initialStatus);
-      }
-
-      if (initialGameId) {
-        openGameModal(initialGameId);
-      }
-    }
-
     window.addEventListener('hashchange', handleRoute);
+    await handleRoute();
   </script>
 </body>
 </html>

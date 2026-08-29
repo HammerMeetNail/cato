@@ -47,7 +47,11 @@ func (s *Server) routes() {
 	// Page routes
 	s.mux.HandleFunc("/login", s.servePage("login.html"))
 	s.mux.HandleFunc("/library", s.servePage("index.html"))
-	s.mux.HandleFunc("/settings", s.servePage("settings.html"))
+	// Settings is now a SPA tab (#settings). Keep /settings as a redirect so
+	// old links/bookmarks land in the right place without a full-page reload loop.
+	s.mux.HandleFunc("/settings", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/#settings", http.StatusFound)
+	})
 
 	// Static files with cache headers
 	fs := http.FileServer(http.Dir(s.cfg.StaticDir))

@@ -1,9 +1,9 @@
 import { api } from './api.js';
 import { escapeHTML } from './library.js';
 
-// Stats dialog: lifetime totals, this-year activity, finished-per-year bars,
-// top tags/platforms, and recent updates. One fetch, rendered into a themed
-// modal so the main layout stays untouched.
+// Stats: lifetime totals, this-year activity, finished-per-year bars,
+// top tags/platforms, and recent updates. Rendered as a full view in the
+// SPA (previously a modal dialog).
 
 async function fetchStats() {
   return api.get('/api/library/stats');
@@ -29,17 +29,7 @@ function statCell(value, label) {
   return `<div class="stat-cell"><div class="stat-value">${escapeHTML(String(value))}</div><div class="stat-label">${label}</div></div>`;
 }
 
-export async function openStatsDialog() {
-  let s;
-  try {
-    s = await fetchStats();
-  } catch (err) {
-    return;
-  }
-
-  const existing = document.getElementById('statsDialog');
-  if (existing) existing.remove();
-
+function buildStatsHTML(s) {
   const totalGames = s.total_games || 0;
   const finished = s.total_finished || 0;
   const minutes = s.total_minutes || 0;
@@ -76,72 +66,66 @@ export async function openStatsDialog() {
   if ((s.finished_this_year || 0) > 0) thisYearBits.push(`${s.finished_this_year} finished`);
   if ((s.added_this_year || 0) > 0) thisYearBits.push(`${s.added_this_year} added`);
 
-  const dialog = document.createElement('div');
-  dialog.id = 'statsDialog';
-  dialog.className = 'modal-overlay';
-  dialog.setAttribute('role', 'dialog');
-  dialog.setAttribute('aria-modal', 'true');
-  dialog.setAttribute('aria-label', 'Library statistics');
-  dialog.innerHTML = `
-    <div class="modal-card">
-      <div class="modal-header">
-        <h2>Library in numbers</h2>
-        <button class="modal-close" type="button" aria-label="Close">&times;</button>
+  if (totalGames === 0) {
+    return `<div class="stats-page"><h2>Library in numbers</h2><div class="empty-state"><p>Add some games and your stats will live here.</p></div></div>`;
+  }
+  return `
+    <div class="stats-page">
+      <h2>Library in numbers</h2>
+      <div class="stat-grid">
+        ${statCell(totalGames, 'games')}
+        ${statCell(finished, 'finished')}
+        ${minutes > 0 ? statCell(fmtHours(minutes), 'logged') : ''}
+        ${avg > 0 ? statCell(avg.toFixed(1), 'avg rating') : ''}
       </div>
-      <div class="modal-body">
-        ${totalGames === 0 ? '<div class="empty-state"><p>Add some games and your stats will live here.</p></div>' : `
-        <div class="stat-grid">
-          ${statCell(totalGames, 'games')}
-          ${statCell(finished, 'finished')}
-          ${minutes > 0 ? statCell(fmtHours(minutes), 'logged') : ''}
-          ${avg > 0 ? statCell(avg.toFixed(1), 'avg rating') : ''}
-        </div>
-        ${thisYearBits.length ? `<div class="stat-year-line">In ${year}: ${escapeHTML(thisYearBits.join(' · '))}</div>` : ''}
-        ${yearRows ? `
-          <div class="stat-section">
-            <h3>Finished by year</h3>
-            ${yearRows}
-          </div>` : ''}
-        ${tagsHTML ? `
-          <div class="stat-section">
-            <h3>Most-used tags</h3>
-            <div class="stat-tags">${tagsHTML}</div>
-          </div>` : ''}
-        ${platformsHTML ? `
-          <div class="stat-section">
-            <h3>Platforms</h3>
-            ${platformsHTML}
-          </div>` : ''}
-        ${recentHTML ? `
-          <div class="stat-section">
-            <h3>Recent updates</h3>
-            <div class="stat-recent">${recentHTML}</div>
-          </div>` : ''}`}
-      </div>
+      ${thisYearBits.length ? `<div class="stat-year-line">In ${year}: ${escapeHTML(thisYearBits.join(' · '))}</div>` : ''}
+      ${yearRows ? `
+        <div class="stat-section">
+          <h3>Finished by year</h3>
+          ${yearRows}
+        </div>` : ''}
+      ${tagsHTML ? `
+        <div class="stat-section">
+          <h3>Most-used tags</h3>
+          <div class="stat-tags">${tagsHTML}</div>
+        </div>` : ''}
+      ${platformsHTML ? `
+        <div class="stat-section">
+          <h3>Platforms</h3>
+          ${platformsHTML}
+        </div>` : ''}
+      ${recentHTML ? `
+        <div class="stat-section">
+          <h3>Recent updates</h3>
+          <div class="stat-recent">${recentHTML}</div>
+        </div>` : ''}
     </div>`;
+}
 
-  document.body.appendChild(dialog);
-  document.body.classList.add('modal-open');
-
-  const close = () => {
-    dialog.remove();
-    document.body.classList.remove('modal-open');
-    document.removeEventListener('keydown', escHandler);
-  };
-  const escHandler = (e) => { if (e.key === 'Escape') close(); };
-  dialog.querySelector('.modal-close').addEventListener('click', close);
-  dialog.addEventListener('click', (e) => { if (e.target === dialog) close(); });
-  document.addEventListener('keydown', escHandler);
-
+export async function renderStatsView(container) {
+  if (!container) return;
+  container.innerHTML = '<div class="stats-page"><div class="loading">Loading stats…</div></div>';
+  let s;
+  try {
+    s = await fetchStats();
+  } catch (err) {
+    container.innerHTML = '<div class="stats-page"><div class="empty-state"><p>Failed to load stats.</p></div></div>';
+    return;
+  }
+  container.innerHTML = buildStatsHTML(s);
   // Recent items deep-link into the game modal.
-  dialog.querySelectorAll('.stat-recent-row').forEach(btn => {
+  container.querySelectorAll('.stat-recent-row').forEach(btn => {
     btn.addEventListener('click', async () => {
       const id = Number(btn.dataset.gameId);
-      close();
       const mod = await import('./library.js');
       mod.openGameModal(id);
     });
   });
+}
 
-  dialog.querySelector('.modal-close').focus();
+export async function openStatsDialog() {
+  // Backwards compatibility: navigate to the Stats tab instead of a modal.
+  window.location.hash = '#stats';
+  const container = document.getElementById('statsView');
+  if (container) await renderStatsView(container);
 }

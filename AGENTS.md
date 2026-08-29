@@ -79,6 +79,18 @@ web/static/      HTML, CSS, JS (vanilla, no bundler)
   fall back to local results on error.
 - **Rate limiting**: in-memory only (not shared across processes). `auth.RateLimiter` for
   login/signup; `games.IGDBRateLimiter` (~1 req/sec) for the IGDB API.
+- **Top-level tab routing (SPA shell)**: `web/static/index.html` is the only
+  authenticated page. A persistent `.main-tabs` bar (Library / Stats /
+  Settings, styled via `.tab`/`.tab.active`) lives alongside the topbar and
+  toggles the visible view via hash routing. `handleRoute()` in
+  `index.html` dispatches on `window.location.hash`: `#stats` → stats view
+  (`web/static/js/stats.js:renderStatsView()`), `#settings` → settings view
+  (`web/static/js/settings.js:renderSettingsView()`), everything else →
+  Library view (status tabs, search `#search/<q>`, game modal `#game/<id>`).
+  Settings and Stats are lazy-loaded when their tab becomes active; old
+  `/settings` full-page route redirects to `/#settings`. `GET /api/me`,
+  library search, and hash-back navigation must keep working across tabs;
+  don't fold `/login` into the shell.
 - **Env config fallbacks**: `IGDB_CLIENT_ID`→`TWITCH_OAUTH_ID`,
   `IGDB_CLIENT_SECRET`→`TWITCH_OAUTH_SECRET` (docker-compose sets both).
 - **No codegen, no ORM, no frontend build step**. Raw SQL everywhere; vanilla JS.

@@ -143,10 +143,42 @@ a { color: var(--accent); text-decoration: none; }
   background: var(--surface2);
 }
 
+/* Top-level tab bar (Library / Stats / Settings) — mirrors nabu's single-page shell.
+   Reuses the existing .tab/.tab.active convention, just at a higher nesting level. */
+.main-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 10px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--surface2);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.main-tabs::-webkit-scrollbar { display: none; }
+
+.main-tabs .tab {
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
 .container {
   max-width: 1200px;
   margin: 0 auto;
   padding: 20px;
+}
+
+/* Stats view (formerly a dialog) — same card chrome as .settings-page */
+.stats-page {
+  max-width: 640px;
+  margin: 12px auto;
+  padding: 24px;
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+
+.stats-page h2 {
+  margin-bottom: 16px;
 }
 
 /* Search */

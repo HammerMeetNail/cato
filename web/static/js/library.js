@@ -208,9 +208,12 @@ export async function loadSearchResults(query) {
     ${buildSearchFilterBarHTML()}
   `;
 
-  const container = document.querySelector('.container');
   const searchWrap = document.querySelector('.search-wrap');
-  container.insertBefore(header, searchWrap.nextSibling);
+  // Search results header is inserted right after the search box. When the
+  // SPA tabbed UI is active, .search-wrap lives inside #libraryView, not
+  // directly under .container, so insert via the parent element.
+  const parent = searchWrap ? searchWrap.parentElement : document.querySelector('.container');
+  if (parent) parent.insertBefore(header, searchWrap.nextSibling);
 
   wireSearchFilterBar(header, query);
 
