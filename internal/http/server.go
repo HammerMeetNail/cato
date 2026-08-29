@@ -68,14 +68,28 @@ func (s *Server) routes() {
 // HTML is also no-cache: without an explicit header, browsers heuristically
 // cache pages based on Last-Modified, so phones kept serving the pre-deploy
 // markup (with fresh CSS/JS) until the heuristic expired.
+//
+// PWA assets (manifest, service-worker, offline.html, icons) are also no-cache
+// so installs and updates are not stuck on stale versions. Icons could be long-
+// cached, but they are tiny and change rarely; no-cache keeps the logic simple.
 func staticCacheMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/js/") ||
 			strings.HasPrefix(r.URL.Path, "/css/") ||
+			strings.HasPrefix(r.URL.Path, "/icons/") ||
 			r.URL.Path == "/favicon.svg" ||
+			r.URL.Path == "/manifest.webmanifest" ||
+			r.URL.Path == "/service-worker.js" ||
+			r.URL.Path == "/offline.html" ||
 			r.URL.Path == "/" ||
 			strings.HasSuffix(r.URL.Path, ".html") {
 			w.Header().Set("Cache-Control", "no-cache")
+		}
+		// Service worker must never be cached by the browser HTTP cache — it is
+		// already Cache API cached by the SW itself and update checks rely on
+		// a fresh network fetch.
+		if r.URL.Path == "/service-worker.js" {
+			w.Header().Set("Cache-Control", "no-store")
 		}
 		next.ServeHTTP(w, r)
 	})

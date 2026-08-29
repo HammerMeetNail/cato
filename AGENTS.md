@@ -74,23 +74,44 @@ web/static/      HTML, CSS, JS (vanilla, no bundler)
   max 200). The frontend (`web/static/js/library.js`) does infinite scroll and appends pages.
 - **HTTP middleware**: `gzipMiddleware` (skips `/covers/`) wraps the whole mux via
   `Server.Handler()`; `staticCacheMiddleware` adds cache headers for `/js/`, `/css/`,
-  `/favicon.svg`.
+  `/icons/`, `/favicon.svg`, `/manifest*` (`no-cache`), and `no-store` for
+  `/service-worker.js`.
 - **IGDB is optional**: when `IGDB_CLIENT_ID` is empty a `noopIGDBClient` is used; IGDB calls
   fall back to local results on error.
 - **Rate limiting**: in-memory only (not shared across processes). `auth.RateLimiter` for
   login/signup; `games.IGDBRateLimiter` (~1 req/sec) for the IGDB API.
-- **Top-level tab routing (SPA shell)**: `web/static/index.html` is the only
-  authenticated page. A persistent `.main-tabs` bar (Library / Stats /
-  Settings, styled via `.tab`/`.tab.active`) lives alongside the topbar and
-  toggles the visible view via hash routing. `handleRoute()` in
-  `index.html` dispatches on `window.location.hash`: `#stats` → stats view
-  (`web/static/js/stats.js:renderStatsView()`), `#settings` → settings view
-  (`web/static/js/settings.js:renderSettingsView()`), everything else →
-  Library view (status tabs, search `#search/<q>`, game modal `#game/<id>`).
-  Settings and Stats are lazy-loaded when their tab becomes active; old
-  `/settings` full-page route redirects to `/#settings`. `GET /api/me`,
-  library search, and hash-back navigation must keep working across tabs;
-  don't fold `/login` into the shell.
+- **PWA shell & bottom navigation (Nabu parity)**: `web/static/index.html` is the only
+  authenticated page. It uses a `height: var(--app-h)` flex-column shell (see
+  `web/static/js/head-init.js` for iOS standalone `screen.height` vs `innerHeight`
+  logic and `--safe-bottom` for notches) with a static `#bottom-tabs` bar at the
+  body level (not `fixed` — avoids iOS PWA cold-open gap). The bar has 3 tabs:
+  **Library** (`#`, grid icon), **Stats** (`#stats`, bar-chart), **Settings**
+  (`#settings`, gear), each `a.tab-item[data-route]` with `aria-current="page"`
+  on active, styled via `.tab-item.active`. `handleRoute()` dispatches on
+  `window.location.hash`: `#stats` → `renderStatsView()`
+  (`web/static/js/stats.js`), `#settings` → `renderSettingsView()`
+  (`web/static/js/settings.js`), else Library (status tabs, `#search/<q>`,
+  `#game/<id>` modal). Stats/Settings data is lazy-fetched when the tab becomes
+  active; old `/settings` redirects to `/#settings`. `GET /api/me`, search, and
+  hash-back navigation must keep working across tabs; don't fold `/login` into
+  the shell. `/#` (hash `#`) is the Library canonical URL.
+- **PWA installability**: `web/static/manifest.webmanifest` (`name: Cato — Game
+  Library`, `display: standalone`, `theme_color: #1a1a2e`, icons in
+  `web/static/icons/*`, shortcuts to Library/Stats/Search), `web/static/offline.html`
+  (dark, shows when `fetch` for a navigation fails), `web/static/service-worker.js`
+  (`CACHE_NAME=cato-static-v2`, pre-caches `css/app.css`, `js/*`, manifest,
+  icons, offline; cache-first for `/css/ /js/ /icons/ /covers/`, navigate
+  fallback to `offline.html`), and `web/static/js/head-init.js` (sets `--app-h`
+  before first paint). `login.html` also links the manifest and registers the SW.
+  `staticCacheMiddleware` sends `no-cache` for `/js/ /css/ /icons/ /manifest*`,
+  and `no-store` for `/service-worker.js`. Keep all four files and the
+  `head-init.js` `<script>` in `<head>` — removing them breaks install/offline.
+- **Accessibility**: bottom tabs have `aria-label`, `aria-current`,
+  `role="tablist"/tab` on status filters, `aria-live="polite"` on `#mainContainer`
+  and `#statsStrip`, skip-link `href="#mainContainer"`, `:focus-visible` outlines,
+  `@media (prefers-reduced-motion: reduce)` disables animations,
+  `viewport-fit=cover` + `safe-area-inset-*` for notches, and keyboard shortcuts
+  `1/2/3` for Library/Stats/Settings. Preserve these.
 - **Env config fallbacks**: `IGDB_CLIENT_ID`→`TWITCH_OAUTH_ID`,
   `IGDB_CLIENT_SECRET`→`TWITCH_OAUTH_SECRET` (docker-compose sets both).
 - **No codegen, no ORM, no frontend build step**. Raw SQL everywhere; vanilla JS.
