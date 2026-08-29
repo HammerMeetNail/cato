@@ -619,13 +619,9 @@ function buildStatusFilterPanelHTML() {
     return `<button type="button" class="lib-filter-chip${status === '' ? ' lib-filter-all status-all' : ''}" data-status="${escapeHTML(status)}"${style} role="option" aria-selected="false">${escapeHTML(label)}</button>`;
   }).join('');
   return `
-    <div class="lib-filter-panel-inner">
-      <div class="lib-filter-section">
-        <h4 class="lib-filter-section-title">Filter by status</h4>
-        <div class="lib-filter-chips" id="statusChips" role="listbox" aria-label="Filter by status">
-          ${statusChips}
-        </div>
-        <p class="lib-filter-hint">Tap to select multiple statuses. All shows everything.</p>
+    <div class="lib-filter-panel-inner status-filter-inner">
+      <div class="lib-filter-chips" id="statusChips" role="listbox" aria-label="Filter by status">
+        ${statusChips}
       </div>
     </div>`;
 }
