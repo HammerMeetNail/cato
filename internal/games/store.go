@@ -53,6 +53,7 @@ type searchOptions struct {
 	yearTo          int64  // unix seconds, inclusive; 0 = unset
 	minRating       int64  // aggregated_rating >= minRating with count > 0; 0 = unset
 	platform        string // availability filter: substring of platform name/abbrev
+	ownedPlatform   string // owned filter: substring of owned platform name/abbr/shortname (library only)
 	tags            []string
 	tagOp           string // "and" (default) or "or"
 	libraryUserID   string // when set, enable library-scoped filters below
@@ -180,6 +181,35 @@ func appendGameFilterWhere(b *strings.Builder, args *[]interface{}, o searchOpti
 		frag, fargs := PlatformFilter("g", p)
 		conds = append(conds, frag)
 		*args = append(*args, fargs...)
+	}
+	if p := strings.TrimSpace(o.ownedPlatform); p != "" && o.libraryUserID != "" {
+		pattern := "%" + strings.ToLower(EscapeLike(strings.TrimSpace(p))) + "%"
+		frag := `EXISTS (
+			SELECT 1 FROM library_items li_own
+			WHERE li_own.game_id = g.id AND li_own.user_id = ?
+			  AND (
+			    EXISTS (
+			        SELECT 1 FROM json_each(li_own.owned_platforms_json) je
+			        WHERE LOWER(je.value) LIKE ? ESCAPE '\'
+			           OR EXISTS (
+			               SELECT 1 FROM platforms p
+			               WHERE (LOWER(p.name) = LOWER(je.value) OR LOWER(p.abbreviation) = LOWER(je.value))
+			                 AND (LOWER(p.name) LIKE ? ESCAPE '\' OR LOWER(p.abbreviation) LIKE ? ESCAPE '\' OR LOWER(p.shortname) LIKE ? ESCAPE '\')
+			           )
+			    )
+			    OR LOWER(li_own.platform) LIKE ? ESCAPE '\'
+			    OR EXISTS (
+			        SELECT 1 FROM platforms p2
+			        WHERE LOWER(p2.name) = LOWER(li_own.platform)
+			          AND (LOWER(p2.name) LIKE ? ESCAPE '\' OR LOWER(p2.abbreviation) LIKE ? ESCAPE '\' OR LOWER(p2.shortname) LIKE ? ESCAPE '\')
+			    )
+			  )
+		)`
+		conds = append(conds, frag)
+		*args = append(*args, o.libraryUserID)
+		for i := 0; i < 8; i++ {
+			*args = append(*args, pattern)
+		}
 	}
 	if len(o.tags) > 0 && o.libraryUserID != "" {
 		placeholders := make([]string, len(o.tags))

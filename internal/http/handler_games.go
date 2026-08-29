@@ -187,6 +187,15 @@ func (h *GameHandler) handleSearchFull(w http.ResponseWriter, r *http.Request, q
 	if len(platform) > 64 {
 		platform = ""
 	}
+	// Owned platform filter: substring of owned platform name (library only,
+	// e.g. ps5 + completed = completed games owned on ps5, not just available).
+	ownedPlatform := strings.TrimSpace(r.URL.Query().Get("owned_platform"))
+	if ownedPlatform == "" {
+		ownedPlatform = strings.TrimSpace(r.URL.Query().Get("ownedPlatform"))
+	}
+	if len(ownedPlatform) > 64 {
+		ownedPlatform = ""
+	}
 
 	// Tag filtering (personal library tags).
 	tags := r.URL.Query()["tag"]
@@ -244,7 +253,7 @@ func (h *GameHandler) handleSearchFull(w http.ResponseWriter, r *http.Request, q
 
 	// Resolve optional user for personal filters (tags / library).
 	libraryUserID := ""
-	if len(tags) > 0 || inLibrary != nil || libraryStatus != "" {
+	if len(tags) > 0 || inLibrary != nil || libraryStatus != "" || ownedPlatform != "" {
 		if uid := tryGetUserID(r, h.db); uid != "" {
 			libraryUserID = uid
 		} else {
@@ -274,6 +283,7 @@ func (h *GameHandler) handleSearchFull(w http.ResponseWriter, r *http.Request, q
 		platform,
 		tags, tagOp, libraryUserID, inLibrary, libraryStatus,
 		includeEditions,
+		ownedPlatform,
 	)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errResp("search_error", "Search failed"))

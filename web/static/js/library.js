@@ -69,6 +69,7 @@ let paginationState = {
   statuses: [], // [] = All, otherwise array of VALID_STATUSES
   tagFilter: '',
   platformFilter: '',
+  ownedPlatformFilter: '',
   offset: 0,
   loading: false,
   hasMore: true,
@@ -119,7 +120,7 @@ let scrollListenerAttached = false;
 // searches resets them.
 const searchFilters = {
   sort: '', yearFrom: '', yearTo: '', minRating: '', includeEditions: false,
-  platform: '', tags: '', tagOp: 'and',
+  platform: '', ownedPlatform: '', tags: '', tagOp: 'and',
   releaseFrom: '', releaseTo: '',
   inLibrary: '', libraryStatus: '',
 };
@@ -134,6 +135,7 @@ function resetSearchFilters(query) {
   searchFilters.minRating = '';
   searchFilters.includeEditions = false;
   searchFilters.platform = '';
+  searchFilters.ownedPlatform = '';
   searchFilters.tags = '';
   searchFilters.tagOp = 'and';
   searchFilters.releaseFrom = '';
@@ -294,6 +296,7 @@ function filterParams() {
   if (searchFilters.releaseTo) p.releaseTo = searchFilters.releaseTo;
   if (searchFilters.minRating) p.minRating = Number(searchFilters.minRating);
   if (searchFilters.platform) p.platform = searchFilters.platform;
+  if (searchFilters.ownedPlatform) p.ownedPlatform = searchFilters.ownedPlatform;
   if (searchFilters.tags) {
     // tags is raw string like 'rpg "switch 2"'; parse into list for API
     const parsed = parseTagQuery(searchFilters.tags);
@@ -356,7 +359,7 @@ function buildSearchFilterBarHTML() {
           <h4 class="sf-section-title">Platform &amp; Tags</h4>
           <div class="sf-grid sf-grid--2">
             <label class="sf-field">
-              <span class="sf-label">Platform</span>
+              <span class="sf-label">Platform (available)</span>
               <input id="sfPlatform" list="sfPlatformList" type="text" placeholder="e.g. ps5, sw2, xsx, win" autocomplete="off" inputmode="search">
               <datalist id="sfPlatformList"></datalist>
             </label>
@@ -367,6 +370,18 @@ function buildSearchFilterBarHTML() {
             </label>
           </div>
           <p class="sf-hint">Platform: names or shortnames (<code>ps5</code>, <code>xsx</code>, <code>sw2</code>, <code>win</code>…). Tags: space = AND, <code>|</code> = OR, quotes for multi-word.</p>
+        </div>
+
+        <div class="sf-section">
+          <h4 class="sf-section-title">Ownership</h4>
+          <div class="sf-grid sf-grid--2">
+            <label class="sf-field">
+              <span class="sf-label">Owned on</span>
+              <input id="sfOwnedPlatform" list="sfOwnedPlatformList" type="text" placeholder="e.g. ps5, sw2, xsx" autocomplete="off" inputmode="search">
+              <datalist id="sfOwnedPlatformList"></datalist>
+            </label>
+          </div>
+          <p class="sf-hint">Completed + owned on <code>ps5</code> = only ps5-owned completed (vs available on ps5).</p>
         </div>
 
         <div class="sf-section">
@@ -436,6 +451,7 @@ function wireSearchFilterBar(header, query) {
   const releaseTo = header.querySelector('#sfReleaseTo');
   const minRating = header.querySelector('#sfMinRating');
   const platformEl = header.querySelector('#sfPlatform');
+  const ownedPlatformEl = header.querySelector('#sfOwnedPlatform');
   const tagsEl = header.querySelector('#sfTags');
   const inLibrary = header.querySelector('#sfInLibrary');
   const libraryStatusWrap = header.querySelector('#sfLibraryStatusWrap');
@@ -450,6 +466,7 @@ function wireSearchFilterBar(header, query) {
   if (releaseTo) releaseTo.value = searchFilters.releaseTo;
   minRating.value = searchFilters.minRating;
   if (platformEl) platformEl.value = searchFilters.platform;
+  if (ownedPlatformEl) ownedPlatformEl.value = searchFilters.ownedPlatform;
   if (tagsEl) tagsEl.value = searchFilters.tags;
   if (inLibrary) inLibrary.value = searchFilters.inLibrary;
   if (libraryStatus) libraryStatus.value = searchFilters.libraryStatus;
@@ -467,6 +484,7 @@ function wireSearchFilterBar(header, query) {
       releaseTo: releaseTo ? releaseTo.value.trim() : '',
       minRating: minRating.value,
       platform: platformEl ? platformEl.value.trim() : '',
+      ownedPlatform: ownedPlatformEl ? ownedPlatformEl.value.trim() : '',
       tags: tagsEl ? tagsEl.value.trim() : '',
       inLibrary: inLibrary ? inLibrary.value : '',
       libraryStatus: libraryStatus ? libraryStatus.value : '',
@@ -479,7 +497,7 @@ function wireSearchFilterBar(header, query) {
   };
   updateSearchBadge();
   // Live badge as user edits
-  [sortSel, yearFrom, yearTo, releaseFrom, releaseTo, minRating, platformEl, tagsEl, inLibrary, libraryStatus, editions].forEach(el => {
+  [sortSel, yearFrom, yearTo, releaseFrom, releaseTo, minRating, platformEl, ownedPlatformEl, tagsEl, inLibrary, libraryStatus, editions].forEach(el => {
     if (!el) return;
     el.addEventListener('input', updateSearchBadge);
     el.addEventListener('change', updateSearchBadge);
@@ -504,6 +522,28 @@ function wireSearchFilterBar(header, query) {
           const list = await autocompleteGlobalPlatforms(q);
           if (platList && Array.isArray(list)) {
             platList.innerHTML = list.map(p => `<option value="${escapeHTML(p)}"></option>`).join('');
+          }
+        } catch {}
+      }, 250);
+    });
+  }
+  if (ownedPlatformEl) {
+    const ownedList = header.querySelector('#sfOwnedPlatformList');
+    autocompleteGlobalPlatforms('').then(list => {
+      if (ownedList && Array.isArray(list)) {
+        ownedList.innerHTML = list.slice(0, 20).map(p => `<option value="${escapeHTML(p)}"></option>`).join('');
+      }
+    }).catch(() => {});
+    let ownedTimer = null;
+    ownedPlatformEl.addEventListener('input', () => {
+      clearTimeout(ownedTimer);
+      ownedTimer = setTimeout(async () => {
+        const q = ownedPlatformEl.value.trim();
+        if (q.length < 1) return;
+        try {
+          const list = await autocompleteGlobalPlatforms(q);
+          if (ownedList && Array.isArray(list)) {
+            ownedList.innerHTML = list.map(p => `<option value="${escapeHTML(p)}"></option>`).join('');
           }
         } catch {}
       }, 250);
@@ -557,6 +597,7 @@ function wireSearchFilterBar(header, query) {
     searchFilters.releaseTo = releaseTo ? clampDate(releaseTo.value) : '';
     searchFilters.minRating = minRating.value;
     searchFilters.platform = platformEl ? platformEl.value.trim().slice(0, 64) : '';
+    searchFilters.ownedPlatform = ownedPlatformEl ? ownedPlatformEl.value.trim().slice(0, 64) : '';
     searchFilters.tags = tagsEl ? tagsEl.value.trim().slice(0, 200) : '';
     searchFilters.inLibrary = inLibrary ? inLibrary.value : '';
     searchFilters.libraryStatus = libraryStatus ? libraryStatus.value : '';
@@ -572,7 +613,7 @@ function wireSearchFilterBar(header, query) {
     if (inLibrary.value !== 'owned' && searchFilters.libraryStatus) apply();
   });
   // Enter on any input applies
-  [yearFrom, yearTo, releaseFrom, releaseTo, platformEl, tagsEl].forEach(el => {
+  [yearFrom, yearTo, releaseFrom, releaseTo, platformEl, ownedPlatformEl, tagsEl].forEach(el => {
     if (el) el.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); apply(); } });
   });
   header.querySelector('#sfClear').addEventListener('click', () => {
@@ -583,6 +624,7 @@ function wireSearchFilterBar(header, query) {
     if (releaseTo) releaseTo.value = '';
     minRating.value = '';
     if (platformEl) platformEl.value = '';
+    if (ownedPlatformEl) ownedPlatformEl.value = '';
     if (tagsEl) tagsEl.value = '';
     if (inLibrary) inLibrary.value = '';
     if (libraryStatus) libraryStatus.value = '';
@@ -723,8 +765,8 @@ function wireStatusFilterPanel(panel) {
         history.replaceState(null, '', window.location.pathname + window.location.search);
       }
       syncStatusFilterPanel();
-      // Reload library with new statuses + existing tag/platform/year filters
-      loadLibrary(paginationState.statuses, paginationState.tagFilter, paginationState.platformFilter);
+      // Reload library with new statuses + existing tag/platform/owned/year filters
+      loadLibrary(paginationState.statuses, paginationState.tagFilter, paginationState.platformFilter, paginationState.ownedPlatformFilter);
       // Keep panel open for multi-select (Nabu behavior) — don't auto-close
     });
   });
@@ -877,7 +919,7 @@ function buildLibFilterPanelHTML() {
           </h4>
           <div class="lib-filter-grid lib-filter-grid--2">
             <label class="lib-filter-field">
-              <span class="lib-filter-label">Platform</span>
+              <span class="lib-filter-label">Platform (available)</span>
               <div class="lib-filter-input-wrap">
                 <svg class="lib-filter-input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"></rect><path d="M6 12h4"></path><path d="M8 10v4"></path><circle cx="15" cy="11" r="1" fill="currentColor" stroke="none"></circle><circle cx="18" cy="13" r="1" fill="currentColor" stroke="none"></circle></svg>
                 <input id="lfPlatform" type="text" placeholder="ps5, sw2, xsx, win" autocomplete="off" list="lfPlatformList" inputmode="search">
@@ -892,6 +934,25 @@ function buildLibFilterPanelHTML() {
               </div>
               <datalist id="lfTagsList"></datalist>
             </label>
+          </div>
+        </div>
+        <div class="lib-filter-card">
+          <h4 class="lib-filter-section-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="6"></circle><path d="M15.05 14.05a7 7 0 0 1-6.1 0"></path><path d="M12 14v6"></path><path d="M9 18h6"></path></svg>
+            Ownership
+          </h4>
+          <div class="lib-filter-grid lib-filter-grid--2">
+            <label class="lib-filter-field">
+              <span class="lib-filter-label">Owned on</span>
+              <div class="lib-filter-input-wrap">
+                <svg class="lib-filter-input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 2l7 4v6c0 5-3.5 9-7 10-3.5-1-7-5-7-10V6l7-4z"></path><path d="M9 12l2 2 4-4"></path></svg>
+                <input id="lfOwnedPlatform" type="text" placeholder="ps5, sw2, xsx" autocomplete="off" list="lfOwnedPlatformList" inputmode="search">
+              </div>
+              <datalist id="lfOwnedPlatformList"></datalist>
+            </label>
+            <div class="lib-filter-field" style="justify-content:center">
+              <p class="lib-filter-hint" style="margin:0">Completed + owned on ps5 = only ps5-owned completed (not just available on ps5).</p>
+            </div>
           </div>
         </div>
         <div class="lib-filter-card">
@@ -923,6 +984,7 @@ function updateLibFilterBadge() {
   if (!badge) return;
   const n = [
     paginationState.platformFilter,
+    paginationState.ownedPlatformFilter,
     paginationState.tagFilter,
     libraryFilters.yearFrom,
     libraryFilters.yearTo,
@@ -942,12 +1004,14 @@ function syncLibFilterInputs() {
   const panel = document.getElementById('libFilterPanel');
   if (!panel || panel.hidden) return;
   const platEl = panel.querySelector('#lfPlatform');
+  const ownedEl = panel.querySelector('#lfOwnedPlatform');
   const tagsEl = panel.querySelector('#lfTags');
   const yfEl = panel.querySelector('#lfYearFrom');
   const ytEl = panel.querySelector('#lfYearTo');
   const rfEl = panel.querySelector('#lfReleaseFrom');
   const rtEl = panel.querySelector('#lfReleaseTo');
   if (platEl) platEl.value = paginationState.platformFilter || '';
+  if (ownedEl) ownedEl.value = paginationState.ownedPlatformFilter || '';
   if (tagsEl) tagsEl.value = paginationState.tagFilter || '';
   if (yfEl) yfEl.value = libraryFilters.yearFrom || paginationState.yearFrom || '';
   if (ytEl) ytEl.value = libraryFilters.yearTo || paginationState.yearTo || '';
@@ -958,6 +1022,7 @@ function syncLibFilterInputs() {
 function wireLibFilterPanel(panel) {
   if (!panel || libFilterWired) return;
   const platEl = panel.querySelector('#lfPlatform');
+  const ownedEl = panel.querySelector('#lfOwnedPlatform');
   const tagsEl = panel.querySelector('#lfTags');
   const yfEl = panel.querySelector('#lfYearFrom');
   const ytEl = panel.querySelector('#lfYearTo');
@@ -985,6 +1050,25 @@ function wireLibFilterPanel(panel) {
       } catch {}
     }, 250);
   });
+  // Owned platform autocomplete — same global list, but hint is owned
+  const ownedList = panel.querySelector('#lfOwnedPlatformList');
+  if (ownedEl && ownedList) {
+    autocompleteGlobalPlatforms('').then(list => {
+      if (ownedList && Array.isArray(list)) ownedList.innerHTML = list.slice(0, 20).map(p => `<option value="${escapeHTML(p)}"></option>`).join('');
+    }).catch(() => {});
+    let ownedTimer = null;
+    ownedEl.addEventListener('input', () => {
+      clearTimeout(ownedTimer);
+      ownedTimer = setTimeout(async () => {
+        const q = ownedEl.value.trim();
+        if (q.length < 1) return;
+        try {
+          const list = await autocompleteGlobalPlatforms(q);
+          if (ownedList && Array.isArray(list)) ownedList.innerHTML = list.map(p => `<option value="${escapeHTML(p)}"></option>`).join('');
+        } catch {}
+      }, 250);
+    });
+  }
 
   const tagsList = panel.querySelector('#lfTagsList');
   autocompleteTags('', 100).then(list => {
@@ -1011,6 +1095,7 @@ function wireLibFilterPanel(panel) {
     };
     const newTag = tagsEl.value.trim().slice(0, 200);
     const newPlat = platEl.value.trim().slice(0, 64);
+    const newOwned = ownedEl ? ownedEl.value.trim().slice(0, 64) : '';
     libraryFilters.yearFrom = clampYear(yfEl ? yfEl.value : '');
     libraryFilters.yearTo = clampYear(ytEl ? ytEl.value : '');
     // Exact dates removed — clear any legacy exact range
@@ -1021,23 +1106,24 @@ function wireLibFilterPanel(panel) {
     paginationState.releaseFrom = '';
     paginationState.releaseTo = '';
     closeLibFilterPanel();
-    loadLibrary(paginationState.statuses, newTag, newPlat);
+    loadLibrary(paginationState.statuses, newTag, newPlat, newOwned);
   };
 
   const clear = () => {
     platEl.value = ''; tagsEl.value = '';
+    if (ownedEl) ownedEl.value = '';
     if (yfEl) yfEl.value = ''; if (ytEl) ytEl.value = '';
     if (rfEl) rfEl.value = ''; if (rtEl) rtEl.value = '';
     libraryFilters.yearFrom = ''; libraryFilters.yearTo = ''; libraryFilters.releaseFrom = ''; libraryFilters.releaseTo = '';
     paginationState.yearFrom = ''; paginationState.yearTo = ''; paginationState.releaseFrom = ''; paginationState.releaseTo = '';
     closeLibFilterPanel();
-    loadLibrary(paginationState.statuses, '', '');
+    loadLibrary(paginationState.statuses, '', '', '');
   };
 
   panel.querySelector('#lfApply')?.addEventListener('click', apply);
   panel.querySelector('#lfClear')?.addEventListener('click', clear);
   panel.querySelector('#libFilterClose')?.addEventListener('click', closeLibFilterPanel);
-  [platEl, tagsEl, yfEl, ytEl, rfEl, rtEl].filter(Boolean).forEach(el => {
+  [platEl, ownedEl, tagsEl, yfEl, ytEl, rfEl, rtEl].filter(Boolean).forEach(el => {
     el.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); apply(); } });
   });
 }
@@ -1200,17 +1286,23 @@ function ensureLibraryFilterBar() {
   return ensureStatusFilterFab();
 }
 
-export async function loadLibrary(status, tag, platform, extraOpts = null) {
+export async function loadLibrary(status, tag, platform, ownedPlatform, extraOpts = null) {
   const grid = document.getElementById('gameGrid');
   if (!grid) return;
 
+  // Handle legacy 4-arg calls where 4th arg is actually extraOpts object (platform+owned shift)
+  if (ownedPlatform !== undefined && typeof ownedPlatform === 'object' && ownedPlatform !== null && !Array.isArray(ownedPlatform)) {
+    extraOpts = ownedPlatform;
+    ownedPlatform = undefined;
+  }
   // Preserve existing filters when not explicitly passed (e.g., hash navigation
   // or tag-only updates). Explicit '' clears the filter; undefined preserves it
   // so that platform + status remain intersected (ps5 + completed = completed
-  // ps5 games in library, not all ps5-available).
+  // ps5 games in library, not all ps5-available). Owned platform is separate.
   if (status === undefined) status = paginationState.statuses;
   if (tag === undefined) tag = paginationState.tagFilter;
   if (platform === undefined) platform = paginationState.platformFilter;
+  if (ownedPlatform === undefined) ownedPlatform = paginationState.ownedPlatformFilter;
   // Normalize status input to array (supports single string, comma string, or array for multi-select)
   const normStatuses = normalizeStatuses(status);
   // Merge extraOpts (release filters) into libraryFilters if provided,
@@ -1228,6 +1320,7 @@ export async function loadLibrary(status, tag, platform, extraOpts = null) {
     statuses: normStatuses,
     tagFilter: tag || '',
     platformFilter: platform || '',
+    ownedPlatformFilter: ownedPlatform || '',
     offset: 0,
     // Held true across the fetch below so a scroll event landing in this
     // window can't trigger a concurrent loadMore() that appends the same
@@ -1262,6 +1355,7 @@ export async function loadLibrary(status, tag, platform, extraOpts = null) {
       yearTo: libraryFilters.yearTo || null,
       releaseFrom: libraryFilters.releaseFrom || null,
       releaseTo: libraryFilters.releaseTo || null,
+      ownedPlatform: ownedPlatform || null,
     });
     renderPagedItems(grid, items, true, hasMore);
     refreshTabCounts();
@@ -1337,6 +1431,7 @@ export function renderLibraryItems(items, status = '') {
     statuses: norm,
     tagFilter: '',
     platformFilter: '',
+    ownedPlatformFilter: '',
     offset: 0,
     loading: false,
     hasMore: true,
@@ -1398,6 +1493,7 @@ async function loadMore() {
           yearTo: paginationState.yearTo || libraryFilters.yearTo || null,
           releaseFrom: paginationState.releaseFrom || libraryFilters.releaseFrom || null,
           releaseTo: paginationState.releaseTo || libraryFilters.releaseTo || null,
+          ownedPlatform: paginationState.ownedPlatformFilter || null,
         }
       );
       renderPagedItems(grid, items, false, hasMore);
@@ -1771,11 +1867,17 @@ export function clearAllFilters() {
 // Typing the same platform again clears it (toggle), mirroring tag chips.
 export function filterByPlatform(platform) {
   const next = paginationState.platformFilter === platform ? '' : platform;
-  loadLibrary(currentStatuses(), paginationState.tagFilter, next);
+  loadLibrary(currentStatuses(), paginationState.tagFilter, next, paginationState.ownedPlatformFilter);
+}
+
+// filterByOwnedPlatform sets the owned-platform filter and reloads.
+export function filterByOwnedPlatform(platform) {
+  const next = paginationState.ownedPlatformFilter === platform ? '' : platform;
+  loadLibrary(currentStatuses(), paginationState.tagFilter, paginationState.platformFilter, next);
 }
 
 // updateTagFilterBar shows or hides the "filtered by" bar, covering tag,
-// platform and status filters. Status is multi-select — each selected status
+// platform, owned and status filters. Status is multi-select — each selected status
 // gets its own chip with × to remove that one.
 function updateTagFilterBar() {
   const existing = document.getElementById('tagFilterBar');
@@ -1783,8 +1885,9 @@ function updateTagFilterBar() {
 
   const tag = paginationState.tagFilter;
   const platform = paginationState.platformFilter;
+  const owned = paginationState.ownedPlatformFilter;
   const statuses = currentStatuses();
-  if (!tag && !platform && statuses.length === 0) return;
+  if (!tag && !platform && !owned && statuses.length === 0) return;
 
   const { tags: tagList, op } = parseTagQuery(tag || '');
   let display = '';
@@ -1804,6 +1907,10 @@ function updateTagFilterBar() {
     if (display) display += ' ';
     display += `<span class="tag-filter-chip tag-filter-platform" data-platform="${escapeHTML(platform)}">@${escapeHTML(platform)}<button type="button" class="tag-filter-chip-x" aria-label="Remove platform filter">×</button></span>`;
   }
+  if (owned) {
+    if (display) display += ' ';
+    display += `<span class="tag-filter-chip tag-filter-platform" data-owned-platform="${escapeHTML(owned)}">owned:${escapeHTML(owned)}<button type="button" class="tag-filter-chip-x" aria-label="Remove owned platform filter">×</button></span>`;
+  }
 
   const bar = document.createElement('div');
   bar.id = 'tagFilterBar';
@@ -1818,7 +1925,7 @@ function updateTagFilterBar() {
     paginationState.yearFrom = ''; paginationState.yearTo = ''; paginationState.releaseFrom = ''; paginationState.releaseTo = '';
     setStatuses([]);
     history.replaceState(null, '', window.location.pathname + window.location.search);
-    loadLibrary([], '', '');
+    loadLibrary([], '', '', '');
   });
 
   bar.querySelectorAll('.tag-filter-chip-x').forEach(btn => {
@@ -1829,18 +1936,22 @@ function updateTagFilterBar() {
         const rm = chip.dataset.status;
         const next = currentStatuses().filter(s => s !== rm);
         setStatuses(next);
-        loadLibrary(next, paginationState.tagFilter, paginationState.platformFilter);
+        loadLibrary(next, paginationState.tagFilter, paginationState.platformFilter, paginationState.ownedPlatformFilter);
         syncStatusFilterPanel();
         return;
       }
       if (chip.dataset.platform !== undefined) {
-        loadLibrary(currentStatuses(), paginationState.tagFilter, '');
+        loadLibrary(currentStatuses(), paginationState.tagFilter, '', paginationState.ownedPlatformFilter);
+        return;
+      }
+      if (chip.dataset.ownedPlatform !== undefined) {
+        loadLibrary(currentStatuses(), paginationState.tagFilter, paginationState.platformFilter, '');
         return;
       }
       const removeTag = chip.dataset.tag;
       const remaining = tagList.filter(t => t !== removeTag);
       const newFilter = remaining.map(formatTagForQuery).join(op === 'or' ? '|' : ' ');
-      loadLibrary(currentStatuses(), newFilter, paginationState.platformFilter);
+      loadLibrary(currentStatuses(), newFilter, paginationState.platformFilter, paginationState.ownedPlatformFilter);
     });
   });
 

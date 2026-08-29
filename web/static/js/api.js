@@ -126,14 +126,14 @@ export async function searchGames(query, signal, includeEditions = false) {
 // count (X-Total-Count header). opts: limit, offset, sort ('relevance' |
 // 'release_new' | 'release_old' | 'rating' | 'popularity' | 'name'),
 // yearFrom/yearTo (numbers), minRating (number), includeEditions (boolean),
-// platform (string), tags (string[] or string), tagOp ('and'|'or'),
+// platform (string), ownedPlatform (string, library only), tags (string[] or string), tagOp ('and'|'or'),
 // inLibrary (true/false/null), libraryStatus (string),
 // releaseFrom/releaseTo (YYYY-MM-DD or year number).
 export async function searchGamesFull(query, {
   limit = 24, offset = 0,
   sort = '', yearFrom = null, yearTo = null, minRating = null,
   includeEditions = false,
-  platform = '', tags = null, tagOp = null,
+  platform = '', ownedPlatform = '', tags = null, tagOp = null,
   inLibrary = null, libraryStatus = '',
   releaseFrom = null, releaseTo = null,
   signal,
@@ -151,6 +151,7 @@ export async function searchGamesFull(query, {
   if (releaseTo) params.append('release_to', releaseTo);
   if (minRating) params.append('min_rating', minRating);
   if (platform) params.append('platform', platform);
+  if (ownedPlatform) params.append('owned_platform', ownedPlatform);
   if (tags) {
     const list = Array.isArray(tags) ? tags : parseTagQuery(String(tags)).tags;
     for (const t of list) params.append('tag', t);
@@ -266,11 +267,12 @@ export const library = {
   // list returns { items, total, hasMore }. total/hasMore come from the
   // X-Total-Count / X-Has-More response headers; hasMore is exact even when
   // the item count is a multiple of the page size.
-  // Extra filters via opts: { yearFrom, yearTo, releaseFrom, releaseTo } (all optional).
+  // Extra filters via opts: { yearFrom, yearTo, releaseFrom, releaseTo, ownedPlatform } (all optional).
   async list(status, limit = 60, offset = 0, tag = '', platform = '', opts = null) {
-    // Back-compat: if 6th arg is a number, it's legacy yearFrom; collect variadic.
     let yearFrom = null, yearTo = null, releaseFrom = null, releaseTo = null;
+    let ownedPlatform = '';
     if (opts && typeof opts === 'object') {
+      ownedPlatform = opts.ownedPlatform ?? '';
       yearFrom = opts.yearFrom ?? null;
       yearTo = opts.yearTo ?? null;
       releaseFrom = opts.releaseFrom ?? null;
@@ -304,6 +306,7 @@ export const library = {
       }
     }
     if (platform) params.append('platform', platform);
+    if (ownedPlatform) params.append('owned_platform', ownedPlatform);
     if (yearFrom) params.append('year_from', yearFrom);
     if (yearTo) params.append('year_to', yearTo);
     if (releaseFrom) params.append('release_from', releaseFrom);

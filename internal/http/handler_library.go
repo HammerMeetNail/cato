@@ -142,6 +142,34 @@ func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, use
 		whereArgs = append(whereArgs, fargs...)
 	}
 
+	// Owned platform filter ("show games I own on X"): substring match
+	// against library_items.owned_platforms_json and legacy platform column,
+	// resolved via platforms table so shortnames (ps5, sw2) match canonical names.
+	if ownedPlatform := strings.TrimSpace(r.URL.Query().Get("owned_platform")); ownedPlatform != "" && len(ownedPlatform) <= 64 {
+		pattern := "%" + games.EscapeLike(strings.ToLower(ownedPlatform)) + "%"
+		frag := `(
+			EXISTS (
+				SELECT 1 FROM json_each(li.owned_platforms_json) je
+				WHERE LOWER(je.value) LIKE ? ESCAPE '\'
+				   OR EXISTS (
+				       SELECT 1 FROM platforms p
+				       WHERE (LOWER(p.name) = LOWER(je.value) OR LOWER(p.abbreviation) = LOWER(je.value))
+				         AND (LOWER(p.name) LIKE ? ESCAPE '\' OR LOWER(p.abbreviation) LIKE ? ESCAPE '\' OR LOWER(p.shortname) LIKE ? ESCAPE '\')
+				   )
+			)
+			OR LOWER(li.platform) LIKE ? ESCAPE '\'
+			OR EXISTS (
+			    SELECT 1 FROM platforms p2
+			    WHERE LOWER(p2.name) = LOWER(li.platform)
+			      AND (LOWER(p2.name) LIKE ? ESCAPE '\' OR LOWER(p2.abbreviation) LIKE ? ESCAPE '\' OR LOWER(p2.shortname) LIKE ? ESCAPE '\')
+			)
+		)`
+		where += " AND " + frag
+		for i := 0; i < 8; i++ {
+			whereArgs = append(whereArgs, pattern)
+		}
+	}
+
 	// Release date range filters (on g.first_release_date, like search).
 	if yf := parseLibraryYearParam(r.URL.Query().Get("year_from"), false); yf != 0 {
 		where += " AND g.first_release_date >= ?"

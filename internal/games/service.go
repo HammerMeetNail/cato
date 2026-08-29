@@ -84,11 +84,11 @@ func (s *Service) SearchPagedFull(ctx context.Context, query string, limit, offs
 }
 
 // SearchPagedFullWithFilters extends SearchPagedFull with personal-library
-// filters: tags/tagOp (library tags), libraryUserID/inLibrary/libraryStatus.
-// tags and library filters are applied only when libraryUserID is non-empty;
+// filters: tags/tagOp (library tags), libraryUserID/inLibrary/libraryStatus/ownedPlatform.
+// tags, ownedPlatform and library filters are applied only when libraryUserID is non-empty;
 // callers should obtain it from the session when present. Personal filters are
 // honored on local results and remain stable while an async refresh completes.
-func (s *Service) SearchPagedFullWithFilters(ctx context.Context, query string, limit, offset int, sort string, yearFrom, yearTo, minRating int64, platform string, tags []string, tagOp string, libraryUserID string, inLibrary *bool, libraryStatus string, includeEditions bool) ([]GameResult, int64, error) {
+func (s *Service) SearchPagedFullWithFilters(ctx context.Context, query string, limit, offset int, sort string, yearFrom, yearTo, minRating int64, platform string, tags []string, tagOp string, libraryUserID string, inLibrary *bool, libraryStatus string, includeEditions bool, ownedPlatform ...string) ([]GameResult, int64, error) {
 	query = NormalizeName(query)
 	if len(query) < 2 {
 		return nil, 0, nil
@@ -97,6 +97,10 @@ func (s *Service) SearchPagedFullWithFilters(ctx context.Context, query string, 
 	effectiveInclude := includeEditions || ContainsEditionKeyword(query)
 	if tagOp != "or" {
 		tagOp = "and"
+	}
+	ownedPlat := ""
+	if len(ownedPlatform) > 0 {
+		ownedPlat = ownedPlatform[0]
 	}
 
 	opts := func() searchOptions {
@@ -108,6 +112,7 @@ func (s *Service) SearchPagedFullWithFilters(ctx context.Context, query string, 
 			yearTo:          yearTo,
 			minRating:       minRating,
 			platform:        platform,
+			ownedPlatform:   ownedPlat,
 			tags:            tags,
 			tagOp:           tagOp,
 			libraryUserID:   libraryUserID,
