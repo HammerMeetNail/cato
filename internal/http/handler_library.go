@@ -188,6 +188,29 @@ func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, use
 		whereArgs = append(whereArgs, rt)
 	}
 
+	// Sorting: library-specific sorts, default is updated (li.updated_at DESC).
+	sort := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("sort")))
+	switch sort {
+	case "name", "release_new", "release_old", "rating", "added", "updated":
+	default:
+		sort = "updated"
+	}
+	orderBy := "li.updated_at DESC"
+	switch sort {
+	case "name":
+		orderBy = "g.name COLLATE NOCASE ASC, li.updated_at DESC"
+	case "release_new":
+		orderBy = "CASE WHEN g.first_release_date = 0 THEN 1 ELSE 0 END, g.first_release_date DESC, li.updated_at DESC"
+	case "release_old":
+		orderBy = "CASE WHEN g.first_release_date = 0 THEN 1 ELSE 0 END, g.first_release_date ASC, li.updated_at DESC"
+	case "rating":
+		orderBy = "li.rating DESC, li.updated_at DESC"
+	case "added":
+		orderBy = "li.created_at DESC, li.updated_at DESC"
+	case "updated":
+		orderBy = "li.updated_at DESC"
+	}
+
 	// Total matching items for the current filter — surfaced via the
 	// X-Total-Count header so clients can show "N games" per tab and know
 	// when infinite scroll is done without coming up one item short.
@@ -203,7 +226,7 @@ func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, use
 		FROM library_items li
 		JOIN games g ON g.id = li.game_id
 		WHERE li.user_id = ?` + where +
-		` ORDER BY li.updated_at DESC LIMIT ? OFFSET ?`
+		` ORDER BY ` + orderBy + ` LIMIT ? OFFSET ?`
 	args := append([]interface{}{userID}, whereArgs...)
 	// Fetch one extra row so hasMore is exact even when the total is a
 	// multiple of the page size.

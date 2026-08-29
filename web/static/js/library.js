@@ -70,6 +70,7 @@ let paginationState = {
   tagFilter: '',
   platformFilter: '',
   ownedPlatformFilter: '',
+  sort: '',
   offset: 0,
   loading: false,
   hasMore: true,
@@ -112,6 +113,7 @@ const libraryFilters = {
   yearTo: '',
   releaseFrom: '',
   releaseTo: '',
+  sort: '',
 };
 
 let scrollListenerAttached = false;
@@ -914,6 +916,25 @@ function buildLibFilterPanelHTML() {
       <div class="lib-filter-body">
         <div class="lib-filter-card">
           <h4 class="lib-filter-section-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M7 12h10"></path><path d="M10 18h4"></path></svg>
+            Sorting
+          </h4>
+          <div class="lib-filter-grid">
+            <label class="lib-filter-field">
+              <span class="lib-filter-label">Sort by</span>
+              <select id="lfSort">
+                <option value="">Recently updated</option>
+                <option value="added">Recently added</option>
+                <option value="name">Name A–Z</option>
+                <option value="release_new">Release: Newest first</option>
+                <option value="release_old">Release: Oldest first</option>
+                <option value="rating">Rating: Highest first</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div class="lib-filter-card">
+          <h4 class="lib-filter-section-title">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4"></path><path d="M20 12v4H6a2 2 0 0 0-2 2c0 1.1.9 2 2 2h12v-4"></path><path d="M12 12h.01"></path></svg>
             Platform &amp; Tags
           </h4>
@@ -986,6 +1007,7 @@ function updateLibFilterBadge() {
     paginationState.platformFilter,
     paginationState.ownedPlatformFilter,
     paginationState.tagFilter,
+    paginationState.sort || libraryFilters.sort,
     libraryFilters.yearFrom,
     libraryFilters.yearTo,
   ].filter(v => String(v || '').trim()).length;
@@ -1006,6 +1028,7 @@ function syncLibFilterInputs() {
   const platEl = panel.querySelector('#lfPlatform');
   const ownedEl = panel.querySelector('#lfOwnedPlatform');
   const tagsEl = panel.querySelector('#lfTags');
+  const sortEl = panel.querySelector('#lfSort');
   const yfEl = panel.querySelector('#lfYearFrom');
   const ytEl = panel.querySelector('#lfYearTo');
   const rfEl = panel.querySelector('#lfReleaseFrom');
@@ -1013,6 +1036,7 @@ function syncLibFilterInputs() {
   if (platEl) platEl.value = paginationState.platformFilter || '';
   if (ownedEl) ownedEl.value = paginationState.ownedPlatformFilter || '';
   if (tagsEl) tagsEl.value = paginationState.tagFilter || '';
+  if (sortEl) sortEl.value = paginationState.sort || libraryFilters.sort || '';
   if (yfEl) yfEl.value = libraryFilters.yearFrom || paginationState.yearFrom || '';
   if (ytEl) ytEl.value = libraryFilters.yearTo || paginationState.yearTo || '';
   if (rfEl) rfEl.value = libraryFilters.releaseFrom || paginationState.releaseFrom || '';
@@ -1024,6 +1048,7 @@ function wireLibFilterPanel(panel) {
   const platEl = panel.querySelector('#lfPlatform');
   const ownedEl = panel.querySelector('#lfOwnedPlatform');
   const tagsEl = panel.querySelector('#lfTags');
+  const sortEl = panel.querySelector('#lfSort');
   const yfEl = panel.querySelector('#lfYearFrom');
   const ytEl = panel.querySelector('#lfYearTo');
   const rfEl = panel.querySelector('#lfReleaseFrom');
@@ -1096,13 +1121,16 @@ function wireLibFilterPanel(panel) {
     const newTag = tagsEl.value.trim().slice(0, 200);
     const newPlat = platEl.value.trim().slice(0, 64);
     const newOwned = ownedEl ? ownedEl.value.trim().slice(0, 64) : '';
+    const newSort = sortEl ? sortEl.value : '';
     libraryFilters.yearFrom = clampYear(yfEl ? yfEl.value : '');
     libraryFilters.yearTo = clampYear(ytEl ? ytEl.value : '');
+    libraryFilters.sort = newSort;
     // Exact dates removed — clear any legacy exact range
     libraryFilters.releaseFrom = '';
     libraryFilters.releaseTo = '';
     paginationState.yearFrom = libraryFilters.yearFrom;
     paginationState.yearTo = libraryFilters.yearTo;
+    paginationState.sort = newSort;
     paginationState.releaseFrom = '';
     paginationState.releaseTo = '';
     closeLibFilterPanel();
@@ -1112,10 +1140,11 @@ function wireLibFilterPanel(panel) {
   const clear = () => {
     platEl.value = ''; tagsEl.value = '';
     if (ownedEl) ownedEl.value = '';
+    if (sortEl) sortEl.value = '';
     if (yfEl) yfEl.value = ''; if (ytEl) ytEl.value = '';
     if (rfEl) rfEl.value = ''; if (rtEl) rtEl.value = '';
-    libraryFilters.yearFrom = ''; libraryFilters.yearTo = ''; libraryFilters.releaseFrom = ''; libraryFilters.releaseTo = '';
-    paginationState.yearFrom = ''; paginationState.yearTo = ''; paginationState.releaseFrom = ''; paginationState.releaseTo = '';
+    libraryFilters.yearFrom = ''; libraryFilters.yearTo = ''; libraryFilters.releaseFrom = ''; libraryFilters.releaseTo = ''; libraryFilters.sort = '';
+    paginationState.yearFrom = ''; paginationState.yearTo = ''; paginationState.releaseFrom = ''; paginationState.releaseTo = ''; paginationState.sort = '';
     closeLibFilterPanel();
     loadLibrary(paginationState.statuses, '', '', '');
   };
@@ -1123,9 +1152,10 @@ function wireLibFilterPanel(panel) {
   panel.querySelector('#lfApply')?.addEventListener('click', apply);
   panel.querySelector('#lfClear')?.addEventListener('click', clear);
   panel.querySelector('#libFilterClose')?.addEventListener('click', closeLibFilterPanel);
-  [platEl, ownedEl, tagsEl, yfEl, ytEl, rfEl, rtEl].filter(Boolean).forEach(el => {
+  [platEl, ownedEl, tagsEl, sortEl, yfEl, ytEl, rfEl, rtEl].filter(Boolean).forEach(el => {
     el.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); apply(); } });
   });
+  if (sortEl) sortEl.addEventListener('change', apply);
 }
 
 function openLibFilterPanel() {
@@ -1305,14 +1335,17 @@ export async function loadLibrary(status, tag, platform, ownedPlatform, extraOpt
   if (ownedPlatform === undefined) ownedPlatform = paginationState.ownedPlatformFilter;
   // Normalize status input to array (supports single string, comma string, or array for multi-select)
   const normStatuses = normalizeStatuses(status);
-  // Merge extraOpts (release filters) into libraryFilters if provided,
+  // Merge extraOpts (release/sort filters) into libraryFilters if provided,
   // otherwise keep current libraryFilters (persisted across pagination).
   if (extraOpts && typeof extraOpts === 'object') {
     if ('yearFrom' in extraOpts) libraryFilters.yearFrom = extraOpts.yearFrom || '';
     if ('yearTo' in extraOpts) libraryFilters.yearTo = extraOpts.yearTo || '';
     if ('releaseFrom' in extraOpts) libraryFilters.releaseFrom = extraOpts.releaseFrom || '';
     if ('releaseTo' in extraOpts) libraryFilters.releaseTo = extraOpts.releaseTo || '';
+    if ('sort' in extraOpts) libraryFilters.sort = extraOpts.sort || '';
   }
+  // If sort not provided via extraOpts but paginationState has it, keep it
+  const effectiveSort = (extraOpts && 'sort' in extraOpts) ? libraryFilters.sort : (paginationState.sort || libraryFilters.sort || '');
 
   // Reset pagination state
   paginationState = {
@@ -1321,6 +1354,7 @@ export async function loadLibrary(status, tag, platform, ownedPlatform, extraOpt
     tagFilter: tag || '',
     platformFilter: platform || '',
     ownedPlatformFilter: ownedPlatform || '',
+    sort: effectiveSort || '',
     offset: 0,
     // Held true across the fetch below so a scroll event landing in this
     // window can't trigger a concurrent loadMore() that appends the same
@@ -1356,6 +1390,7 @@ export async function loadLibrary(status, tag, platform, ownedPlatform, extraOpt
       releaseFrom: libraryFilters.releaseFrom || null,
       releaseTo: libraryFilters.releaseTo || null,
       ownedPlatform: ownedPlatform || null,
+      sort: paginationState.sort || null,
     });
     renderPagedItems(grid, items, true, hasMore);
     refreshTabCounts();
@@ -1494,6 +1529,7 @@ async function loadMore() {
           releaseFrom: paginationState.releaseFrom || libraryFilters.releaseFrom || null,
           releaseTo: paginationState.releaseTo || libraryFilters.releaseTo || null,
           ownedPlatform: paginationState.ownedPlatformFilter || null,
+          sort: paginationState.sort || null,
         }
       );
       renderPagedItems(grid, items, false, hasMore);
