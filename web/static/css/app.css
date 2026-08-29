@@ -1077,6 +1077,319 @@ a { color: var(--accent); text-decoration: none; }
   font-size: 0.75rem;
 }
 
+/* Library filters — moved to Nabu-style FAB. The old inline tab row is hidden;
+   filters are opened via the floating funnel button to save vertical space. */
+#statusTabs {
+  display: none !important;
+}
+
+.library-filterbar {
+  display: none !important;
+}
+
+/* Library filter FAB — Nabu hist-filter-fab parity */
+.lib-filter-fab {
+  position: fixed;
+  right: 18px;
+  bottom: calc(18px + 66px);
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+}
+
+.lib-filter-fab[hidden] {
+  display: none !important;
+}
+
+.lib-filter-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28), 0 4px 14px rgba(0, 0, 0, 0.22);
+  transition: background 0.15s ease, transform 0.15s ease;
+  flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.lib-filter-btn:hover,
+.lib-filter-btn--open {
+  background: color-mix(in srgb, var(--accent) 82%, #000);
+  transform: scale(1.05);
+}
+
+.lib-filter-btn:active {
+  transform: scale(0.96);
+}
+
+.lib-filter-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--accent);
+  border: 1.5px solid var(--accent);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  pointer-events: none;
+}
+
+[data-theme="light"] .lib-filter-badge {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--bg);
+}
+
+.lib-filter-badge[hidden] {
+  display: none !important;
+}
+
+.lib-filter-panel {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  right: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  max-height: min(62vh, 520px);
+  background: var(--surface);
+  border: 1px solid var(--surface2);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35), 0 4px 12px rgba(0, 0, 0, 0.2);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  overflow: hidden;
+}
+
+.lib-filter-panel--open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.lib-filter-panel[hidden] {
+  display: none !important;
+}
+
+.lib-filter-panel:not([hidden]) {
+  display: flex;
+}
+
+.lib-filter-panel-inner {
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: min(62vh, 520px);
+}
+
+.lib-filter-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lib-filter-section-title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-dim);
+  margin: 0;
+}
+
+.lib-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lib-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--surface2);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.lib-filter-chip:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+.lib-filter-chip:active {
+  transform: scale(0.97);
+}
+
+.lib-filter-chip.active {
+  border-color: var(--chip-color, var(--accent));
+  background: color-mix(in srgb, var(--chip-color, var(--accent)) 14%, var(--surface));
+  color: var(--text);
+  font-weight: 700;
+}
+
+.lib-filter-chip.lib-filter-all.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.lib-filter-chips--cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.lib-filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lib-filter-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.lib-filter-field input,
+.lib-filter-field select {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  font-size: 0.9rem;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--surface2);
+  border-radius: 8px;
+  outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.lib-filter-field input:focus,
+.lib-filter-field select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.lib-filter-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.lib-filter-grid--2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.lib-filter-grid--range {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.lib-filter-hint {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  line-height: 1.35;
+}
+
+.lib-filter-hint code {
+  background: var(--surface2);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.7rem;
+}
+
+.lib-filter-actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--surface2);
+  margin-top: 2px;
+}
+
+.lib-filter-actions .btn {
+  flex: 1;
+  min-height: 40px;
+  font-size: 0.88rem;
+}
+
+@media (max-width: 600px) {
+  .lib-filter-fab {
+    bottom: calc(70px + var(--safe-bottom) + 16px + 66px);
+    right: 16px;
+  }
+
+  .lib-filter-panel {
+    width: calc(100vw - 24px);
+    max-width: 360px;
+    max-height: min(68dvh, 560px);
+    right: -2px;
+  }
+
+  .lib-filter-panel-inner {
+    padding: 12px;
+    max-height: min(68dvh, 560px);
+  }
+
+  .lib-filter-grid--2,
+  .lib-filter-grid--range {
+    grid-template-columns: 1fr;
+  }
+
+  .lib-filter-grid--range {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .lib-filter-field input,
+  .lib-filter-field select {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .lib-filter-actions {
+    flex-direction: column-reverse;
+  }
+
+  .lib-filter-actions .btn {
+    width: 100%;
+  }
+}
+
 /* Game grid */
 .game-grid {
   display: grid;

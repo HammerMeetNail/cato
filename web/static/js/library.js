@@ -150,18 +150,23 @@ function indexSearchResults(results, replace = false) {
 // status is empty/unknown). Centralized here because library.js already owns
 // tab visibility (show/hide on library vs search mode), so the Clear button and
 // loadLibrary keep the highlight in sync without duplicating the logic in the
-// page bootstrap.
+// page bootstrap. With the Nabu-style FAB, the same selection is mirrored onto
+// the floating panel's chips.
 export function activateStatusTab(status) {
   const statusTabs = document.getElementById('statusTabs');
-  if (!statusTabs) return;
-  statusTabs.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  const tab = statusTabs.querySelector(`.tab[data-status="${status || ''}"]`);
-  if (tab) {
-    tab.classList.add('active');
-  } else {
-    const allTab = statusTabs.querySelector('.tab[data-status=""]');
-    if (allTab) allTab.classList.add('active');
+  if (statusTabs) {
+    statusTabs.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    const tab = statusTabs.querySelector(`.tab[data-status="${status || ''}"]`);
+    if (tab) {
+      tab.classList.add('active');
+    } else {
+      const allTab = statusTabs.querySelector('.tab[data-status=""]');
+      if (allTab) allTab.classList.add('active');
+    }
+    statusTabs.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', String(t.classList.contains('active'))));
   }
+  syncLibFilterStatus();
+  updateLibFilterBadge();
 }
 
 export async function loadSearchResults(query) {
@@ -186,11 +191,14 @@ export async function loadSearchResults(query) {
     searchQuery: query,
   };
 
-  // Hide status tabs and library filter bar while in search mode
+  // Hide library filter FAB while in search mode (search has its own filterbar)
+  const fab = document.getElementById('libFilterFab');
+  if (fab) {
+    fab.hidden = true;
+    closeLibFilterPanel();
+  }
   const statusTabs = document.getElementById('statusTabs');
   if (statusTabs) statusTabs.style.display = 'none';
-  const libBar = document.getElementById('libraryFilterBar');
-  if (libBar) libBar.style.display = 'none';
 
   // Create and show results header (+ sort/filter bar + total count)
   const existingHeader = document.getElementById('searchResultsHeader');
@@ -553,130 +561,237 @@ function wireSearchFilterBar(header, query) {
   });
 }
 
-// --- library filter bar (release date range + platform/tags) ----------------
+// --- library filter FAB (Nabu-style) ---------------------------------------
+// Old inline tab row + collapsible details bar replaced by a floating funnel
+// button (bottom-right, above the search FAB). Tapping the button expands a
+// panel with status chips + Platform/Tags/Release filters. Nabu's
+// hist-filter-fab pattern is the reference.
 
-// buildLibraryFilterBarHTML renders a collapsible filter bar for the library
-// view. Grouped, mobile-friendly layout mirroring the search filter.
-function buildLibraryFilterBarHTML() {
+const STATUS_CHIP_COLORS = {
+  wishlist: '#2196f3',
+  backlog: '#ff9800',
+  playing: '#4caf50',
+  completed: '#9c27b0',
+  abandoned: '#f44336',
+};
+
+let libFilterOpen = false;
+let libFilterWired = false;
+
+function buildLibFilterPanelHTML() {
+  const statusChips = [
+    { status: '', label: 'All' },
+    { status: 'wishlist', label: 'Wishlist' },
+    { status: 'backlog', label: 'Backlog' },
+    { status: 'playing', label: 'Playing' },
+    { status: 'completed', label: 'Completed' },
+    { status: 'abandoned', label: 'Abandoned' },
+  ].map(({ status, label }) => {
+    const color = STATUS_CHIP_COLORS[status];
+    const style = color ? ` style="--chip-color:${color}"` : '';
+    return `<button type="button" class="lib-filter-chip${status === '' ? ' lib-filter-all' : ''}" data-status="${escapeHTML(status)}"${style} role="tab" aria-selected="false">${escapeHTML(label)}</button>`;
+  }).join('');
+
   return `
-    <details class="search-filterbar library-filterbar" id="libraryFilterBar">
-      <summary>
-        <span class="sf-summary-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg></span>
-        <span>Filter library</span>
-        <span class="sf-badge" id="lfBadge" hidden>0</span>
-        <span class="sf-chevron" aria-hidden="true"></span>
-      </summary>
-      <div class="sf-panel">
-        <div class="sf-section">
-          <h4 class="sf-section-title">Platform &amp; Tags</h4>
-          <div class="sf-grid sf-grid--2">
-            <label class="sf-field">
-              <span class="sf-label">Platform</span>
-              <input id="lfPlatform" type="text" placeholder="e.g. ps5, sw2, xsx, win" autocomplete="off" list="lfPlatformList" inputmode="search">
-              <datalist id="lfPlatformList"></datalist>
-            </label>
-            <label class="sf-field">
-              <span class="sf-label">Tags</span>
-              <input id="lfTags" type="text" placeholder='e.g. rpg "co-op"' autocomplete="off" list="lfTagsList" inputmode="search">
-              <datalist id="lfTagsList"></datalist>
-            </label>
-          </div>
-          <p class="sf-hint">Platform: names or shortnames (<code>ps5</code>, <code>xsx</code>, <code>sw2</code>, <code>win</code>…). Tags: space = AND, <code>|</code> = OR.</p>
-        </div>
-        <div class="sf-section">
-          <h4 class="sf-section-title">Release Date</h4>
-          <div class="sf-grid sf-grid--range">
-            <label class="sf-field">
-              <span class="sf-label">Year from</span>
-              <input id="lfYearFrom" type="number" min="1900" max="2100" inputmode="numeric" placeholder="1994">
-            </label>
-            <label class="sf-field">
-              <span class="sf-label">Year to</span>
-              <input id="lfYearTo" type="number" min="1900" max="2100" inputmode="numeric" placeholder="2024">
-            </label>
-            <label class="sf-field">
-              <span class="sf-label">Exact from</span>
-              <input id="lfReleaseFrom" type="date">
-            </label>
-            <label class="sf-field">
-              <span class="sf-label">Exact to</span>
-              <input id="lfReleaseTo" type="date">
-            </label>
-          </div>
-        </div>
-        <div class="sf-actions">
-          <button id="lfClear" class="btn btn-secondary" type="button">Clear</button>
-          <button id="lfApply" class="btn btn-primary" type="button">Apply</button>
+    <div class="lib-filter-panel-inner">
+      <div class="lib-filter-section">
+        <h4 class="lib-filter-section-title">Status</h4>
+        <div class="lib-filter-chips" id="libStatusChips" role="tablist" aria-label="Filter by status">
+          ${statusChips}
         </div>
       </div>
-    </details>`;
+      <div class="lib-filter-section">
+        <h4 class="lib-filter-section-title">Platform &amp; Tags</h4>
+        <div class="lib-filter-grid lib-filter-grid--2">
+          <label class="lib-filter-field">
+            <span class="lib-filter-label">Platform</span>
+            <input id="lfPlatform" type="text" placeholder="e.g. ps5, sw2, xsx, win" autocomplete="off" list="lfPlatformList" inputmode="search">
+            <datalist id="lfPlatformList"></datalist>
+          </label>
+          <label class="lib-filter-field">
+            <span class="lib-filter-label">Tags</span>
+            <input id="lfTags" type="text" placeholder='e.g. rpg "co-op"' autocomplete="off" list="lfTagsList" inputmode="search">
+            <datalist id="lfTagsList"></datalist>
+          </label>
+        </div>
+        <p class="lib-filter-hint">Platform: names or shortnames (<code>ps5</code>, <code>xsx</code>, <code>sw2</code>, <code>win</code>…). Tags: space = AND, <code>|</code> = OR, quotes for multi-word.</p>
+      </div>
+      <div class="lib-filter-section">
+        <h4 class="lib-filter-section-title">Release Date</h4>
+        <div class="lib-filter-grid lib-filter-grid--range">
+          <label class="lib-filter-field">
+            <span class="lib-filter-label">Year from</span>
+            <input id="lfYearFrom" type="number" min="1900" max="2100" inputmode="numeric" placeholder="1994">
+          </label>
+          <label class="lib-filter-field">
+            <span class="lib-filter-label">Year to</span>
+            <input id="lfYearTo" type="number" min="1900" max="2100" inputmode="numeric" placeholder="2024">
+          </label>
+          <label class="lib-filter-field">
+            <span class="lib-filter-label">Exact from</span>
+            <input id="lfReleaseFrom" type="date">
+          </label>
+          <label class="lib-filter-field">
+            <span class="lib-filter-label">Exact to</span>
+            <input id="lfReleaseTo" type="date">
+          </label>
+        </div>
+        <p class="lib-filter-hint">Year and exact date combine as a range.</p>
+      </div>
+      <div class="lib-filter-actions">
+        <button id="lfClear" class="btn btn-secondary" type="button">Clear all</button>
+        <button id="lfApply" class="btn btn-primary" type="button">Apply</button>
+      </div>
+    </div>`;
 }
 
-function wireLibraryFilterBar(bar) {
-  const platEl = bar.querySelector('#lfPlatform');
-  const tagsEl = bar.querySelector('#lfTags');
-  const yfEl = bar.querySelector('#lfYearFrom');
-  const ytEl = bar.querySelector('#lfYearTo');
-  const rfEl = bar.querySelector('#lfReleaseFrom');
-  const rtEl = bar.querySelector('#lfReleaseTo');
-  if (!platEl) return;
-  platEl.value = paginationState.platformFilter || libraryFilters.platform || '';
-  // library tags are stored in paginationState.tagFilter raw string
-  tagsEl.value = paginationState.tagFilter || '';
-  yfEl.value = libraryFilters.yearFrom;
-  ytEl.value = libraryFilters.yearTo;
-  rfEl.value = libraryFilters.releaseFrom;
-  rtEl.value = libraryFilters.releaseTo;
+function updateLibFilterBadge() {
+  const badge = document.getElementById('libFilterBadge');
+  if (!badge) return;
+  const n = [
+    paginationState.currentStatus,
+    paginationState.platformFilter,
+    paginationState.tagFilter,
+    libraryFilters.yearFrom,
+    libraryFilters.yearTo,
+    libraryFilters.releaseFrom,
+    libraryFilters.releaseTo,
+  ].filter(v => String(v || '').trim()).length;
+  badge.textContent = n > 9 ? '9+' : String(n);
+  badge.hidden = n === 0;
+  badge.setAttribute('aria-label', n ? `${n} filters active` : '');
+  const btn = document.getElementById('libFilterBtn');
+  if (btn) {
+    const label = n ? `Filter library, ${n} active` : 'Filter library';
+    btn.setAttribute('aria-label', label);
+    btn.title = label;
+  }
+}
 
-  const updateLibraryBadge = () => {
-    const badge = bar.querySelector('#lfBadge');
-    if (!badge) return;
-    const n = [
-      platEl.value.trim(),
-      tagsEl.value.trim(),
-      yfEl.value.trim(),
-      ytEl.value.trim(),
-      rfEl.value.trim(),
-      rtEl.value.trim(),
-    ].filter(v => String(v||'').trim()).length;
-    badge.textContent = n;
-    badge.hidden = n === 0;
-    badge.setAttribute('aria-label', n ? `${n} filters active` : '');
-  };
-  updateLibraryBadge();
-  // Live badge update as user types
-  [platEl, tagsEl, yfEl, ytEl, rfEl, rtEl].forEach(el => {
-    el.addEventListener('input', updateLibraryBadge);
-    el.addEventListener('change', updateLibraryBadge);
+function syncLibFilterStatus() {
+  const panel = document.getElementById('libFilterPanel');
+  const current = paginationState.currentStatus || '';
+  if (panel) {
+    panel.querySelectorAll('.lib-filter-chip[data-status]').forEach(chip => {
+      const active = (chip.dataset.status || '') === current;
+      chip.classList.toggle('active', active);
+      chip.setAttribute('aria-selected', String(active));
+    });
+  }
+  // Keep the hidden legacy .tab row in sync for hash/query callers
+  const statusTabs = document.getElementById('statusTabs');
+  if (statusTabs) {
+    statusTabs.querySelectorAll('.tab').forEach(t => {
+      const active = (t.dataset.status || '') === current;
+      t.classList.toggle('active', active);
+      t.setAttribute('aria-selected', String(active));
+    });
+  }
+}
+
+function syncLibFilterInputs() {
+  const panel = document.getElementById('libFilterPanel');
+  if (!panel || panel.hidden) return;
+  const platEl = panel.querySelector('#lfPlatform');
+  const tagsEl = panel.querySelector('#lfTags');
+  const yfEl = panel.querySelector('#lfYearFrom');
+  const ytEl = panel.querySelector('#lfYearTo');
+  const rfEl = panel.querySelector('#lfReleaseFrom');
+  const rtEl = panel.querySelector('#lfReleaseTo');
+  if (platEl) platEl.value = paginationState.platformFilter || '';
+  if (tagsEl) tagsEl.value = paginationState.tagFilter || '';
+  if (yfEl) yfEl.value = libraryFilters.yearFrom || paginationState.yearFrom || '';
+  if (ytEl) ytEl.value = libraryFilters.yearTo || paginationState.yearTo || '';
+  if (rfEl) rfEl.value = libraryFilters.releaseFrom || paginationState.releaseFrom || '';
+  if (rtEl) rtEl.value = libraryFilters.releaseTo || paginationState.releaseTo || '';
+}
+
+function wireLibFilterPanel(panel) {
+  if (!panel || libFilterWired) return;
+  const platEl = panel.querySelector('#lfPlatform');
+  const tagsEl = panel.querySelector('#lfTags');
+  const yfEl = panel.querySelector('#lfYearFrom');
+  const ytEl = panel.querySelector('#lfYearTo');
+  const rfEl = panel.querySelector('#lfReleaseFrom');
+  const rtEl = panel.querySelector('#lfReleaseTo');
+  if (!platEl) return;
+  libFilterWired = true;
+
+  // Status chips — immediate apply (like Nabu chips)
+  panel.querySelectorAll('.lib-filter-chip[data-status]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const status = chip.dataset.status || '';
+      // Update hash for deep-link parity with the old inline tabs
+      if (status) {
+        window.location.hash = '#' + status;
+      } else {
+        history.replaceState(null, '', window.location.pathname + window.location.search);
+        // Direct load without waiting for hashchange when clearing
+        const curPlat = panel.querySelector('#lfPlatform')?.value?.trim() || paginationState.platformFilter;
+        const curTag = panel.querySelector('#lfTags')?.value?.trim() || paginationState.tagFilter;
+        // Sync filters from inputs before load to avoid stale values
+        syncLibFilterInputs();
+        loadLibrary(status, paginationState.tagFilter, paginationState.platformFilter);
+      }
+      // Hashchange listener will call handleRoute -> loadLibrary when status changes;
+      // close panel for immediate feedback
+      closeLibFilterPanel();
+    });
   });
 
   // Datalists
-  const platList = bar.querySelector('#lfPlatformList');
+  const platList = panel.querySelector('#lfPlatformList');
   autocompletePlatforms('').then(list => {
-    if (platList && Array.isArray(list)) platList.innerHTML = list.slice(0,20).map(p=>`<option value="${escapeHTML(p)}"></option>`).join('');
-  }).catch(()=>{});
-  const tagsList = bar.querySelector('#lfTagsList');
+    if (platList && Array.isArray(list)) platList.innerHTML = list.slice(0, 20).map(p => `<option value="${escapeHTML(p)}"></option>`).join('');
+  }).catch(() => {});
+  let platTimer = null;
+  platEl.addEventListener('input', () => {
+    clearTimeout(platTimer);
+    platTimer = setTimeout(async () => {
+      const q = platEl.value.trim();
+      if (q.length < 1) return;
+      try {
+        const list = await autocompletePlatforms(q);
+        if (platList && Array.isArray(list)) platList.innerHTML = list.map(p => `<option value="${escapeHTML(p)}"></option>`).join('');
+      } catch {}
+    }, 250);
+  });
+
+  const tagsList = panel.querySelector('#lfTagsList');
   autocompleteTags('', 100).then(list => {
-    if (tagsList && Array.isArray(list)) tagsList.innerHTML = list.map(t=>`<option value="${escapeHTML(t)}"></option>`).join('');
-  }).catch(()=>{});
+    if (tagsList && Array.isArray(list)) tagsList.innerHTML = list.map(t => `<option value="${escapeHTML(t)}"></option>`).join('');
+  }).catch(() => {});
+  let tagTimer = null;
+  tagsEl.addEventListener('input', () => {
+    clearTimeout(tagTimer);
+    const raw = tagsEl.value;
+    const last = raw.split(/[\s|]+/).pop().replace(/^"|"$/g, '').trim();
+    if (last.length < 1) return;
+    tagTimer = setTimeout(async () => {
+      try {
+        const list = await autocompleteTags(last);
+        if (tagsList && Array.isArray(list)) tagsList.innerHTML = list.map(t => `<option value="${escapeHTML(t)}"></option>`).join('');
+      } catch {}
+    }, 250);
+  });
 
   const apply = () => {
     const clampYear = v => {
       const n = parseInt(v, 10);
-      return Number.isFinite(n) && n >=1900 && n<=2100 ? String(n) : '';
+      return Number.isFinite(n) && n >= 1900 && n <= 2100 ? String(n) : '';
     };
     const clampDate = v => {
-      const s = String(v||'').trim();
+      const s = String(v || '').trim();
       if (!s) return '';
       if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
       if (/^\d{4}$/.test(s)) {
-        const y = parseInt(s,10);
-        return y>=1900&&y<=2100 ? `${y}-01-01` : '';
+        const y = parseInt(s, 10);
+        return y >= 1900 && y <= 2100 ? `${y}-01-01` : '';
       }
       return '';
     };
-    const newTag = tagsEl.value.trim().slice(0,200);
-    const newPlat = platEl.value.trim().slice(0,64);
+    const newTag = tagsEl.value.trim().slice(0, 200);
+    const newPlat = platEl.value.trim().slice(0, 64);
     libraryFilters.yearFrom = clampYear(yfEl.value);
     libraryFilters.yearTo = clampYear(ytEl.value);
     libraryFilters.releaseFrom = clampDate(rfEl.value);
@@ -685,62 +800,122 @@ function wireLibraryFilterBar(bar) {
     paginationState.yearTo = libraryFilters.yearTo;
     paginationState.releaseFrom = libraryFilters.releaseFrom;
     paginationState.releaseTo = libraryFilters.releaseTo;
-    const activeTab = document.querySelector('.tab.active');
-    loadLibrary(activeTab?.dataset?.status || '', newTag, newPlat);
+    // Use the currently active status from chips/paginationState
+    const status = panel.querySelector('.lib-filter-chip.active')?.dataset?.status ?? paginationState.currentStatus;
+    closeLibFilterPanel();
+    loadLibrary(status || '', newTag, newPlat);
   };
-  bar.querySelector('#lfApply').addEventListener('click', apply);
-  bar.querySelector('#lfClear').addEventListener('click', () => {
-    platEl.value = ''; tagsEl.value = ''; yfEl.value=''; ytEl.value=''; rfEl.value=''; rtEl.value='';
-    libraryFilters.yearFrom=''; libraryFilters.yearTo=''; libraryFilters.releaseFrom=''; libraryFilters.releaseTo='';
-    paginationState.yearFrom=''; paginationState.yearTo=''; paginationState.releaseFrom=''; paginationState.releaseTo='';
-    const activeTab = document.querySelector('.tab.active');
-    loadLibrary(activeTab?.dataset?.status || '', '', '');
-  });
-  [platEl, tagsEl, yfEl, ytEl, rfEl, rtEl].forEach(el=>{
-    el.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); apply(); }});
+
+  const clear = () => {
+    platEl.value = ''; tagsEl.value = ''; yfEl.value = ''; ytEl.value = ''; rfEl.value = ''; rtEl.value = '';
+    libraryFilters.yearFrom = ''; libraryFilters.yearTo = ''; libraryFilters.releaseFrom = ''; libraryFilters.releaseTo = '';
+    paginationState.yearFrom = ''; paginationState.yearTo = ''; paginationState.releaseFrom = ''; paginationState.releaseTo = '';
+    closeLibFilterPanel();
+    loadLibrary('', '', '');
+    // Ensure hash reflects "All" and no filters
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+  };
+
+  panel.querySelector('#lfApply')?.addEventListener('click', apply);
+  panel.querySelector('#lfClear')?.addEventListener('click', clear);
+  [platEl, tagsEl, yfEl, ytEl, rfEl, rtEl].forEach(el => {
+    el.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); apply(); } });
   });
 }
 
-function ensureLibraryFilterBar() {
+function openLibFilterPanel() {
+  const fab = document.getElementById('libFilterFab');
+  const panel = document.getElementById('libFilterPanel');
+  const btn = document.getElementById('libFilterBtn');
+  if (!fab || !panel || !btn) return;
+  if (!panel.innerHTML.trim()) {
+    panel.innerHTML = buildLibFilterPanelHTML();
+    wireLibFilterPanel(panel);
+  }
+  syncLibFilterInputs();
+  syncLibFilterStatus();
+  panel.hidden = false;
+  // allow render before transition
+  requestAnimationFrame(() => {
+    panel.classList.add('lib-filter-panel--open');
+  });
+  btn.classList.add('lib-filter-btn--open');
+  btn.setAttribute('aria-expanded', 'true');
+  libFilterOpen = true;
+}
+
+function closeLibFilterPanel() {
+  const panel = document.getElementById('libFilterPanel');
+  const btn = document.getElementById('libFilterBtn');
+  if (!panel || !btn) return;
+  panel.classList.remove('lib-filter-panel--open');
+  btn.classList.remove('lib-filter-btn--open');
+  btn.setAttribute('aria-expanded', 'false');
+  libFilterOpen = false;
+  // delay hidden for transition (180ms)
+  setTimeout(() => {
+    if (!libFilterOpen) panel.hidden = true;
+  }, 180);
+}
+
+function toggleLibFilterPanel() {
+  if (libFilterOpen) closeLibFilterPanel();
+  else openLibFilterPanel();
+}
+
+function ensureLibFilterFab() {
+  const fab = document.getElementById('libFilterFab');
+  const panel = document.getElementById('libFilterPanel');
+  const btn = document.getElementById('libFilterBtn');
+  if (!fab || !panel || !btn) return null;
   if (paginationState.mode !== 'library') {
-    const existing = document.getElementById('libraryFilterBar');
-    if (existing) existing.style.display = 'none';
+    fab.hidden = true;
+    if (libFilterOpen) closeLibFilterPanel();
     return null;
   }
-  let bar = document.getElementById('libraryFilterBar');
-  if (bar) {
-    bar.style.display = '';
-    // Sync inputs to current pagination state (e.g., after chip filter)
-    const platEl = bar.querySelector('#lfPlatform');
-    const tagsEl = bar.querySelector('#lfTags');
-    const yfEl = bar.querySelector('#lfYearFrom');
-    const ytEl = bar.querySelector('#lfYearTo');
-    const rfEl = bar.querySelector('#lfReleaseFrom');
-    const rtEl = bar.querySelector('#lfReleaseTo');
-    if (platEl) platEl.value = paginationState.platformFilter || '';
-    if (tagsEl) tagsEl.value = paginationState.tagFilter || '';
-    if (yfEl) yfEl.value = libraryFilters.yearFrom || paginationState.yearFrom || '';
-    if (ytEl) ytEl.value = libraryFilters.yearTo || paginationState.yearTo || '';
-    if (rfEl) rfEl.value = libraryFilters.releaseFrom || paginationState.releaseFrom || '';
-    if (rtEl) rtEl.value = libraryFilters.releaseTo || paginationState.releaseTo || '';
-    const badge = bar.querySelector('#lfBadge');
-    if (badge) {
-      const n = [platEl?.value.trim(), tagsEl?.value.trim(), yfEl?.value.trim(), ytEl?.value.trim(), rfEl?.value.trim(), rtEl?.value.trim()].filter(v => v).length;
-      badge.textContent = n;
-      badge.hidden = n === 0;
-    }
-    return bar;
+  const libraryView = document.getElementById('libraryView');
+  if (libraryView && libraryView.hidden) {
+    fab.hidden = true;
+    if (libFilterOpen) closeLibFilterPanel();
+    return null;
   }
-  const statusTabs = document.getElementById('statusTabs');
-  const anchor = statusTabs && statusTabs.style.display !== 'none' ? statusTabs : document.querySelector('.search-wrap');
-  if (!anchor) return null;
-  const wrap = document.createElement('div');
-  wrap.innerHTML = buildLibraryFilterBarHTML();
-  bar = wrap.firstElementChild;
-  anchor.insertAdjacentElement('afterend', bar);
-  wireLibraryFilterBar(bar);
-  return bar;
+  fab.hidden = false;
+  if (!panel.innerHTML.trim()) {
+    panel.innerHTML = buildLibFilterPanelHTML();
+    wireLibFilterPanel(panel);
+  }
+  syncLibFilterStatus();
+  syncLibFilterInputs();
+  updateLibFilterBadge();
+  // Wire FAB button once
+  if (!fab.dataset.wired) {
+    fab.dataset.wired = '1';
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleLibFilterPanel();
+    });
+    // Outside click closes
+    document.addEventListener('click', (e) => {
+      if (!libFilterOpen) return;
+      if (fab.contains(e.target)) return;
+      // Don't close when clicking the tag filter bar or modal
+      if (e.target.closest('#tagFilterBar')) return;
+      closeLibFilterPanel();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && libFilterOpen) {
+        e.stopPropagation();
+        closeLibFilterPanel();
+      }
+    });
+  }
+  return fab;
 }
+
+// Back-compat aliases — old calls route to the FAB
+function buildLibraryFilterBarHTML() { return buildLibFilterPanelHTML(); }
+function wireLibraryFilterBar(bar) { return wireLibFilterPanel(bar); }
+function ensureLibraryFilterBar() { return ensureLibFilterFab(); }
 
 export async function loadLibrary(status, tag = '', platform = '', extraOpts = null) {
   const grid = document.getElementById('gameGrid');
@@ -775,14 +950,12 @@ export async function loadLibrary(status, tag = '', platform = '', extraOpts = n
     releaseTo: libraryFilters.releaseTo,
   };
 
-  // Hide search results header and show tabs
+  // Hide search results header and show FAB
   const searchHeader = document.getElementById('searchResultsHeader');
   if (searchHeader) searchHeader.remove();
-  const statusTabs = document.getElementById('statusTabs');
-  if (statusTabs) statusTabs.style.display = '';
   activateStatusTab(status || '');
   updateTagFilterBar();
-  ensureLibraryFilterBar();
+  ensureLibFilterFab();
 
   grid.innerHTML = '<div class="loading">Loading library...</div>';
 
@@ -959,18 +1132,35 @@ function removeLoadMoreRetry() {
 }
 
 // refreshTabCounts fetches per-status counts and renders them into the tab
-// labels ("Backlog (43)"), plus the lifetime stats strip.
+// labels ("Backlog (43)"), plus the lifetime stats strip. With the FAB, the same
+// counts are mirrored onto the floating panel's chips so the user sees tallies
+// without opening the old inline row.
 export async function refreshTabCounts() {
   const statusTabs = document.getElementById('statusTabs');
-  if (!statusTabs) return;
   const counts = await library.counts();
   if (!counts) return;
-  statusTabs.querySelectorAll('.tab').forEach(tab => {
-    const status = tab.dataset.status || '';
-    const n = counts[status || 'all'];
-    const label = tab.dataset.label || (tab.dataset.label = tab.textContent.replace(/\s\(\d+\)$/, ''));
-    tab.textContent = typeof n === 'number' ? `${label} (${n})` : label;
-  });
+  if (statusTabs) {
+    statusTabs.querySelectorAll('.tab').forEach(tab => {
+      const status = tab.dataset.status || '';
+      const n = counts[status || 'all'];
+      const label = tab.dataset.label || (tab.dataset.label = tab.textContent.replace(/\s\(\d+\)$/, ''));
+      tab.textContent = typeof n === 'number' ? `${label} (${n})` : label;
+    });
+  }
+  // Mirror counts onto FAB chips (create panel if needed so labels exist)
+  const panel = document.getElementById('libFilterPanel');
+  if (panel && !panel.innerHTML.trim()) {
+    panel.innerHTML = buildLibFilterPanelHTML();
+    wireLibFilterPanel(panel);
+  }
+  if (panel) {
+    panel.querySelectorAll('.lib-filter-chip[data-status]').forEach(chip => {
+      const status = chip.dataset.status || '';
+      const n = counts[status || 'all'];
+      const base = chip.dataset.label || (chip.dataset.label = chip.textContent.replace(/\s\(\d+\)$/, ''));
+      chip.textContent = typeof n === 'number' ? `${base} (${n})` : base;
+    });
+  }
   updateStatsStrip(counts);
 }
 
@@ -1291,60 +1481,83 @@ export function filterByPlatform(platform) {
   loadLibrary(activeTab?.dataset?.status || '', paginationState.tagFilter, next);
 }
 
-// updateTagFilterBar shows or hides the "filtered by" bar, covering both the
-// tag filter ($ chips) and the platform availability filter (@ chip).
+// updateTagFilterBar shows or hides the "filtered by" bar, covering tag,
+// platform and status filters. Status is included so the FAB's active state
+// has a persistent inline summary (without needing to open the panel).
 function updateTagFilterBar() {
   const existing = document.getElementById('tagFilterBar');
   if (existing) existing.remove();
 
   const tag = paginationState.tagFilter;
   const platform = paginationState.platformFilter;
-  if (!tag && !platform) return;
+  const status = paginationState.currentStatus || '';
+  if (!tag && !platform && !status) return;
 
   const { tags: tagList, op } = parseTagQuery(tag || '');
   let display = '';
+  if (status) {
+    const label = STATUS_LABELS[status] || status;
+    const color = STATUS_CHIP_COLORS[status] || 'var(--accent)';
+    display += `<span class="tag-filter-chip" data-status="${escapeHTML(status)}" style="--chip-color:${color};border-color:${color}">${escapeHTML(label)}<button type="button" class="tag-filter-chip-x" aria-label="Clear status filter">×</button></span>`;
+  }
   if (tag) {
     const joiner = op === 'or' ? ' OR ' : ' AND ';
-    display += tagList.map(t => `<span class="tag-filter-chip" data-tag="${escapeHTML(t)}">${escapeHTML(t)}<button type="button" class="tag-filter-chip-x" aria-label="Remove ${escapeHTML(t)}">×</button></span>`).join(joiner);
+    if (display) display += `<span style="color:var(--text-dim);font-size:0.8rem"> ${joiner} </span>`;
+    display += tagList.map(t => `<span class="tag-filter-chip" data-tag="${escapeHTML(t)}">${escapeHTML(t)}<button type="button" class="tag-filter-chip-x" aria-label="Remove ${escapeHTML(t)}">×</button></span>`).join(joiner.includes('OR') ? ' OR ' : ' ');
   }
   if (platform) {
+    if (display) display += ' ';
     display += `<span class="tag-filter-chip tag-filter-platform" data-platform="${escapeHTML(platform)}">@${escapeHTML(platform)}<button type="button" class="tag-filter-chip-x" aria-label="Remove platform filter">×</button></span>`;
   }
 
-  const container = document.querySelector('.container');
-  const statusTabs = document.getElementById('statusTabs');
   const bar = document.createElement('div');
   bar.id = 'tagFilterBar';
   bar.className = 'tag-filter-bar';
   bar.innerHTML = `
-    <span class="tag-filter-label">${display}</span>
-    <button class="tag-filter-clear" type="button" aria-label="Clear filters">✕</button>
+    <span class="tag-filter-label">Filtered: ${display}</span>
+    <button class="tag-filter-clear" type="button" aria-label="Clear all filters">✕ Clear</button>
   `;
-  bar.querySelector('.tag-filter-clear').addEventListener('click', clearAllFilters);
+  bar.querySelector('.tag-filter-clear').addEventListener('click', () => {
+    // Clear everything including status: go to "All"
+    libraryFilters.yearFrom = ''; libraryFilters.yearTo = ''; libraryFilters.releaseFrom = ''; libraryFilters.releaseTo = '';
+    paginationState.yearFrom = ''; paginationState.yearTo = ''; paginationState.releaseFrom = ''; paginationState.releaseTo = '';
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+    loadLibrary('', '', '');
+  });
 
-  // Clicking an individual chip's × removes just that filter: a tag chip
-  // drops that tag (keeping others and the platform), the platform chip
-  // toggles the platform off.
   bar.querySelectorAll('.tag-filter-chip-x').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const chip = btn.parentElement;
-      const activeTab = document.querySelector('.tab.active');
-      const status = activeTab?.dataset?.status || '';
+      const curStatus = paginationState.currentStatus || '';
+      if (chip.dataset.status !== undefined) {
+        // Clear status -> All, keep other filters
+        const target = '';
+        if (target) window.location.hash = '#' + target;
+        else {
+          history.replaceState(null, '', window.location.pathname + window.location.search);
+          loadLibrary(target, paginationState.tagFilter, paginationState.platformFilter);
+        }
+        // For status clear via hash, handleRoute will reload; for All we already loaded
+        if (target) window.location.hash = '#' + target; else { /* already loaded */ }
+        // Ensure panel sync
+        syncLibFilterStatus();
+        return;
+      }
       if (chip.dataset.platform !== undefined) {
-        loadLibrary(status, paginationState.tagFilter, '');
+        loadLibrary(curStatus, paginationState.tagFilter, '');
         return;
       }
       const removeTag = chip.dataset.tag;
       const remaining = tagList.filter(t => t !== removeTag);
       const newFilter = remaining.map(formatTagForQuery).join(op === 'or' ? '|' : ' ');
-      loadLibrary(status, newFilter, paginationState.platformFilter);
+      loadLibrary(curStatus, newFilter, paginationState.platformFilter);
     });
   });
 
-  // Insert after status tabs (or after search header, or after search wrap)
-  const after = statusTabs && statusTabs.style.display !== 'none' ? statusTabs : document.getElementById('searchResultsHeader') || document.querySelector('.search-wrap');
-  after.insertAdjacentElement('afterend', bar);
+  // Insert after the search box (library header) — FAB is floating so this is the visible summary
+  const after = document.getElementById('searchResultsHeader') || document.querySelector('.search-wrap');
+  if (after) after.insertAdjacentElement('afterend', bar);
 }
 
 // formatPlatformName shortens IGDB platform names for compact display:

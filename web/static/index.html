@@ -118,6 +118,15 @@
 
   <div id="toast-container" role="status" aria-live="polite" aria-atomic="false"></div>
 
+  <!-- Library filter FAB — Nabu-style: icon expands to status chips + advanced filters -->
+  <div class="lib-filter-fab" id="libFilterFab" hidden>
+    <div class="lib-filter-panel" id="libFilterPanel" hidden></div>
+    <button type="button" class="lib-filter-btn" id="libFilterBtn" aria-expanded="false" aria-controls="libFilterPanel" aria-label="Filter library">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
+    </button>
+    <span class="lib-filter-badge" id="libFilterBadge" hidden>0</span>
+  </div>
+
   <!-- Mobile search shortcut: jumps to the search box (the add path). -->
   <button type="button" class="fab-add" id="fabAdd" aria-label="Search games">
     <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">
@@ -149,6 +158,8 @@
     const playingView = document.getElementById('playingView');
     const settingsView = document.getElementById('settingsView');
     const fabAdd = document.getElementById('fabAdd');
+    const libFilterFab = document.getElementById('libFilterFab');
+    const libFilterPanel = document.getElementById('libFilterPanel');
 
     function updateBottomTabs(route) {
       if (!bottomTabs) return;
@@ -167,6 +178,20 @@
       if (playingView) playingView.hidden = name !== 'playing';
       if (settingsView) settingsView.hidden = name !== 'settings';
       if (fabAdd) fabAdd.style.display = name === 'library' ? '' : 'none';
+      if (libFilterFab) {
+        if (name !== 'library') {
+          libFilterFab.hidden = true;
+          if (libFilterPanel) {
+            libFilterPanel.hidden = true;
+            libFilterPanel.classList.remove('lib-filter-panel--open');
+          }
+          const libFilterBtn = document.getElementById('libFilterBtn');
+          if (libFilterBtn) libFilterBtn.classList.remove('lib-filter-btn--open');
+        } else {
+          // Library view: let library.js decide (search mode hides FAB, library mode shows)
+          // Don't force hidden=false here — loadLibrary/loadSearchResults will sync.
+        }
+      }
       if (name !== 'library') {
         const existingModal = document.getElementById('addGameModal');
         if (existingModal) {
