@@ -1200,10 +1200,17 @@ function ensureLibraryFilterBar() {
   return ensureStatusFilterFab();
 }
 
-export async function loadLibrary(status, tag = '', platform = '', extraOpts = null) {
+export async function loadLibrary(status, tag, platform, extraOpts = null) {
   const grid = document.getElementById('gameGrid');
   if (!grid) return;
 
+  // Preserve existing filters when not explicitly passed (e.g., hash navigation
+  // or tag-only updates). Explicit '' clears the filter; undefined preserves it
+  // so that platform + status remain intersected (ps5 + completed = completed
+  // ps5 games in library, not all ps5-available).
+  if (status === undefined) status = paginationState.statuses;
+  if (tag === undefined) tag = paginationState.tagFilter;
+  if (platform === undefined) platform = paginationState.platformFilter;
   // Normalize status input to array (supports single string, comma string, or array for multi-select)
   const normStatuses = normalizeStatuses(status);
   // Merge extraOpts (release filters) into libraryFilters if provided,
