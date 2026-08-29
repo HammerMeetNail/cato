@@ -1348,10 +1348,26 @@ a { color: var(--accent); text-decoration: none; }
   font-size: 0.88rem;
 }
 
+/* Status filter FAB — bottom-left, Nabu hist-filter-fab parity */
+.status-filter-fab {
+  right: auto;
+  left: 18px;
+}
+
+.status-filter-fab .lib-filter-panel {
+  left: 0;
+  right: auto;
+}
+
 @media (max-width: 600px) {
   .lib-filter-fab {
     bottom: calc(70px + var(--safe-bottom) + 16px + 66px);
     right: 16px;
+  }
+
+  .status-filter-fab {
+    left: 16px;
+    right: auto;
   }
 
   .lib-filter-panel {
@@ -1359,6 +1375,11 @@ a { color: var(--accent); text-decoration: none; }
     max-width: 360px;
     max-height: min(68dvh, 560px);
     right: -2px;
+  }
+
+  .status-filter-fab .lib-filter-panel {
+    left: -2px;
+    right: auto;
   }
 
   .lib-filter-panel-inner {

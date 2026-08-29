@@ -94,7 +94,19 @@ func (h *LibraryHandler) handleLibraryItem(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, userID string) {
-	status := r.URL.Query().Get("status")
+	// status may be repeated (?status=wishlist&status=backlog) or comma-separated (?status=wishlist,backlog)
+	var statuses []string
+	seenStatus := map[string]bool{}
+	for _, raw := range r.URL.Query()["status"] {
+		for _, part := range strings.Split(raw, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" || seenStatus[part] || !isValidStatus(part) {
+				continue
+			}
+			seenStatus[part] = true
+			statuses = append(statuses, part)
+		}
+	}
 	tags := r.URL.Query()["tag"]
 	tagOp := r.URL.Query().Get("tag_op")
 	if tagOp != "or" {
@@ -120,7 +132,7 @@ func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, use
 		}
 	}
 
-	where, whereArgs := libraryFilter(status, tags, tagOp)
+	where, whereArgs := libraryFilter(statuses, tags, tagOp)
 
 	// Availability filter ("show games I can play on X"): substring match
 	// against the resolved names of games.platforms_json.
@@ -202,7 +214,7 @@ func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, use
 
 // libraryFilter builds the shared WHERE fragment (status/tag filtering) used
 // by both the page query and the COUNT query so they can never diverge.
-func libraryFilter(status string, tags []string, tagOp string) (string, []interface{}) {
+func libraryFilter(statuses []string, tags []string, tagOp string) (string, []interface{}) {
 	where := ""
 	args := []interface{}{}
 
@@ -227,9 +239,29 @@ func libraryFilter(status string, tags []string, tagOp string) (string, []interf
 			}
 		}
 	}
-	if status != "" && isValidStatus(status) {
-		where += ` AND li.status = ?`
-		args = append(args, status)
+	if len(statuses) > 0 {
+		valid := make([]string, 0, len(statuses))
+		seen := map[string]bool{}
+		for _, s := range statuses {
+			if !isValidStatus(s) || seen[s] {
+				continue
+			}
+			seen[s] = true
+			valid = append(valid, s)
+		}
+		if len(valid) == 1 {
+			where += ` AND li.status = ?`
+			args = append(args, valid[0])
+		} else if len(valid) > 1 {
+			placeholders := make([]string, len(valid))
+			for i := range placeholders {
+				placeholders[i] = "?"
+			}
+			where += ` AND li.status IN (` + strings.Join(placeholders, ", ") + `)`
+			for _, s := range valid {
+				args = append(args, s)
+			}
+		}
 	}
 	return where, args
 }

@@ -118,8 +118,16 @@
 
   <div id="toast-container" role="status" aria-live="polite" aria-atomic="false"></div>
 
-  <!-- Library filter FAB — Nabu-style: icon expands to status chips + advanced filters -->
-  <div class="lib-filter-fab" id="libFilterFab" hidden>
+  <!-- Status filter FAB — bottom-left, Nabu-style multi-select (All / Wishlist / …) -->
+  <div class="lib-filter-fab status-filter-fab" id="statusFilterFab" hidden>
+    <div class="lib-filter-panel status-filter-panel" id="statusFilterPanel" hidden></div>
+    <button type="button" class="lib-filter-btn" id="statusFilterBtn" aria-expanded="false" aria-controls="statusFilterPanel" aria-label="Filter by status">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
+    </button>
+  </div>
+
+  <!-- Library filter FAB — bottom-right: Platform/Tags/Release (advanced) -->
+  <div class="lib-filter-fab advanced-filter-fab" id="libFilterFab" hidden>
     <div class="lib-filter-panel" id="libFilterPanel" hidden></div>
     <button type="button" class="lib-filter-btn" id="libFilterBtn" aria-expanded="false" aria-controls="libFilterPanel" aria-label="Filter library">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
@@ -160,6 +168,8 @@
     const fabAdd = document.getElementById('fabAdd');
     const libFilterFab = document.getElementById('libFilterFab');
     const libFilterPanel = document.getElementById('libFilterPanel');
+    const statusFilterFab = document.getElementById('statusFilterFab');
+    const statusFilterPanel = document.getElementById('statusFilterPanel');
 
     function updateBottomTabs(route) {
       if (!bottomTabs) return;
@@ -178,19 +188,17 @@
       if (playingView) playingView.hidden = name !== 'playing';
       if (settingsView) settingsView.hidden = name !== 'settings';
       if (fabAdd) fabAdd.style.display = name === 'library' ? '' : 'none';
-      if (libFilterFab) {
-        if (name !== 'library') {
-          libFilterFab.hidden = true;
-          if (libFilterPanel) {
-            libFilterPanel.hidden = true;
-            libFilterPanel.classList.remove('lib-filter-panel--open');
-          }
-          const libFilterBtn = document.getElementById('libFilterBtn');
-          if (libFilterBtn) libFilterBtn.classList.remove('lib-filter-btn--open');
-        } else {
-          // Library view: let library.js decide (search mode hides FAB, library mode shows)
-          // Don't force hidden=false here — loadLibrary/loadSearchResults will sync.
-        }
+      const allFabs = [libFilterFab, statusFilterFab];
+      const allPanels = [libFilterPanel, statusFilterPanel];
+      if (name !== 'library') {
+        allFabs.forEach(fab => { if (fab) fab.hidden = true; });
+        allPanels.forEach(panel => { if (panel) { panel.hidden = true; panel.classList.remove('lib-filter-panel--open', 'status-filter-panel--open'); } });
+        const libFilterBtn = document.getElementById('libFilterBtn');
+        if (libFilterBtn) libFilterBtn.classList.remove('lib-filter-btn--open');
+        const statusFilterBtn = document.getElementById('statusFilterBtn');
+        if (statusFilterBtn) statusFilterBtn.classList.remove('lib-filter-btn--open');
+      } else {
+        // Library view: let library.js decide (search mode hides FAB, library mode shows)
       }
       if (name !== 'library') {
         const existingModal = document.getElementById('addGameModal');

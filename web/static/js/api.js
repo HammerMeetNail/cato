@@ -283,7 +283,19 @@ export const library = {
       releaseTo = arguments[8] ?? null;
     }
     const params = new URLSearchParams();
-    if (status) params.append('status', status);
+    if (status) {
+      if (Array.isArray(status)) {
+        for (const s of status) {
+          if (s) params.append('status', s);
+        }
+      } else if (String(status).includes(',')) {
+        for (const part of String(status).split(',').map(s => s.trim()).filter(Boolean)) {
+          params.append('status', part);
+        }
+      } else {
+        params.append('status', status);
+      }
+    }
     if (tag) {
       const { tags: tagList, op } = parseTagQuery(tag);
       if (op === 'or') params.append('tag_op', 'or');

@@ -62,9 +62,11 @@ export function setGameHash(gameId) {
 const PAGE_SIZE = 60;
 const SEARCH_PAGE_SIZE = 24;
 
-// Pagination state
+// Pagination state — statuses is multi-select (empty = All), like Nabu's historyChoreFilter.
+// currentStatus is kept as legacy alias for single-status hash deep-links; statuses is the source of truth.
 let paginationState = {
-  currentStatus: '',
+  currentStatus: '', // deprecated alias, kept for hash compat (first element of statuses)
+  statuses: [], // [] = All, otherwise array of VALID_STATUSES
   tagFilter: '',
   platformFilter: '',
   offset: 0,
@@ -78,6 +80,30 @@ let paginationState = {
   releaseFrom: '',
   releaseTo: '',
 };
+
+function normalizeStatuses(input) {
+  if (Array.isArray(input)) {
+    return input.map(s => String(s).trim().toLowerCase()).filter(s => VALID_STATUSES.includes(s));
+  }
+  if (!input) return [];
+  const str = String(input).trim();
+  if (!str) return [];
+  if (str.includes(',')) {
+    return str.split(',').map(s => s.trim().toLowerCase()).filter(s => VALID_STATUSES.includes(s));
+  }
+  return VALID_STATUSES.includes(str.toLowerCase()) ? [str.toLowerCase()] : [];
+}
+
+function currentStatuses() {
+  return Array.isArray(paginationState.statuses) ? paginationState.statuses : [];
+}
+
+function setStatuses(arr) {
+  const norm = normalizeStatuses(arr);
+  paginationState.statuses = norm;
+  paginationState.currentStatus = norm[0] || '';
+  return norm;
+}
 
 // Library release-date filters (persist across reloads in this session).
 const libraryFilters = {
@@ -165,8 +191,7 @@ export function activateStatusTab(status) {
     }
     statusTabs.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', String(t.classList.contains('active'))));
   }
-  syncLibFilterStatus();
-  updateLibFilterBadge();
+  try { if (typeof syncStatusFilterPanel === 'function') syncStatusFilterPanel(); } catch {}
 }
 
 export async function loadSearchResults(query) {
@@ -178,6 +203,7 @@ export async function loadSearchResults(query) {
   // Reset pagination state to search mode
   paginationState = {
     currentStatus: '',
+    statuses: [],
     tagFilter: '',
     platformFilter: '',
     offset: 0,
@@ -191,11 +217,16 @@ export async function loadSearchResults(query) {
     searchQuery: query,
   };
 
-  // Hide library filter FAB while in search mode (search has its own filterbar)
+  // Hide both FABs while in search mode (search has its own filterbar)
   const fab = document.getElementById('libFilterFab');
   if (fab) {
     fab.hidden = true;
     closeLibFilterPanel();
+  }
+  const statusFab = document.getElementById('statusFilterFab');
+  if (statusFab) {
+    statusFab.hidden = true;
+    closeStatusFilterPanel();
   }
   const statusTabs = document.getElementById('statusTabs');
   if (statusTabs) statusTabs.style.display = 'none';
@@ -561,11 +592,9 @@ function wireSearchFilterBar(header, query) {
   });
 }
 
-// --- library filter FAB (Nabu-style) ---------------------------------------
-// Old inline tab row + collapsible details bar replaced by a floating funnel
-// button (bottom-right, above the search FAB). Tapping the button expands a
-// panel with status chips + Platform/Tags/Release filters. Nabu's
-// hist-filter-fab pattern is the reference.
+// --- library filters — split into two FABs (Nabu-style) --------------------
+// Status: bottom-left, multi-select like Nabu's history filter (All = empty array)
+// Advanced: bottom-right, Platform/Tags/Release (badge shows active count)
 
 const STATUS_CHIP_COLORS = {
   wishlist: '#2196f3',
@@ -575,31 +604,188 @@ const STATUS_CHIP_COLORS = {
   abandoned: '#f44336',
 };
 
+// Status FAB state (Nabu parity)
+let statusFilterOpen = false;
+let statusFilterWired = false;
+
+function buildStatusFilterPanelHTML() {
+  const sortedStatuses = [...VALID_STATUSES];
+  const statusChips = [
+    { status: '', label: 'All' },
+    ...sortedStatuses.map(s => ({ status: s, label: STATUS_LABELS[s] || s })),
+  ].map(({ status, label }) => {
+    const color = STATUS_CHIP_COLORS[status];
+    const style = color ? ` style="--chip-color:${color}"` : '';
+    return `<button type="button" class="lib-filter-chip${status === '' ? ' lib-filter-all status-all' : ''}" data-status="${escapeHTML(status)}"${style} role="option" aria-selected="false">${escapeHTML(label)}</button>`;
+  }).join('');
+  return `
+    <div class="lib-filter-panel-inner">
+      <div class="lib-filter-section">
+        <h4 class="lib-filter-section-title">Filter by status</h4>
+        <div class="lib-filter-chips" id="statusChips" role="listbox" aria-label="Filter by status">
+          ${statusChips}
+        </div>
+        <p class="lib-filter-hint">Tap to select multiple statuses. All shows everything.</p>
+      </div>
+    </div>`;
+}
+
+function syncStatusFilterPanel() {
+  const panel = document.getElementById('statusFilterPanel');
+  if (!panel) return;
+  const active = currentStatuses();
+  const hasFilter = active.length > 0;
+  panel.querySelectorAll('.lib-filter-chip[data-status]').forEach(chip => {
+    const s = chip.dataset.status || '';
+    const isAll = s === '';
+    const isActive = isAll ? !hasFilter : active.includes(s);
+    chip.classList.toggle('active', isActive);
+    chip.setAttribute('aria-selected', String(isActive));
+  });
+  // Keep legacy hidden .tab row in sync (first status or All)
+  const statusTabs = document.getElementById('statusTabs');
+  if (statusTabs) {
+    const first = active[0] || '';
+    statusTabs.querySelectorAll('.tab').forEach(t => {
+      const isActive = (t.dataset.status || '') === first && active.length <= 1;
+      // For multi, no single tab is active except All when empty
+      const shouldActive = !hasFilter ? (t.dataset.status === '') : false;
+      // Simpler: only highlight exact single match, otherwise none (All handles empty)
+      if (!hasFilter) {
+        const isAll = t.dataset.status === '';
+        t.classList.toggle('active', isAll);
+        t.setAttribute('aria-selected', String(isAll));
+      } else if (active.length === 1) {
+        const match = t.dataset.status === active[0];
+        t.classList.toggle('active', match);
+        t.setAttribute('aria-selected', String(match));
+      } else {
+        t.classList.remove('active');
+        t.setAttribute('aria-selected', 'false');
+      }
+    });
+  }
+}
+
+function wireStatusFilterPanel(panel) {
+  if (!panel || statusFilterWired) return;
+  statusFilterWired = true;
+  panel.querySelectorAll('.lib-filter-chip[data-status]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const status = chip.dataset.status || '';
+      const cur = currentStatuses();
+      let next;
+      if (status === '') {
+        // All — clear filter
+        next = [];
+      } else {
+        if (cur.includes(status)) {
+          next = cur.filter(s => s !== status);
+        } else {
+          next = [...cur, status];
+        }
+      }
+      setStatuses(next);
+      // If hash was showing a single status, clear it — multi-select is local state
+      if (window.location.hash && VALID_STATUSES.includes(window.location.hash.slice(1))) {
+        history.replaceState(null, '', window.location.pathname + window.location.search);
+      }
+      syncStatusFilterPanel();
+      // Reload library with new statuses + existing tag/platform/year filters
+      loadLibrary(paginationState.statuses, paginationState.tagFilter, paginationState.platformFilter);
+      // Keep panel open for multi-select (Nabu behavior) — don't auto-close
+    });
+  });
+}
+
+function openStatusFilterPanel() {
+  const fab = document.getElementById('statusFilterFab');
+  const panel = document.getElementById('statusFilterPanel');
+  const btn = document.getElementById('statusFilterBtn');
+  if (!fab || !panel || !btn) return;
+  // Also close the other FAB if open
+  if (libFilterOpen) closeLibFilterPanel();
+  if (!panel.innerHTML.trim()) {
+    panel.innerHTML = buildStatusFilterPanelHTML();
+    wireStatusFilterPanel(panel);
+  }
+  syncStatusFilterPanel();
+  panel.hidden = false;
+  requestAnimationFrame(() => panel.classList.add('lib-filter-panel--open'));
+  btn.classList.add('lib-filter-btn--open');
+  btn.setAttribute('aria-expanded', 'true');
+  statusFilterOpen = true;
+}
+
+function closeStatusFilterPanel() {
+  const panel = document.getElementById('statusFilterPanel');
+  const btn = document.getElementById('statusFilterBtn');
+  if (!panel || !btn) return;
+  panel.classList.remove('lib-filter-panel--open');
+  btn.classList.remove('lib-filter-btn--open');
+  btn.setAttribute('aria-expanded', 'false');
+  statusFilterOpen = false;
+  setTimeout(() => { if (!statusFilterOpen) panel.hidden = true; }, 180);
+}
+
+function toggleStatusFilterPanel() {
+  if (statusFilterOpen) closeStatusFilterPanel();
+  else openStatusFilterPanel();
+}
+
+function ensureStatusFilterFab() {
+  const fab = document.getElementById('statusFilterFab');
+  const panel = document.getElementById('statusFilterPanel');
+  const btn = document.getElementById('statusFilterBtn');
+  if (!fab || !panel || !btn) return null;
+  if (paginationState.mode !== 'library') {
+    fab.hidden = true;
+    if (statusFilterOpen) closeStatusFilterPanel();
+    return null;
+  }
+  const libraryView = document.getElementById('libraryView');
+  if (libraryView && libraryView.hidden) {
+    fab.hidden = true;
+    if (statusFilterOpen) closeStatusFilterPanel();
+    return null;
+  }
+  fab.hidden = false;
+  if (!panel.innerHTML.trim()) {
+    panel.innerHTML = buildStatusFilterPanelHTML();
+    wireStatusFilterPanel(panel);
+  }
+  syncStatusFilterPanel();
+  if (!fab.dataset.wired) {
+    fab.dataset.wired = '1';
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleStatusFilterPanel();
+    });
+    document.addEventListener('click', (e) => {
+      if (!statusFilterOpen) return;
+      if (fab.contains(e.target)) return;
+      if (e.target.closest('#tagFilterBar')) return;
+      // Don't close when clicking the other FAB
+      if (e.target.closest('#libFilterFab')) return;
+      closeStatusFilterPanel();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && statusFilterOpen) {
+        e.stopPropagation();
+        closeStatusFilterPanel();
+      }
+    });
+  }
+  return fab;
+}
+
+// Advanced FAB — bottom-right: Platform/Tags/Release (no status)
 let libFilterOpen = false;
 let libFilterWired = false;
 
 function buildLibFilterPanelHTML() {
-  const statusChips = [
-    { status: '', label: 'All' },
-    { status: 'wishlist', label: 'Wishlist' },
-    { status: 'backlog', label: 'Backlog' },
-    { status: 'playing', label: 'Playing' },
-    { status: 'completed', label: 'Completed' },
-    { status: 'abandoned', label: 'Abandoned' },
-  ].map(({ status, label }) => {
-    const color = STATUS_CHIP_COLORS[status];
-    const style = color ? ` style="--chip-color:${color}"` : '';
-    return `<button type="button" class="lib-filter-chip${status === '' ? ' lib-filter-all' : ''}" data-status="${escapeHTML(status)}"${style} role="tab" aria-selected="false">${escapeHTML(label)}</button>`;
-  }).join('');
-
   return `
     <div class="lib-filter-panel-inner">
-      <div class="lib-filter-section">
-        <h4 class="lib-filter-section-title">Status</h4>
-        <div class="lib-filter-chips" id="libStatusChips" role="tablist" aria-label="Filter by status">
-          ${statusChips}
-        </div>
-      </div>
       <div class="lib-filter-section">
         <h4 class="lib-filter-section-title">Platform &amp; Tags</h4>
         <div class="lib-filter-grid lib-filter-grid--2">
@@ -649,7 +835,6 @@ function updateLibFilterBadge() {
   const badge = document.getElementById('libFilterBadge');
   if (!badge) return;
   const n = [
-    paginationState.currentStatus,
     paginationState.platformFilter,
     paginationState.tagFilter,
     libraryFilters.yearFrom,
@@ -665,27 +850,6 @@ function updateLibFilterBadge() {
     const label = n ? `Filter library, ${n} active` : 'Filter library';
     btn.setAttribute('aria-label', label);
     btn.title = label;
-  }
-}
-
-function syncLibFilterStatus() {
-  const panel = document.getElementById('libFilterPanel');
-  const current = paginationState.currentStatus || '';
-  if (panel) {
-    panel.querySelectorAll('.lib-filter-chip[data-status]').forEach(chip => {
-      const active = (chip.dataset.status || '') === current;
-      chip.classList.toggle('active', active);
-      chip.setAttribute('aria-selected', String(active));
-    });
-  }
-  // Keep the hidden legacy .tab row in sync for hash/query callers
-  const statusTabs = document.getElementById('statusTabs');
-  if (statusTabs) {
-    statusTabs.querySelectorAll('.tab').forEach(t => {
-      const active = (t.dataset.status || '') === current;
-      t.classList.toggle('active', active);
-      t.setAttribute('aria-selected', String(active));
-    });
   }
 }
 
@@ -716,28 +880,6 @@ function wireLibFilterPanel(panel) {
   const rtEl = panel.querySelector('#lfReleaseTo');
   if (!platEl) return;
   libFilterWired = true;
-
-  // Status chips — immediate apply (like Nabu chips)
-  panel.querySelectorAll('.lib-filter-chip[data-status]').forEach(chip => {
-    chip.addEventListener('click', () => {
-      const status = chip.dataset.status || '';
-      // Update hash for deep-link parity with the old inline tabs
-      if (status) {
-        window.location.hash = '#' + status;
-      } else {
-        history.replaceState(null, '', window.location.pathname + window.location.search);
-        // Direct load without waiting for hashchange when clearing
-        const curPlat = panel.querySelector('#lfPlatform')?.value?.trim() || paginationState.platformFilter;
-        const curTag = panel.querySelector('#lfTags')?.value?.trim() || paginationState.tagFilter;
-        // Sync filters from inputs before load to avoid stale values
-        syncLibFilterInputs();
-        loadLibrary(status, paginationState.tagFilter, paginationState.platformFilter);
-      }
-      // Hashchange listener will call handleRoute -> loadLibrary when status changes;
-      // close panel for immediate feedback
-      closeLibFilterPanel();
-    });
-  });
 
   // Datalists
   const platList = panel.querySelector('#lfPlatformList');
@@ -800,10 +942,8 @@ function wireLibFilterPanel(panel) {
     paginationState.yearTo = libraryFilters.yearTo;
     paginationState.releaseFrom = libraryFilters.releaseFrom;
     paginationState.releaseTo = libraryFilters.releaseTo;
-    // Use the currently active status from chips/paginationState
-    const status = panel.querySelector('.lib-filter-chip.active')?.dataset?.status ?? paginationState.currentStatus;
     closeLibFilterPanel();
-    loadLibrary(status || '', newTag, newPlat);
+    loadLibrary(paginationState.statuses, newTag, newPlat);
   };
 
   const clear = () => {
@@ -811,9 +951,7 @@ function wireLibFilterPanel(panel) {
     libraryFilters.yearFrom = ''; libraryFilters.yearTo = ''; libraryFilters.releaseFrom = ''; libraryFilters.releaseTo = '';
     paginationState.yearFrom = ''; paginationState.yearTo = ''; paginationState.releaseFrom = ''; paginationState.releaseTo = '';
     closeLibFilterPanel();
-    loadLibrary('', '', '');
-    // Ensure hash reflects "All" and no filters
-    history.replaceState(null, '', window.location.pathname + window.location.search);
+    loadLibrary(paginationState.statuses, '', '');
   };
 
   panel.querySelector('#lfApply')?.addEventListener('click', apply);
@@ -828,12 +966,12 @@ function openLibFilterPanel() {
   const panel = document.getElementById('libFilterPanel');
   const btn = document.getElementById('libFilterBtn');
   if (!fab || !panel || !btn) return;
+  if (statusFilterOpen) closeStatusFilterPanel();
   if (!panel.innerHTML.trim()) {
     panel.innerHTML = buildLibFilterPanelHTML();
     wireLibFilterPanel(panel);
   }
   syncLibFilterInputs();
-  syncLibFilterStatus();
   panel.hidden = false;
   // allow render before transition
   requestAnimationFrame(() => {
@@ -884,7 +1022,6 @@ function ensureLibFilterFab() {
     panel.innerHTML = buildLibFilterPanelHTML();
     wireLibFilterPanel(panel);
   }
-  syncLibFilterStatus();
   syncLibFilterInputs();
   updateLibFilterBadge();
   // Wire FAB button once
@@ -900,6 +1037,7 @@ function ensureLibFilterFab() {
       if (fab.contains(e.target)) return;
       // Don't close when clicking the tag filter bar or modal
       if (e.target.closest('#tagFilterBar')) return;
+      if (e.target.closest('#statusFilterFab')) return;
       closeLibFilterPanel();
     });
     document.addEventListener('keydown', (e) => {
@@ -912,15 +1050,20 @@ function ensureLibFilterFab() {
   return fab;
 }
 
-// Back-compat aliases — old calls route to the FAB
+// Back-compat aliases — old calls route to the FABs
 function buildLibraryFilterBarHTML() { return buildLibFilterPanelHTML(); }
 function wireLibraryFilterBar(bar) { return wireLibFilterPanel(bar); }
-function ensureLibraryFilterBar() { return ensureLibFilterFab(); }
+function ensureLibraryFilterBar() {
+  ensureLibFilterFab();
+  return ensureStatusFilterFab();
+}
 
 export async function loadLibrary(status, tag = '', platform = '', extraOpts = null) {
   const grid = document.getElementById('gameGrid');
   if (!grid) return;
 
+  // Normalize status input to array (supports single string, comma string, or array for multi-select)
+  const normStatuses = normalizeStatuses(status);
   // Merge extraOpts (release filters) into libraryFilters if provided,
   // otherwise keep current libraryFilters (persisted across pagination).
   if (extraOpts && typeof extraOpts === 'object') {
@@ -932,7 +1075,8 @@ export async function loadLibrary(status, tag = '', platform = '', extraOpts = n
 
   // Reset pagination state
   paginationState = {
-    currentStatus: status || '',
+    currentStatus: normStatuses[0] || '',
+    statuses: normStatuses,
     tagFilter: tag || '',
     platformFilter: platform || '',
     offset: 0,
@@ -950,17 +1094,21 @@ export async function loadLibrary(status, tag = '', platform = '', extraOpts = n
     releaseTo: libraryFilters.releaseTo,
   };
 
-  // Hide search results header and show FAB
+  // Hide search results header and show FABs
   const searchHeader = document.getElementById('searchResultsHeader');
   if (searchHeader) searchHeader.remove();
-  activateStatusTab(status || '');
+  // Legacy single-status tab sync (first of multi)
+  activateStatusTab(normStatuses[0] || '');
+  // Sync status FAB (multi-select)
+  syncStatusFilterPanel();
   updateTagFilterBar();
   ensureLibFilterFab();
+  ensureStatusFilterFab();
 
   grid.innerHTML = '<div class="loading">Loading library...</div>';
 
   try {
-    const { items, total, hasMore } = await library.list(status || '', PAGE_SIZE, 0, tag || '', platform || '', {
+    const { items, total, hasMore } = await library.list(normStatuses, PAGE_SIZE, 0, tag || '', platform || '', {
       yearFrom: libraryFilters.yearFrom || null,
       yearTo: libraryFilters.yearTo || null,
       releaseFrom: libraryFilters.releaseFrom || null,
@@ -1034,8 +1182,10 @@ export function renderLibraryItems(items, status = '') {
   const grid = document.getElementById('gameGrid');
   if (!grid) return;
 
+  const norm = normalizeStatuses(status);
   paginationState = {
-    currentStatus: status || '',
+    currentStatus: norm[0] || '',
+    statuses: norm,
     tagFilter: '',
     platformFilter: '',
     offset: 0,
@@ -1050,6 +1200,7 @@ export function renderLibraryItems(items, status = '') {
     releaseTo: libraryFilters.releaseTo,
   };
   ensureLibraryFilterBar();
+  ensureStatusFilterFab();
 
   if (!items || items.length === 0) {
     renderEmptyState(grid, 'library', status);
@@ -1088,7 +1239,7 @@ async function loadMore() {
       renderPagedItems(grid, results, false); // false = append, not replace
     } else {
       const { items, hasMore } = await library.list(
-        paginationState.currentStatus,
+        paginationState.statuses || [],
         paginationState.pageSize,
         paginationState.offset,
         paginationState.tagFilter,
@@ -1147,14 +1298,14 @@ export async function refreshTabCounts() {
       tab.textContent = typeof n === 'number' ? `${label} (${n})` : label;
     });
   }
-  // Mirror counts onto FAB chips (create panel if needed so labels exist)
-  const panel = document.getElementById('libFilterPanel');
-  if (panel && !panel.innerHTML.trim()) {
-    panel.innerHTML = buildLibFilterPanelHTML();
-    wireLibFilterPanel(panel);
+  // Mirror counts onto status FAB chips (create panel if needed so labels exist)
+  const statusPanel = document.getElementById('statusFilterPanel');
+  if (statusPanel && !statusPanel.innerHTML.trim()) {
+    statusPanel.innerHTML = buildStatusFilterPanelHTML();
+    wireStatusFilterPanel(statusPanel);
   }
-  if (panel) {
-    panel.querySelectorAll('.lib-filter-chip[data-status]').forEach(chip => {
+  if (statusPanel) {
+    statusPanel.querySelectorAll('.lib-filter-chip[data-status]').forEach(chip => {
       const status = chip.dataset.status || '';
       const n = counts[status || 'all'];
       const base = chip.dataset.label || (chip.dataset.label = chip.textContent.replace(/\s\(\d+\)$/, ''));
@@ -1241,7 +1392,6 @@ async function loadSuggestions() {
     card.addEventListener('click', async () => {
       const id = Number(card.dataset.suggestId);
       const name = card.dataset.suggestName;
-      const activeTab = document.querySelector('.tab.active');
       card.disabled = true;
       try {
         await library.add(id, { status: 'backlog' });
@@ -1253,11 +1403,11 @@ async function loadSuggestions() {
           // Refresh the grid/counts so the new backlog entry is visible
           // even if the sheet is dismissed without further changes (the
           // sheet's close would otherwise only refresh after an edit).
-          loadLibrary(activeTab?.dataset?.status || '', paginationState.tagFilter);
+          loadLibrary(currentStatuses(), paginationState.tagFilter);
           openLibraryItemModal(item);
         } catch {
           // Fallback: if fetching the new item fails, at least reload the view
-          await loadLibrary(activeTab?.dataset?.status || '', paginationState.tagFilter);
+          await loadLibrary(currentStatuses(), paginationState.tagFilter);
         }
       } catch (err) {
         card.disabled = false;
@@ -1373,10 +1523,9 @@ async function quickSetStatus(gameId, qaAction, { card = null } = {}) {
       showToast(newStatus === 'completed' ? `Finished ${updated.game_name} ✓` : `Marked ${updated.game_name} as ${STATUS_LABELS[updated.status]}`);
     }
 
-    // If the active tab no longer contains this game, animate it out.
-    const activeTab = document.querySelector('.tab.active');
-    const activeStatus = activeTab?.dataset?.status || '';
-    if (activeStatus && activeStatus !== updated.status && paginationState.mode === 'library' && !paginationState.tagFilter) {
+    // If the active status filter no longer contains this game, animate it out.
+    const activeStatuses = currentStatuses();
+    if (activeStatuses.length > 0 && !activeStatuses.includes(updated.status) && paginationState.mode === 'library' && !paginationState.tagFilter) {
       removeCardAnimated(card);
       itemsById.delete(key);
     }
@@ -1447,58 +1596,55 @@ function fmtDelta(minutes) {
 // Called when a tag chip on a card is clicked.
 // If a filter is already active, adds the tag with AND (space-separated).
 export function filterByTag(tag) {
-  const activeTab = document.querySelector('.tab.active');
   const current = paginationState.tagFilter;
   const newFilter = current ? current + ' ' + formatTagForQuery(tag) : formatTagForQuery(tag);
-  loadLibrary(activeTab?.dataset?.status || '', newFilter);
+  loadLibrary(currentStatuses(), newFilter);
 }
 
 // applyTagFilter replaces the active tag filter outright and reloads.
 // Used by the game-form tag menu, where the exact combination (replace,
 // AND, OR) is chosen explicitly rather than always appended.
 export function applyTagFilter(filter) {
-  const activeTab = document.querySelector('.tab.active');
-  loadLibrary(activeTab?.dataset?.status || '', filter);
+  loadLibrary(currentStatuses(), filter);
 }
 
 // clearTagFilter removes the tag filter and reloads (platform filter kept).
 export function clearTagFilter() {
-  const activeTab = document.querySelector('.tab.active');
-  loadLibrary(activeTab?.dataset?.status || '', '', paginationState.platformFilter);
+  loadLibrary(currentStatuses(), '', paginationState.platformFilter);
 }
 
 // clearAllFilters removes both tag and platform filters and reloads.
 export function clearAllFilters() {
-  const activeTab = document.querySelector('.tab.active');
-  loadLibrary(activeTab?.dataset?.status || '', '', '');
+  loadLibrary(currentStatuses(), '', '');
 }
 
 // filterByPlatform sets the platform availability filter and reloads.
 // Typing the same platform again clears it (toggle), mirroring tag chips.
 export function filterByPlatform(platform) {
-  const activeTab = document.querySelector('.tab.active');
   const next = paginationState.platformFilter === platform ? '' : platform;
-  loadLibrary(activeTab?.dataset?.status || '', paginationState.tagFilter, next);
+  loadLibrary(currentStatuses(), paginationState.tagFilter, next);
 }
 
 // updateTagFilterBar shows or hides the "filtered by" bar, covering tag,
-// platform and status filters. Status is included so the FAB's active state
-// has a persistent inline summary (without needing to open the panel).
+// platform and status filters. Status is multi-select — each selected status
+// gets its own chip with × to remove that one.
 function updateTagFilterBar() {
   const existing = document.getElementById('tagFilterBar');
   if (existing) existing.remove();
 
   const tag = paginationState.tagFilter;
   const platform = paginationState.platformFilter;
-  const status = paginationState.currentStatus || '';
-  if (!tag && !platform && !status) return;
+  const statuses = currentStatuses();
+  if (!tag && !platform && statuses.length === 0) return;
 
   const { tags: tagList, op } = parseTagQuery(tag || '');
   let display = '';
-  if (status) {
-    const label = STATUS_LABELS[status] || status;
-    const color = STATUS_CHIP_COLORS[status] || 'var(--accent)';
-    display += `<span class="tag-filter-chip" data-status="${escapeHTML(status)}" style="--chip-color:${color};border-color:${color}">${escapeHTML(label)}<button type="button" class="tag-filter-chip-x" aria-label="Clear status filter">×</button></span>`;
+  if (statuses.length > 0) {
+    display += statuses.map(s => {
+      const label = STATUS_LABELS[s] || s;
+      const color = STATUS_CHIP_COLORS[s] || 'var(--accent)';
+      return `<span class="tag-filter-chip" data-status="${escapeHTML(s)}" style="--chip-color:${color};border-color:${color}">${escapeHTML(label)}<button type="button" class="tag-filter-chip-x" aria-label="Remove ${escapeHTML(s)} filter">×</button></span>`;
+    }).join(' ');
   }
   if (tag) {
     const joiner = op === 'or' ? ' OR ' : ' AND ';
@@ -1521,37 +1667,31 @@ function updateTagFilterBar() {
     // Clear everything including status: go to "All"
     libraryFilters.yearFrom = ''; libraryFilters.yearTo = ''; libraryFilters.releaseFrom = ''; libraryFilters.releaseTo = '';
     paginationState.yearFrom = ''; paginationState.yearTo = ''; paginationState.releaseFrom = ''; paginationState.releaseTo = '';
+    setStatuses([]);
     history.replaceState(null, '', window.location.pathname + window.location.search);
-    loadLibrary('', '', '');
+    loadLibrary([], '', '');
   });
 
   bar.querySelectorAll('.tag-filter-chip-x').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const chip = btn.parentElement;
-      const curStatus = paginationState.currentStatus || '';
       if (chip.dataset.status !== undefined) {
-        // Clear status -> All, keep other filters
-        const target = '';
-        if (target) window.location.hash = '#' + target;
-        else {
-          history.replaceState(null, '', window.location.pathname + window.location.search);
-          loadLibrary(target, paginationState.tagFilter, paginationState.platformFilter);
-        }
-        // For status clear via hash, handleRoute will reload; for All we already loaded
-        if (target) window.location.hash = '#' + target; else { /* already loaded */ }
-        // Ensure panel sync
-        syncLibFilterStatus();
+        const rm = chip.dataset.status;
+        const next = currentStatuses().filter(s => s !== rm);
+        setStatuses(next);
+        loadLibrary(next, paginationState.tagFilter, paginationState.platformFilter);
+        syncStatusFilterPanel();
         return;
       }
       if (chip.dataset.platform !== undefined) {
-        loadLibrary(curStatus, paginationState.tagFilter, '');
+        loadLibrary(currentStatuses(), paginationState.tagFilter, '');
         return;
       }
       const removeTag = chip.dataset.tag;
       const remaining = tagList.filter(t => t !== removeTag);
       const newFilter = remaining.map(formatTagForQuery).join(op === 'or' ? '|' : ' ');
-      loadLibrary(curStatus, newFilter, paginationState.platformFilter);
+      loadLibrary(currentStatuses(), newFilter, paginationState.platformFilter);
     });
   });
 
@@ -2436,8 +2576,7 @@ function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status
     }
     // Reflect auto-saved edits in the grid once, on the way out.
     if (shouldRefresh) {
-      const activeTab = document.querySelector('.tab.active');
-      loadLibrary(activeTab?.dataset?.status || '', paginationState.tagFilter, paginationState.platformFilter);
+      loadLibrary(currentStatuses(), paginationState.tagFilter, paginationState.platformFilter);
     }
   };
   modal.querySelector('.modal-close').addEventListener('click', close);
@@ -2480,8 +2619,7 @@ function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status
         // double-reloading.
         savedAtLeastOnce = false;
         close();
-        const activeTab = document.querySelector('.tab.active');
-        await loadLibrary(activeTab?.dataset?.status || '', paginationState.tagFilter, paginationState.platformFilter);
+        await loadLibrary(currentStatuses(), paginationState.tagFilter, paginationState.platformFilter);
         showToast(`Removed ${name}`, {
           action: {
             label: 'Undo',
@@ -2492,8 +2630,7 @@ function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status
               } catch (err) {
                 showToast(`Couldn't restore ${name}: ${err.message}`, { type: 'error' });
               }
-              const tab = document.querySelector('.tab.active');
-              await loadLibrary(tab?.dataset?.status || '', paginationState.tagFilter, paginationState.platformFilter);
+              await loadLibrary(currentStatuses(), paginationState.tagFilter, paginationState.platformFilter);
             },
           },
         });
