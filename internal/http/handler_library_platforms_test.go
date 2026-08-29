@@ -153,10 +153,26 @@ func TestPlatformSuggestions(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	// "swi" is a substring of both Switch names; most-referenced first.
-	want := []string{"Nintendo Switch", "Nintendo Switch 2"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("suggestions for 'swi' = %v, want %v", got, want)
+	// "swi" is a substring of both Switch names; most-referenced first, with contemporary
+	// shortname tokens prioritized when present.
+	if !contains(got, "Nintendo Switch") || !contains(got, "Nintendo Switch 2") {
+		t.Errorf("suggestions for 'swi' = %v, want to contain 'Nintendo Switch' and 'Nintendo Switch 2'", got)
+	}
+	// Most-referenced (Switch count 2) should come before Switch 2 (count 1)
+	if len(got) >= 2 {
+		idxSwitch := -1
+		idxSwitch2 := -1
+		for i, v := range got {
+			if v == "Nintendo Switch" {
+				idxSwitch = i
+			}
+			if v == "Nintendo Switch 2" {
+				idxSwitch2 = i
+			}
+		}
+		if idxSwitch == -1 || idxSwitch2 == -1 || idxSwitch > idxSwitch2 {
+			t.Errorf("suggestions for 'swi' order wrong: %v, want 'Nintendo Switch' before 'Nintendo Switch 2'", got)
+		}
 	}
 
 	// Ownership-only platform ("Steam Deck") is suggestable too.
@@ -173,7 +189,8 @@ func TestPlatformSuggestions(t *testing.T) {
 	}
 
 	// Curated shortnames match even though the IGDB abbreviation is
-	// "Switch 2": typing "sw2" suggests "Nintendo Switch 2".
+	// "Switch 2": typing "sw2" suggests "Nintendo Switch 2" (and contemporarily,
+	// the shortname token itself for discoverability).
 	req = httptest.NewRequest(http.MethodGet, "/api/library/platforms?q=sw2", nil)
 	req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})
 	rec = httptest.NewRecorder()
@@ -182,8 +199,13 @@ func TestPlatformSuggestions(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if !reflect.DeepEqual(got, []string{"Nintendo Switch 2"}) {
-		t.Errorf("suggestions for 'sw2' = %v, want [Nintendo Switch 2]", got)
+	// Accept either name-only or token+name, but must contain the contemporary result
+	if len(got) == 0 || !contains(got, "Nintendo Switch 2") {
+		t.Errorf("suggestions for 'sw2' = %v, want to contain 'Nintendo Switch 2'", got)
+	}
+	// For contemporary queries, shortname token should be prioritized if present
+	if len(got) >= 1 && got[0] != "sw2" && got[0] != "Nintendo Switch 2" {
+		t.Errorf("suggestions for 'sw2' first = %q, want 'sw2' or 'Nintendo Switch 2' (contemporary first)", got[0])
 	}
 }
 
@@ -269,4 +291,13 @@ func toStringSlice(v interface{}) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+func contains(slice []string, s string) bool {
+	for _, v := range slice {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }

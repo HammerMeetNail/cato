@@ -66,11 +66,18 @@ func (h *GameHandler) handlePlatforms(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pattern := "%" + games.EscapeLike(q) + "%"
+	prefix := games.EscapeLike(q) + "%"
 	rows, err := h.db.Query(`SELECT name, COALESCE(shortname,'') FROM platforms
 		WHERE name != '' AND (LOWER(name) LIKE ? ESCAPE '\'
 		   OR LOWER(COALESCE(abbreviation,'')) LIKE ? ESCAPE '\'
 		   OR LOWER(COALESCE(shortname,'')) LIKE ? ESCAPE '\')
-		ORDER BY name LIMIT 16`, pattern, pattern, pattern)
+		ORDER BY
+		  CASE WHEN LOWER(COALESCE(shortname,'')) LIKE ? ESCAPE '\' THEN 0
+		       WHEN LOWER(COALESCE(abbreviation,'')) LIKE ? ESCAPE '\' THEN 1
+		       WHEN LOWER(name) LIKE ? ESCAPE '\' THEN 2
+		       ELSE 3 END,
+		  id DESC
+		LIMIT 16`, pattern, pattern, pattern, prefix, prefix, prefix)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to fetch platforms"))
 		return
@@ -78,12 +85,30 @@ func (h *GameHandler) handlePlatforms(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	// Collect names and matching shortname tokens (e.g. "ps5" for PlayStation 5)
 	// so the datalist offers both forms and shortname filtering is discoverable.
+	// Prioritize contemporary shortnames: for "ps", ps5/ps4 before generic names.
 	seen := make(map[string]bool, 16)
 	platforms := make([]string, 0, 8)
 	for rows.Next() {
 		var name, sn string
 		if err := rows.Scan(&name, &sn); err != nil {
 			continue
+		}
+		// First, add shortname tokens that are prefix matches (ps5 for ps) — contemporary first
+		for _, tok := range strings.Fields(sn) {
+			tok = strings.TrimSpace(tok)
+			if tok == "" || seen[tok] {
+				continue
+			}
+			if strings.HasPrefix(strings.ToLower(tok), q) {
+				seen[tok] = true
+				platforms = append(platforms, tok)
+				if len(platforms) >= 8 {
+					break
+				}
+			}
+		}
+		if len(platforms) >= 8 {
+			break
 		}
 		if !seen[name] {
 			seen[name] = true
@@ -92,7 +117,7 @@ func (h *GameHandler) handlePlatforms(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		// Add any shortname token that contains the query as substring
+		// Then add remaining shortname tokens that contain query as substring
 		for _, tok := range strings.Fields(sn) {
 			tok = strings.TrimSpace(tok)
 			if tok == "" || seen[tok] {

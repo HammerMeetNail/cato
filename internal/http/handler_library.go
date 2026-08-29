@@ -832,42 +832,88 @@ func (h *LibraryHandler) handleLibraryPlatforms(w http.ResponseWriter, r *http.R
 	userID := auth.GetUserID(r.Context())
 	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
 	pattern := "%" + games.EscapeLike(q) + "%"
+	prefix := games.EscapeLike(q) + "%"
 
 	// Availability names resolve through the lookup table (matched against
 	// name, IGDB abbreviation, and curated shortname); ownership platforms
-	// are literal text. Union keeps all sources suggestable.
-	rows, err := h.db.Query(`SELECT t.name, COUNT(*) AS c FROM (
+	// are literal text. Union keeps all sources suggestable. For contemporary
+	// queries like "ps", prioritize ps5/ps4 via shortname prefix and recency.
+	rows, err := h.db.Query(`SELECT t.name, t.sn, COUNT(*) AS c FROM (
 		SELECT COALESCE(NULLIF(p.name, ''), gp.platform_value) AS name,
 		       COALESCE(p.abbreviation, '') AS abbr,
-		       COALESCE(p.shortname, '') AS sn
+		       COALESCE(p.shortname, '') AS sn,
+		       p.id AS pid
 		FROM library_items li
 		JOIN game_platforms gp ON gp.game_id = li.game_id
 		LEFT JOIN platforms p ON p.id = gp.platform_id
 		WHERE li.user_id = ?
 		UNION ALL
-		SELECT je.value AS name, '' AS abbr, '' AS sn
+		SELECT je.value AS name, '' AS abbr, '' AS sn, 0 AS pid
 		FROM library_items li, json_each(li.owned_platforms_json) je
 		WHERE li.user_id = ? AND je.value != ''
 	) t
 	WHERE t.name != '' AND (LOWER(t.name) LIKE ? ESCAPE '\'
 	   OR LOWER(t.abbr) LIKE ? ESCAPE '\'
 	   OR LOWER(t.sn) LIKE ? ESCAPE '\')
-	GROUP BY t.name ORDER BY c DESC, name LIMIT 8`,
-		userID, userID, pattern, pattern, pattern)
+	GROUP BY t.name, t.sn ORDER BY c DESC,
+	  CASE WHEN LOWER(t.sn) LIKE ? ESCAPE '\' THEN 0 ELSE 1 END,
+	  MAX(t.pid) DESC
+	LIMIT 16`,
+		userID, userID, pattern, pattern, pattern, prefix)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to fetch platforms"))
 		return
 	}
 	defer rows.Close()
 
-	platforms := make([]string, 0)
+	platforms := make([]string, 0, 8)
+	seen := make(map[string]bool, 16)
 	for rows.Next() {
-		var name string
+		var name, sn string
 		var count int
-		if err := rows.Scan(&name, &count); err != nil {
+		if err := rows.Scan(&name, &sn, &count); err != nil {
 			continue
 		}
-		platforms = append(platforms, name)
+		// Prioritize contemporary shortname prefix matches (ps5 for "ps")
+		for _, tok := range strings.Fields(sn) {
+			tok = strings.TrimSpace(tok)
+			if tok == "" || seen[tok] {
+				continue
+			}
+			if strings.HasPrefix(strings.ToLower(tok), q) {
+				seen[tok] = true
+				platforms = append(platforms, tok)
+				if len(platforms) >= 8 {
+					break
+				}
+			}
+		}
+		if len(platforms) >= 8 {
+			break
+		}
+		if !seen[name] {
+			seen[name] = true
+			platforms = append(platforms, name)
+			if len(platforms) >= 8 {
+				break
+			}
+		}
+		for _, tok := range strings.Fields(sn) {
+			tok = strings.TrimSpace(tok)
+			if tok == "" || seen[tok] {
+				continue
+			}
+			if strings.Contains(strings.ToLower(tok), q) {
+				seen[tok] = true
+				platforms = append(platforms, tok)
+				if len(platforms) >= 8 {
+					break
+				}
+			}
+		}
+		if len(platforms) >= 8 {
+			break
+		}
 	}
 
 	writeJSON(w, http.StatusOK, platforms)

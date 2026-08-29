@@ -1,6 +1,34 @@
-import { searchGames, getCoverThumbnailURL, autocompleteTags, autocompletePlatforms, formatTagForQuery, library } from './api.js';
+import { searchGames, getCoverThumbnailURL, autocompleteTags, autocompletePlatforms, autocompleteGlobalPlatforms, formatTagForQuery, library } from './api.js';
 import { escapeHTML, showToast, formatPlatformName, statusBadgeLabel, openLibraryItemModal, refreshTabCounts } from './library.js';
 import { releaseLabel, releaseStatus } from './dates.js';
+
+const CONTEMPORARY_RANK = {
+  'ps5': 0, 'playstation 5': 0,
+  'ps4': 1, 'playstation 4': 1,
+  'ps3': 2, 'playstation 3': 2,
+  'ps2': 3, 'playstation 2': 3,
+  'ps1': 4, 'playstation': 4, 'psx': 4,
+  'xbox series x|s': 5, 'xsx': 5, 'xss': 5,
+  'nintendo switch 2': 6, 'sw2': 6, 'switch 2': 6, 'ns2': 6,
+  'nintendo switch': 7, 'switch': 7,
+  'xbox one': 8, 'xb1': 8,
+  'xbox 360': 9, 'x360': 9,
+  'pc (microsoft windows)': 10, 'win': 10,
+};
+function rankPlatformSuggestions(list, query) {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q || !Array.isArray(list) || list.length === 0) return list;
+  const isShort = q.length <= 2;
+  return [...list].sort((a, b) => {
+    const al = String(a).toLowerCase(), bl = String(b).toLowerCase();
+    const ar = CONTEMPORARY_RANK[al] ?? 99, br = CONTEMPORARY_RANK[bl] ?? 99;
+    if (isShort && ar !== br) return ar - br;
+    const aPrefix = al.startsWith(q) ? 0 : 1, bPrefix = bl.startsWith(q) ? 0 : 1;
+    if (aPrefix !== bPrefix) return aPrefix - bPrefix;
+    if (ar !== br) return ar - br;
+    return 0;
+  });
+}
 
 // Tuning knobs: 200ms feels responsive without hammering the API; the
 // dropdown renders at most 8 rows; the client-side result cache makes
@@ -356,7 +384,13 @@ function scheduleSearch(query, resultsEl, onSelect, onSubmit, onTagLookup) {
     searchTimer = setTimeout(async () => {
       renderLoading(resultsEl);
       try {
-        const suggestions = await autocompletePlatforms(raw);
+        // Prefer global contemporary ranking (ps5/ps4 for "ps"), fallback to library
+        let suggestions = [];
+        try { suggestions = await autocompleteGlobalPlatforms(raw); } catch {}
+        if (!suggestions || suggestions.length === 0) {
+          try { suggestions = await autocompletePlatforms(raw); } catch {}
+        }
+        suggestions = rankPlatformSuggestions(suggestions, raw);
         currentResults = [];
         selectedIndex = -1;
         renderPlatformSuggestions(suggestions, resultsEl, raw);
