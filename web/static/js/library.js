@@ -972,17 +972,17 @@ function buildLibFilterPanelHTML() {
               <span class="lib-filter-label">Platform (available)</span>
               <div class="lib-filter-input-wrap">
                 <svg class="lib-filter-input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"></rect><path d="M6 12h4"></path><path d="M8 10v4"></path><circle cx="15" cy="11" r="1" fill="currentColor" stroke="none"></circle><circle cx="18" cy="13" r="1" fill="currentColor" stroke="none"></circle></svg>
-                <input id="lfPlatform" type="text" placeholder="ps5, sw2, xsx, win" autocomplete="off" list="lfPlatformList" inputmode="search">
+                <input id="lfPlatform" type="text" placeholder="ps5, sw2, xsx, win" autocomplete="off" inputmode="search">
               </div>
-              <datalist id="lfPlatformList"></datalist>
+              <div id="lfPlatformList" class="lib-filter-autocomplete" hidden></div>
             </label>
             <label class="lib-filter-field">
               <span class="lib-filter-label">Tags</span>
               <div class="lib-filter-input-wrap">
                 <svg class="lib-filter-input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4"></path><path d="M20 12v4H6a2 2 0 0 0-2 2c0 1.1.9 2 2 2h12v-4"></path></svg>
-                <input id="lfTags" type="text" placeholder='rpg, "co-op"' autocomplete="off" list="lfTagsList" inputmode="search">
+                <input id="lfTags" type="text" placeholder='rpg, "co-op"' autocomplete="off" inputmode="search">
               </div>
-              <datalist id="lfTagsList"></datalist>
+              <div id="lfTagsList" class="lib-filter-autocomplete" hidden></div>
             </label>
           </div>
         </div>
@@ -996,9 +996,9 @@ function buildLibFilterPanelHTML() {
               <span class="lib-filter-label">Owned on</span>
               <div class="lib-filter-input-wrap">
                 <svg class="lib-filter-input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 2l7 4v6c0 5-3.5 9-7 10-3.5-1-7-5-7-10V6l7-4z"></path><path d="M9 12l2 2 4-4"></path></svg>
-                <input id="lfOwnedPlatform" type="text" placeholder="ps5, sw2, xsx" autocomplete="off" list="lfOwnedPlatformList" inputmode="search">
+                <input id="lfOwnedPlatform" type="text" placeholder="ps5, sw2, xsx" autocomplete="off" inputmode="search">
               </div>
-              <datalist id="lfOwnedPlatformList"></datalist>
+              <div id="lfOwnedPlatformList" class="lib-filter-autocomplete" hidden></div>
             </label>
             <div class="lib-filter-field" style="justify-content:center">
               <p class="lib-filter-hint" style="margin:0">Completed + owned on ps5 = only ps5-owned completed (not just available on ps5).</p>
@@ -1085,64 +1085,83 @@ function wireLibFilterPanel(panel) {
   if (!platEl) return;
   libFilterWired = true;
 
-  // Datalists — use global platforms so ps5/xsx/etc autocomplete even when
-  // the user's library doesn't yet contain that platform (library-only would
-  // return [] and look broken).
-  const platList = panel.querySelector('#lfPlatformList');
-  autocompleteGlobalPlatforms('').then(list => {
-    if (platList && Array.isArray(list)) platList.innerHTML = list.slice(0, 20).map(p => `<option value="${escapeHTML(p)}"></option>`).join('');
-  }).catch(() => {});
-  let platTimer = null;
-  platEl.addEventListener('input', () => {
-    clearTimeout(platTimer);
-    platTimer = setTimeout(async () => {
-      const q = platEl.value.trim();
-      if (q.length < 1) return;
-      try {
-        const list = await autocompleteGlobalPlatforms(q);
-        const ranked = rankPlatformSuggestions(list, q);
-        if (platList && Array.isArray(list)) platList.innerHTML = ranked.map(p => `<option value="${escapeHTML(p)}"></option>`).join('');
-      } catch {}
-    }, 250);
-  });
-  // Owned platform autocomplete — same global list, but hint is owned
-  const ownedList = panel.querySelector('#lfOwnedPlatformList');
-  if (ownedEl && ownedList) {
-    autocompleteGlobalPlatforms('').then(list => {
-      if (ownedList && Array.isArray(list)) ownedList.innerHTML = list.slice(0, 20).map(p => `<option value="${escapeHTML(p)}"></option>`).join('');
-    }).catch(() => {});
-    let ownedTimer = null;
-    ownedEl.addEventListener('input', () => {
-      clearTimeout(ownedTimer);
-      ownedTimer = setTimeout(async () => {
-        const q = ownedEl.value.trim();
-        if (q.length < 1) return;
+  // Custom autocomplete — replaces native datalist which overlays the input
+  // and hides what the user is typing. Suggestions appear in a small panel
+  // below the field (not over it) and never cover the typed text.
+  function setupFilterAutocomplete(inputEl, listEl, fetchFn, rankFn) {
+    if (!inputEl || !listEl) return;
+    const render = (items) => {
+      if (!items || items.length === 0) {
+        listEl.hidden = true;
+        listEl.innerHTML = '';
+        return;
+      }
+      listEl.innerHTML = items.slice(0, 8).map(v => `<div class="lib-filter-autocomplete-option" data-value="${escapeHTML(v)}">${escapeHTML(v)}</div>`).join('');
+      listEl.hidden = false;
+      listEl.querySelectorAll('.lib-filter-autocomplete-option').forEach(opt => {
+        opt.addEventListener('click', () => {
+          const val = opt.dataset.value || '';
+          // For tags, replace only the last segment being typed
+          if (inputEl === tagsEl) {
+            const raw = inputEl.value;
+            const last = raw.split(/[\s|]+/).pop().replace(/^"|"$/g, '').trim();
+            if (last) {
+              const { start } = (() => {
+                let segStart = 0; let quoted = false;
+                for (let i = 0; i < raw.length; i++) {
+                  const ch = raw[i];
+                  if (ch === '"') quoted = !quoted;
+                  else if (!quoted && (ch === ' ' || ch === '|')) segStart = i + 1;
+                }
+                return { start: segStart };
+              })();
+              const before = raw.slice(0, segStart);
+              const needsQuote = /[\s|"]/.test(val);
+              const formatted = needsQuote ? `"${val.replace(/"/g, '')}"` : val;
+              inputEl.value = before + formatted + ' ';
+            } else {
+              inputEl.value = val;
+            }
+          } else {
+            inputEl.value = val;
+          }
+          listEl.hidden = true;
+          listEl.innerHTML = '';
+          inputEl.focus();
+        });
+      });
+    };
+    const hide = () => { listEl.hidden = true; };
+    let timer = null;
+    inputEl.addEventListener('input', () => {
+      clearTimeout(timer);
+      const raw = inputEl.value;
+      const q = inputEl === tagsEl ? raw.split(/[\s|]+/).pop().replace(/^"|"$/g, '').trim() : raw.trim();
+      if (q.length < 1) { hide(); return; }
+      timer = setTimeout(async () => {
         try {
-          const list = await autocompleteGlobalPlatforms(q);
-          const ranked = rankPlatformSuggestions(list, q);
-          if (ownedList && Array.isArray(list)) ownedList.innerHTML = ranked.map(p => `<option value="${escapeHTML(p)}"></option>`).join('');
-        } catch {}
-      }, 250);
+          const list = await fetchFn(q);
+          const ranked = rankFn ? rankFn(list, q) : list;
+          render(ranked);
+        } catch { hide(); }
+      }, 200);
     });
+    inputEl.addEventListener('focus', () => {
+      const raw = inputEl.value;
+      const q = inputEl === tagsEl ? raw.split(/[\s|]+/).pop().replace(/^"|"$/g, '').trim() : raw.trim();
+      if (q.length >= 1 && listEl.children.length > 0) listEl.hidden = false;
+    });
+    inputEl.addEventListener('blur', () => {
+      // Delay hide to allow click on option to register
+      setTimeout(() => hide(), 150);
+    });
+    // Also hide when panel scrolls or closes
+    panel.addEventListener('scroll', hide, true);
   }
 
-  const tagsList = panel.querySelector('#lfTagsList');
-  autocompleteTags('', 100).then(list => {
-    if (tagsList && Array.isArray(list)) tagsList.innerHTML = list.map(t => `<option value="${escapeHTML(t)}"></option>`).join('');
-  }).catch(() => {});
-  let tagTimer = null;
-  tagsEl.addEventListener('input', () => {
-    clearTimeout(tagTimer);
-    const raw = tagsEl.value;
-    const last = raw.split(/[\s|]+/).pop().replace(/^"|"$/g, '').trim();
-    if (last.length < 1) return;
-    tagTimer = setTimeout(async () => {
-      try {
-        const list = await autocompleteTags(last);
-        if (tagsList && Array.isArray(list)) tagsList.innerHTML = list.map(t => `<option value="${escapeHTML(t)}"></option>`).join('');
-      } catch {}
-    }, 250);
-  });
+  setupFilterAutocomplete(platEl, panel.querySelector('#lfPlatformList'), autocompleteGlobalPlatforms, rankPlatformSuggestions);
+  setupFilterAutocomplete(ownedEl, panel.querySelector('#lfOwnedPlatformList'), autocompleteGlobalPlatforms, rankPlatformSuggestions);
+  setupFilterAutocomplete(tagsEl, panel.querySelector('#lfTagsList'), async (q) => autocompleteTags(q, 20), null);
 
   const dismissAutocomplete = () => {
     // Datalist dropdowns are native and stay open while the input retains

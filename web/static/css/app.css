@@ -1537,6 +1537,39 @@ body.modal-open .app-shell {
 .lib-filter-input-wrap input {
   padding-left: 36px !important;
 }
+.lib-filter-autocomplete {
+  margin-top: 6px;
+  background: var(--surface);
+  border: 1px solid var(--surface2);
+  border-radius: 10px;
+  max-height: 160px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.lib-filter-autocomplete[hidden] { display: none !important; }
+.lib-filter-autocomplete-option {
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lib-filter-autocomplete-option:hover,
+.lib-filter-autocomplete-option.active {
+  background: var(--surface2);
+  color: var(--text);
+}
+.lib-filter-autocomplete-empty {
+  padding: 10px 12px;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  font-style: italic;
+}
 .lib-filter-modern .lib-filter-field input,
 .lib-filter-modern .lib-filter-field select {
   min-height: 46px;
