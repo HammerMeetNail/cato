@@ -2185,8 +2185,7 @@ function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status
         <div class="modal-avail">
           <span class="modal-avail-label">Available on <span class="modal-avail-hint">(highlighted = owned)</span></span>
           <div class="modal-avail-chips">
-            ${availPlatforms.slice(0, 8).map(chipHTML).join('')}
-            ${availPlatforms.length > 8 ? `<span class="plat-more" title="${escapeHTML(availPlatforms.join(', '))}">+${availPlatforms.length - 8} more</span>` : ''}
+            ${availPlatforms.map(chipHTML).join('')}
             ${extraOwned.map(k => chipHTML(ownedMap.get(k))).join('')}
           </div>
         </div>` : '';
