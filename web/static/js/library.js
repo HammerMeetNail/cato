@@ -1144,6 +1144,15 @@ function wireLibFilterPanel(panel) {
     }, 250);
   });
 
+  const dismissAutocomplete = () => {
+    // Datalist dropdowns are native and stay open while the input retains
+    // focus. If the user types "ps" and hits Apply without picking a chip,
+    // the dropdown would otherwise linger over the dimmed backdrop or next
+    // paint. Blur everything in the panel to force the browser to close it.
+    try { if (document.activeElement && panel.contains(document.activeElement)) document.activeElement.blur(); } catch {}
+    [platEl, ownedEl, tagsEl, yfEl, ytEl, rfEl, rtEl, sortEl].forEach(el => { try { el && el.blur(); } catch {} });
+  };
+
   const apply = () => {
     const clampYear = v => {
       const n = parseInt(v, 10);
@@ -1153,6 +1162,7 @@ function wireLibFilterPanel(panel) {
     const newPlat = platEl.value.trim().slice(0, 64);
     const newOwned = ownedEl ? ownedEl.value.trim().slice(0, 64) : '';
     const newSort = sortEl ? sortEl.value : '';
+    dismissAutocomplete();
     libraryFilters.yearFrom = clampYear(yfEl ? yfEl.value : '');
     libraryFilters.yearTo = clampYear(ytEl ? ytEl.value : '');
     libraryFilters.sort = newSort;
@@ -1169,6 +1179,7 @@ function wireLibFilterPanel(panel) {
   };
 
   const clear = () => {
+    dismissAutocomplete();
     platEl.value = ''; tagsEl.value = '';
     if (ownedEl) ownedEl.value = '';
     if (sortEl) sortEl.value = '';
@@ -1266,6 +1277,13 @@ function closeLibFilterPanel() {
   const btn = document.getElementById('libFilterBtn');
   const backdrop = document.getElementById('libFilterBackdrop');
   if (!panel || !btn) return;
+  // Dismiss any open datalist dropdowns (native) that would otherwise linger
+  // when the user hits Apply without picking a suggestion (e.g. typing "ps"
+  // and applying "ps" as free text).
+  try {
+    if (document.activeElement && panel.contains(document.activeElement)) document.activeElement.blur();
+    panel.querySelectorAll('input').forEach(el => { try { el.blur(); } catch {} });
+  } catch {}
   panel.classList.remove('lib-filter-panel--open');
   if (backdrop) backdrop.classList.remove('lib-filter-backdrop--open');
   btn.classList.remove('lib-filter-btn--open');
