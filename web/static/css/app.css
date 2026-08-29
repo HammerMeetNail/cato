@@ -1087,7 +1087,7 @@ a { color: var(--accent); text-decoration: none; }
   display: none !important;
 }
 
-/* Library filter FAB — Nabu hist-filter-fab parity */
+/* Library filter FAB — vertically stacked on bottom-right with search (search top → status middle → advanced bottom) */
 .lib-filter-fab {
   position: fixed;
   right: 18px;
@@ -1099,6 +1099,18 @@ a { color: var(--accent); text-decoration: none; }
   pointer-events: auto;
 }
 
+/* Stack order — desktop (search hidden on desktop, filters stay above bottom-tabs) */
+#libFilterFab {
+  right: 18px;
+  left: auto;
+  bottom: calc(18px + 66px);
+}
+#statusFilterFab {
+  right: 18px;
+  left: auto;
+  bottom: calc(18px + 66px + 66px);
+}
+
 .lib-filter-fab[hidden] {
   display: none !important;
 }
@@ -1107,8 +1119,8 @@ a { color: var(--accent); text-decoration: none; }
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 48px;
-  height: 48px;
+  width: 54px;
+  height: 54px;
   border: none;
   border-radius: 50%;
   background: var(--accent);
@@ -1348,15 +1360,15 @@ a { color: var(--accent); text-decoration: none; }
   font-size: 0.88rem;
 }
 
-/* Status filter FAB — bottom-left, Nabu hist-filter-fab parity */
+/* Status filter FAB — stacked on bottom-right (middle of vertical stack) */
 .status-filter-fab {
-  right: auto;
-  left: 18px;
+  right: 18px;
+  left: auto;
 }
 
 .status-filter-fab .lib-filter-panel {
-  left: 0;
-  right: auto;
+  right: 0;
+  left: auto;
   width: 280px;
   max-width: calc(100vw - 32px);
 }
@@ -1414,13 +1426,15 @@ a { color: var(--accent); text-decoration: none; }
 
 @media (max-width: 600px) {
   .lib-filter-fab {
-    bottom: calc(70px + var(--safe-bottom) + 16px + 66px);
     right: 16px;
   }
-
-  .status-filter-fab {
-    left: 16px;
-    right: auto;
+  #libFilterFab {
+    bottom: calc(70px + var(--safe-bottom) + 16px);
+  }
+  #statusFilterFab {
+    right: 16px;
+    left: auto;
+    bottom: calc(70px + var(--safe-bottom) + 16px + 66px);
   }
 
   .lib-filter-panel {
@@ -1430,9 +1444,10 @@ a { color: var(--accent); text-decoration: none; }
     right: -2px;
   }
 
+  #statusFilterFab .lib-filter-panel,
   .status-filter-fab .lib-filter-panel {
-    left: -2px;
-    right: auto;
+    right: -2px;
+    left: auto;
   }
 
   .lib-filter-panel-inner {
@@ -2570,12 +2585,12 @@ a { color: var(--accent); text-decoration: none; }
   cursor: wait;
 }
 
-/* Mobile search FAB — above bottom-tabs + safe area */
+/* Search FAB — top of vertical stack on bottom-right (above status + advanced) */
 .fab-add {
   display: none;
   position: fixed;
   right: 18px;
-  bottom: calc(18px + 0px);
+  bottom: calc(18px + 66px + 132px);
   width: 54px;
   height: 54px;
   border-radius: 50%;
@@ -2595,8 +2610,8 @@ a { color: var(--accent); text-decoration: none; }
 
 @media (max-width: 600px) {
   .fab-add { display: flex; }
-  /* Lift FAB above the PWA bottom bar on mobile */
-  .fab-add { bottom: calc(70px + var(--safe-bottom) + 16px); }
+  /* Lift FAB above the PWA bottom bar on mobile — top of stack */
+  .fab-add { bottom: calc(70px + var(--safe-bottom) + 16px + 132px); }
 }
 
 /* Loading / empty */
