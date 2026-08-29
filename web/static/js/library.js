@@ -608,6 +608,42 @@ const STATUS_CHIP_COLORS = {
 let statusFilterOpen = false;
 let statusFilterWired = false;
 
+// While a filter sheet is open, background scroll must not steal wheel/touch
+// from the panel. CSS overflow:hidden on .app-shell handles most browsers,
+// but iOS Safari and wheel over non-scrollable chrome (header/footer) still
+// need JS containment: block scroll outside the active panel.
+let filterScrollLockHandler = null;
+let filterTouchLockHandler = null;
+
+function isEventInsideFilterPanel(target) {
+  if (!target || !target.closest) return false;
+  return !!(target.closest('#libFilterPanel') || target.closest('#statusFilterPanel') || target.closest('#libFilterBackdrop'));
+}
+function lockFilterBodyScroll() {
+  if (filterScrollLockHandler) return;
+  filterScrollLockHandler = (e) => {
+    if (isEventInsideFilterPanel(e.target)) return;
+    if (e.cancelable) e.preventDefault();
+  };
+  filterTouchLockHandler = (e) => {
+    if (isEventInsideFilterPanel(e.target)) return;
+    if (e.cancelable) e.preventDefault();
+  };
+  document.addEventListener('wheel', filterScrollLockHandler, { passive: false });
+  document.addEventListener('touchmove', filterTouchLockHandler, { passive: false });
+}
+function unlockFilterBodyScroll() {
+  if (libFilterOpen || statusFilterOpen) return;
+  if (filterScrollLockHandler) {
+    document.removeEventListener('wheel', filterScrollLockHandler, { passive: false });
+    filterScrollLockHandler = null;
+  }
+  if (filterTouchLockHandler) {
+    document.removeEventListener('touchmove', filterTouchLockHandler, { passive: false });
+    filterTouchLockHandler = null;
+  }
+}
+
 function buildStatusFilterPanelHTML() {
   const sortedStatuses = [...VALID_STATUSES];
   const statusChips = [
@@ -708,6 +744,44 @@ function openStatusFilterPanel() {
   syncStatusFilterPanel();
   panel.hidden = false;
   document.body.classList.add('lib-status-open');
+  lockFilterBodyScroll();
+  // Keep wheel inside the panel from chaining to the page: if the chip
+  // list can still scroll in the wheel direction, consume the event.
+  const chipsEl = panel.querySelector('.lib-filter-chips');
+  if (chipsEl && !chipsEl.dataset.wheelWired) {
+    chipsEl.dataset.wheelWired = '1';
+    chipsEl.addEventListener('wheel', (e) => {
+      const el = e.currentTarget;
+      const delta = e.deltaY;
+      const atTop = el.scrollTop <= 0;
+      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
+      const goingUp = delta < 0;
+      const goingDown = delta > 0;
+      const canScrollUp = !atTop && goingUp;
+      const canScrollDown = !atBottom && goingDown;
+      if (canScrollUp || canScrollDown) {
+        e.stopPropagation();
+      } else if (atTop && atBottom) {
+        // Not scrollable at all — still eat the wheel so background doesn't move
+        e.preventDefault();
+      } else {
+        // At boundary but trying to overscroll — block chain
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    }, { passive: false });
+  }
+  if (!panel.dataset.wheelWired) {
+    panel.dataset.wheelWired = '1';
+    panel.addEventListener('wheel', (e) => {
+      if (e.target.closest && e.target.closest('.lib-filter-chips')) return;
+      if (e.cancelable) e.preventDefault();
+    }, { passive: false });
+    panel.addEventListener('touchmove', (e) => {
+      if (e.target.closest && e.target.closest('.lib-filter-chips')) return;
+      if (e.cancelable) e.preventDefault();
+    }, { passive: false });
+  }
   requestAnimationFrame(() => panel.classList.add('lib-filter-panel--open'));
   btn.classList.add('lib-filter-btn--open');
   btn.setAttribute('aria-expanded', 'true');
@@ -723,6 +797,7 @@ function closeStatusFilterPanel() {
   btn.setAttribute('aria-expanded', 'false');
   statusFilterOpen = false;
   document.body.classList.remove('lib-status-open');
+  unlockFilterBodyScroll();
   setTimeout(() => { if (!statusFilterOpen) panel.hidden = true; }, 180);
 }
 
@@ -987,6 +1062,46 @@ function openLibFilterPanel() {
     }
   }
   document.body.classList.add('lib-advanced-open');
+  lockFilterBodyScroll();
+  // Contain wheel inside the scrollable body so it doesn't bubble to .app-shell.
+  const bodyEl = panel.querySelector('.lib-filter-body');
+  if (bodyEl && !bodyEl.dataset.wheelWired) {
+    bodyEl.dataset.wheelWired = '1';
+    bodyEl.addEventListener('wheel', (e) => {
+      const el = e.currentTarget;
+      const delta = e.deltaY;
+      const atTop = el.scrollTop <= 0;
+      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
+      const goingUp = delta < 0;
+      const goingDown = delta > 0;
+      const canScrollUp = !atTop && goingUp;
+      const canScrollDown = !atBottom && goingDown;
+      if (canScrollUp || canScrollDown) {
+        e.stopPropagation();
+      } else if (atTop && atBottom) {
+        e.preventDefault();
+      } else {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    }, { passive: false });
+    // Touch: prevent background pan when dragging inside panel header/footer chrome
+    panel.addEventListener('touchmove', (e) => {
+      const t = e.target;
+      // If touch started inside the scrollable body, allow it (CSS touch-action handles)
+      if (t.closest && t.closest('.lib-filter-body')) return;
+      // Header/footer or chrome — don't let it drag the page behind
+      if (e.cancelable) e.preventDefault();
+    }, { passive: false });
+  }
+  // Prevent wheel over non-scrollable chrome (header/footer) from leaking
+  if (!panel.dataset.wheelWired) {
+    panel.dataset.wheelWired = '1';
+    panel.addEventListener('wheel', (e) => {
+      if (e.target.closest && e.target.closest('.lib-filter-body')) return;
+      if (e.cancelable) e.preventDefault();
+    }, { passive: false });
+  }
   // allow render before transition
   requestAnimationFrame(() => {
     panel.classList.add('lib-filter-panel--open');
@@ -1008,6 +1123,7 @@ function closeLibFilterPanel() {
   btn.setAttribute('aria-expanded', 'false');
   libFilterOpen = false;
   document.body.classList.remove('lib-advanced-open');
+  unlockFilterBodyScroll();
   // delay hidden for transition (180ms)
   setTimeout(() => {
     if (!libFilterOpen) {

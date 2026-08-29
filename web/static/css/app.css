@@ -1192,6 +1192,8 @@ a { color: var(--accent); text-decoration: none; }
   transform: translateY(8px);
   transition: opacity 0.18s ease, transform 0.18s ease;
   overflow: hidden;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
 .lib-filter-panel--open {
@@ -1213,6 +1215,7 @@ a { color: var(--accent); text-decoration: none; }
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
+  touch-action: pan-y;
   padding: 14px;
   display: flex;
   flex-direction: column;
@@ -1394,6 +1397,24 @@ body.lib-status-open #fabAdd {
   transition: opacity 180ms ease, transform 180ms ease;
 }
 
+/* While any filter sheet is open, lock the background scroll.
+   .app-shell is the real scroll container (body is flex column), so both
+   need to be frozen; overscroll-behavior prevents chaining on wheel. */
+body.lib-advanced-open,
+body.lib-status-open,
+body.modal-open {
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: none;
+}
+body.lib-advanced-open .app-shell,
+body.lib-status-open .app-shell,
+body.modal-open .app-shell {
+  overflow: hidden !important;
+  overscroll-behavior: none;
+  touch-action: none;
+}
+
 /* ── Modern "Other filters" panel ─────────────────────────────────────── */
 .lib-filter-modern {
   padding: 0 !important;
@@ -1470,6 +1491,7 @@ body.lib-status-open #fabAdd {
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
+  touch-action: pan-y;
   padding: 14px;
   display: flex;
   flex-direction: column;
@@ -1621,6 +1643,8 @@ body.lib-status-open #fabAdd {
   max-height: min(45vh, 380px);
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
   padding-right: 2px;
 }
 
@@ -3035,6 +3059,7 @@ body.modal-open {
   gap: 16px;
   overflow-y: auto;
   overscroll-behavior: contain;
+  touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
 }
 
