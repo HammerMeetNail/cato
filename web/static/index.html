@@ -78,6 +78,7 @@
         </div>
       </div>
       <div id="statsView" hidden></div>
+      <div id="playingView" hidden></div>
       <div id="settingsView" hidden></div>
     </main>
   </div>
@@ -91,6 +92,12 @@
         <rect x="3" y="14" width="7" height="7" rx="1"></rect>
       </svg>
       <span>Library</span>
+    </a>
+    <a href="#now" class="tab-item" data-nav="now" data-route="now" aria-label="Now Playing">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <polygon points="5 3 19 12 5 21 5 3"></polygon>
+      </svg>
+      <span>Playing</span>
     </a>
     <a href="#stats" class="tab-item" data-nav="stats" data-route="stats" aria-label="Stats">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
@@ -122,9 +129,10 @@
   <script type="module">
     import { checkAuth, logout, library } from '/js/api.js';
     import { initSearch, initVoiceSearch, recordRecentSearch } from '/js/search.js';
-    import { loadLibrary, loadSearchResults, addGameToLibrary, getHashStatus, getHashGameId, getHashSearch, openGameModal, openLibraryItemModal, filterByTag, filterByPlatform, refreshTabCounts, loadHero, initHeroActions } from '/js/library.js';
+    import { loadLibrary, loadSearchResults, addGameToLibrary, getHashStatus, getHashGameId, getHashSearch, openGameModal, openLibraryItemModal, filterByTag, filterByPlatform, refreshTabCounts } from '/js/library.js';
     import { renderStatsView } from '/js/stats.js';
     import { renderSettingsView } from '/js/settings.js';
+    import { renderPlayingView } from '/js/playing.js';
 
     const searchInput = document.getElementById('searchInput');
     const searchResults = document.getElementById('searchResults');
@@ -138,6 +146,7 @@
     const bottomTabs = document.getElementById('bottom-tabs');
     const libraryView = document.getElementById('libraryView');
     const statsView = document.getElementById('statsView');
+    const playingView = document.getElementById('playingView');
     const settingsView = document.getElementById('settingsView');
     const fabAdd = document.getElementById('fabAdd');
 
@@ -155,6 +164,7 @@
     function showView(name) {
       if (libraryView) libraryView.hidden = name !== 'library';
       if (statsView) statsView.hidden = name !== 'stats';
+      if (playingView) playingView.hidden = name !== 'playing';
       if (settingsView) settingsView.hidden = name !== 'settings';
       if (fabAdd) fabAdd.style.display = name === 'library' ? '' : 'none';
       if (name !== 'library') {
@@ -173,6 +183,12 @@
         updateBottomTabs('stats');
         showView('stats');
         await renderStatsView(statsView);
+        return;
+      }
+      if (raw === 'now' || raw === 'now-playing' || raw === 'playing-now') {
+        updateBottomTabs('now');
+        showView('playing');
+        await renderPlayingView(playingView);
         return;
       }
       if (raw === 'settings') {
@@ -277,8 +293,6 @@
     if (settingsLink) {
       settingsLink.addEventListener('click', () => setUserMenu(false));
     }
-
-    initHeroActions();
 
     document.addEventListener('keydown', (e) => {
       if (e.key !== '/' || e.ctrlKey || e.metaKey) return;
@@ -404,14 +418,15 @@
     window.addEventListener('hashchange', handleRoute);
     await handleRoute();
 
-    // Keyboard shortcut for bottom tabs: 1=Library, 2=Stats, 3=Settings
+    // Keyboard shortcut for bottom tabs: 1=Library, 2=Playing, 3=Stats, 4=Settings
     document.addEventListener('keydown', (e) => {
       if (e.altKey || e.ctrlKey || e.metaKey) return;
       const tag = document.activeElement?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       if (e.key === '1') { e.preventDefault(); window.location.hash = ''; }
-      if (e.key === '2') { e.preventDefault(); window.location.hash = '#stats'; }
-      if (e.key === '3') { e.preventDefault(); window.location.hash = '#settings'; }
+      if (e.key === '2') { e.preventDefault(); window.location.hash = '#now'; }
+      if (e.key === '3') { e.preventDefault(); window.location.hash = '#stats'; }
+      if (e.key === '4') { e.preventDefault(); window.location.hash = '#settings'; }
     });
   </script>
 </body>

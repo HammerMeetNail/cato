@@ -191,7 +191,6 @@ export async function loadSearchResults(query) {
   if (statusTabs) statusTabs.style.display = 'none';
   const libBar = document.getElementById('libraryFilterBar');
   if (libBar) libBar.style.display = 'none';
-  hideHero();
 
   // Create and show results header (+ sort/filter bar + total count)
   const existingHeader = document.getElementById('searchResultsHeader');
@@ -784,7 +783,6 @@ export async function loadLibrary(status, tag = '', platform = '', extraOpts = n
   activateStatusTab(status || '');
   updateTagFilterBar();
   ensureLibraryFilterBar();
-  loadHero();
 
   grid.innerHTML = '<div class="loading">Loading library...</div>';
 
@@ -880,12 +878,9 @@ export function renderLibraryItems(items, status = '') {
   };
   ensureLibraryFilterBar();
 
-  loadHero();
-
   if (!items || items.length === 0) {
     renderEmptyState(grid, 'library', status);
     paginationState.hasMore = false;
-    loadHero();
     return;
   }
 
@@ -1182,7 +1177,6 @@ async function quickSetStatus(gameId, qaAction, { card = null } = {}) {
     itemsById.set(key, updated);
     applyStatusToCard(card, updated.status, updated.completed_at);
     refreshTabCounts();
-    loadHero();
     if (qaAction === '__bought') {
       showToast(`Bought ${updated.game_name} — moved to Backlog`);
     } else {
@@ -1250,13 +1244,6 @@ function removeCardAnimated(card) {
   setTimeout(() => card.remove(), 260);
 }
 
-// --- "Playing now" hero strip -------------------------------------------
-// The most valuable surface of a progress tracker: what you're playing right
-// now, with one-tap time logging (+30m/+1h/+2h) and a Finish button. Backed
-// entirely by PATCH merge updates, so nothing else about an item can be lost.
-
-const heroItems = new Map();
-
 function fmtHours(minutes) {
   const h = Math.round((minutes / 60) * 10) / 10;
   return h === 1 ? '1h' : `${h}h`;
@@ -1264,144 +1251,6 @@ function fmtHours(minutes) {
 
 function fmtDelta(minutes) {
   return minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`;
-}
-
-// ensureHeroContainer creates/returns the hero section positioned between
-// the search box and the status tabs.
-function ensureHeroContainer() {
-  let hero = document.getElementById('playingHero');
-  if (hero) return hero;
-  hero = document.createElement('section');
-  hero.id = 'playingHero';
-  hero.className = 'playing-hero';
-  hero.setAttribute('aria-label', 'Currently playing');
-  const searchWrap = document.querySelector('.search-wrap');
-  const container = document.querySelector('.container');
-  if (searchWrap) searchWrap.insertAdjacentElement('afterend', hero);
-  else if (container) container.prepend(hero);
-  return hero;
-}
-
-export async function loadHero() {
-  const hero = ensureHeroContainer();
-  let items;
-  try {
-    ({ items } = await library.list('playing', 12, 0));
-  } catch {
-    hero.style.display = 'none';
-    return;
-  }
-  heroItems.clear();
-  for (const it of items || []) heroItems.set(String(it.game_id), it);
-
-  if (!items || items.length === 0 || paginationState.mode === 'search') {
-    hero.style.display = 'none';
-    return;
-  }
-
-  hero.innerHTML = `
-    <div class="hero-title">Playing now</div>
-    <div class="hero-row">
-      ${items.map(it => heroCardHTML(it)).join('')}
-    </div>`;
-  hero.style.display = '';
-}
-
-function heroCardHTML(item) {
-  const bits = [];
-  if (item.playtime_minutes > 0) bits.push(fmtHours(item.playtime_minutes));
-  if (item.started_at) {
-    const days = Math.max(1, Math.floor((Date.now() - new Date(item.started_at).getTime()) / 86400000) + 1);
-    bits.push(`day ${days}`);
-  }
-  return `
-    <div class="hero-card" data-game-id="${item.game_id}">
-      <img src="${getCoverURL(item)}" alt="${escapeHTML(item.game_name)}" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='/covers/${item.game_id}.jpg'">
-      <div class="hero-body">
-        <div class="hero-name">${escapeHTML(item.game_name)}</div>
-        <div class="hero-controls">
-          <span class="hero-sub">${escapeHTML(bits.join(' · '))}</span>
-          <div class="hero-actions">
-            <button type="button" class="hero-btn" data-hero-time="30" title="Log 30 minutes">+30m</button>
-            <button type="button" class="hero-btn" data-hero-time="60" title="Log 1 hour">+1h</button>
-            <button type="button" class="hero-btn" data-hero-time="120" title="Log 2 hours">+2h</button>
-            <button type="button" class="hero-btn hero-finish" data-hero-finish title="Mark as finished" aria-label="Mark as finished">✓</button>
-          </div>
-        </div>
-      </div>
-    </div>`;
-}
-
-// initHeroActions attaches the delegated handlers once.
-let heroInitialized = false;
-
-export function initHeroActions() {
-  if (heroInitialized) return;
-  heroInitialized = true;
-  const hero = ensureHeroContainer();
-  hero.addEventListener('click', async (e) => {
-    const timeBtn = e.target.closest('[data-hero-time]');
-    const finishBtn = e.target.closest('[data-hero-finish]');
-    const coverEl = e.target.closest('.hero-card img');
-    if (!timeBtn && !finishBtn && !coverEl) return;
-    const cardEl = (timeBtn || finishBtn || coverEl).closest('.hero-card');
-    const gameId = Number(cardEl?.dataset.gameId);
-    if (!gameId) return;
-
-    // Cover click opens the same edit modal as grid cards.
-    if (coverEl) {
-      const item = heroItems.get(String(gameId));
-      if (item) openLibraryItemModal(item);
-      return;
-    }
-
-    if (timeBtn) {
-      const minutes = parseInt(timeBtn.dataset.heroTime, 10) || 0;
-      timeBtn.disabled = true;
-      try {
-        const updated = await library.patch(gameId, { playtime_delta_minutes: minutes });
-        heroItems.set(String(updated.game_id), updated);
-        const sub = cardEl.querySelector('.hero-sub');
-        const item = updated;
-        const bits = [];
-        if (item.playtime_minutes > 0) bits.push(fmtHours(item.playtime_minutes));
-        if (item.started_at) {
-          const days = Math.max(1, Math.floor((Date.now() - new Date(item.started_at).getTime()) / 86400000) + 1);
-          bits.push(`day ${days}`);
-        }
-        if (sub) sub.textContent = bits.join(' · ');
-        const gridItem = itemsById.get(String(gameId));
-        if (gridItem) itemsById.set(String(gameId), { ...gridItem, playtime_minutes: item.playtime_minutes });
-        showToast(`+${fmtDelta(minutes)} logged for ${updated.game_name}`);
-      } catch (err) {
-        showToast(`Couldn't log time: ${err.message}`, { type: 'error' });
-      } finally {
-        timeBtn.disabled = false;
-      }
-      return;
-    }
-
-    // Finish: same engine as the card quick actions (updates grid card,
-    // tab counts, and this strip).
-    quickSetStatus(gameId, 'completed');
-    cardEl.classList.add('card-removing');
-    setTimeout(() => { cardEl.remove(); maybeHideHero(); }, 260);
-  });
-}
-
-function maybeHideHero() {
-  const hero = document.getElementById('playingHero');
-  if (!hero) return;
-  if (hero.querySelectorAll('.hero-card').length === 0) {
-    hero.style.display = 'none';
-    loadHero();
-  }
-}
-
-// hideHero hides the strip while browsing search results.
-export function hideHero() {
-  const hero = document.getElementById('playingHero');
-  if (hero) hero.style.display = 'none';
 }
 
 // filterByTag sets the tag filter and reloads the library.
@@ -2372,7 +2221,7 @@ function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status
         history.replaceState(null, '', window.location.pathname + window.location.search + prevHash);
       }
     }
-    // Reflect auto-saved edits in the grid/hero once, on the way out.
+    // Reflect auto-saved edits in the grid once, on the way out.
     if (shouldRefresh) {
       const activeTab = document.querySelector('.tab.active');
       loadLibrary(activeTab?.dataset?.status || '', paginationState.tagFilter, paginationState.platformFilter);
@@ -2420,7 +2269,6 @@ function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status
         close();
         const activeTab = document.querySelector('.tab.active');
         await loadLibrary(activeTab?.dataset?.status || '', paginationState.tagFilter, paginationState.platformFilter);
-        loadHero();
         showToast(`Removed ${name}`, {
           action: {
             label: 'Undo',
@@ -2433,7 +2281,6 @@ function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status
               }
               const tab = document.querySelector('.tab.active');
               await loadLibrary(tab?.dataset?.status || '', paginationState.tagFilter, paginationState.platformFilter);
-              loadHero();
             },
           },
         });

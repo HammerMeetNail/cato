@@ -84,22 +84,26 @@ web/static/      HTML, CSS, JS (vanilla, no bundler)
   authenticated page. It uses a `height: var(--app-h)` flex-column shell (see
   `web/static/js/head-init.js` for iOS standalone `screen.height` vs `innerHeight`
   logic and `--safe-bottom` for notches) with a static `#bottom-tabs` bar at the
-  body level (not `fixed` — avoids iOS PWA cold-open gap). The bar has 3 tabs:
-  **Library** (`#`, grid icon), **Stats** (`#stats`, bar-chart), **Settings**
-  (`#settings`, gear), each `a.tab-item[data-route]` with `aria-current="page"`
-  on active, styled via `.tab-item.active`. `handleRoute()` dispatches on
-  `window.location.hash`: `#stats` → `renderStatsView()`
+  body level (not `fixed` — avoids iOS PWA cold-open gap). The bar has 4 tabs:
+  **Library** (`#`, grid icon), **Playing** (`#now`, play icon), **Stats**
+  (`#stats`, bar-chart), **Settings** (`#settings`, gear), each
+  `a.tab-item[data-route]` with `aria-current="page"` on active, styled via
+  `.tab-item.active`. `handleRoute()` dispatches on `window.location.hash`:
+  `#now` (aliases `#now-playing`/`#playing-now`) → `renderPlayingView()`
+  (`web/static/js/playing.js`), `#stats` → `renderStatsView()`
   (`web/static/js/stats.js`), `#settings` → `renderSettingsView()`
   (`web/static/js/settings.js`), else Library (status tabs, `#search/<q>`,
-  `#game/<id>` modal). Stats/Settings data is lazy-fetched when the tab becomes
-  active; old `/settings` redirects to `/#settings`. `GET /api/me`, search, and
-  hash-back navigation must keep working across tabs; don't fold `/login` into
-  the shell. `/#` (hash `#`) is the Library canonical URL.
+  `#game/<id>` modal). Playing/Stats/Settings data is lazy-fetched when the tab
+  becomes active; old `/settings` redirects to `/#settings`. `GET /api/me`,
+  search, and hash-back navigation must keep working across tabs; don't fold
+  `/login` into the shell. `/#` (hash `#`) is the Library canonical URL. The
+  old in-library "Playing now" hero strip has been removed in favor of the
+  dedicated Playing tab.
 - **PWA installability**: `web/static/manifest.webmanifest` (`name: Cato — Game
   Library`, `display: standalone`, `theme_color: #1a1a2e`, icons in
   `web/static/icons/*`, shortcuts to Library/Stats/Search), `web/static/offline.html`
   (dark, shows when `fetch` for a navigation fails), `web/static/service-worker.js`
-  (`CACHE_NAME=cato-static-v2`, pre-caches `css/app.css`, `js/*`, manifest,
+  (`CACHE_NAME=cato-static-v3`, pre-caches `css/app.css`, `js/*`, manifest,
   icons, offline; cache-first for `/css/ /js/ /icons/ /covers/`, navigate
   fallback to `offline.html`), and `web/static/js/head-init.js` (sets `--app-h`
   before first paint). `login.html` also links the manifest and registers the SW.
@@ -111,7 +115,7 @@ web/static/      HTML, CSS, JS (vanilla, no bundler)
   and `#statsStrip`, skip-link `href="#mainContainer"`, `:focus-visible` outlines,
   `@media (prefers-reduced-motion: reduce)` disables animations,
   `viewport-fit=cover` + `safe-area-inset-*` for notches, and keyboard shortcuts
-  `1/2/3` for Library/Stats/Settings. Preserve these.
+  `1/2/3/4` for Library/Playing/Stats/Settings. Preserve these.
 - **Env config fallbacks**: `IGDB_CLIENT_ID`→`TWITCH_OAUTH_ID`,
   `IGDB_CLIENT_SECRET`→`TWITCH_OAUTH_SECRET` (docker-compose sets both).
 - **No codegen, no ORM, no frontend build step**. Raw SQL everywhere; vanilla JS.
