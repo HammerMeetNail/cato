@@ -966,9 +966,11 @@ function wireLibFilterPanel(panel) {
   if (!platEl) return;
   libFilterWired = true;
 
-  // Datalists
+  // Datalists — use global platforms so ps5/xsx/etc autocomplete even when
+  // the user's library doesn't yet contain that platform (library-only would
+  // return [] and look broken).
   const platList = panel.querySelector('#lfPlatformList');
-  autocompletePlatforms('').then(list => {
+  autocompleteGlobalPlatforms('').then(list => {
     if (platList && Array.isArray(list)) platList.innerHTML = list.slice(0, 20).map(p => `<option value="${escapeHTML(p)}"></option>`).join('');
   }).catch(() => {});
   let platTimer = null;
@@ -978,7 +980,7 @@ function wireLibFilterPanel(panel) {
       const q = platEl.value.trim();
       if (q.length < 1) return;
       try {
-        const list = await autocompletePlatforms(q);
+        const list = await autocompleteGlobalPlatforms(q);
         if (platList && Array.isArray(list)) platList.innerHTML = list.map(p => `<option value="${escapeHTML(p)}"></option>`).join('');
       } catch {}
     }, 250);
