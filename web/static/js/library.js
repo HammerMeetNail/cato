@@ -707,6 +707,7 @@ function openStatusFilterPanel() {
   }
   syncStatusFilterPanel();
   panel.hidden = false;
+  document.body.classList.add('lib-status-open');
   requestAnimationFrame(() => panel.classList.add('lib-filter-panel--open'));
   btn.classList.add('lib-filter-btn--open');
   btn.setAttribute('aria-expanded', 'true');
@@ -721,6 +722,7 @@ function closeStatusFilterPanel() {
   btn.classList.remove('lib-filter-btn--open');
   btn.setAttribute('aria-expanded', 'false');
   statusFilterOpen = false;
+  document.body.classList.remove('lib-status-open');
   setTimeout(() => { if (!statusFilterOpen) panel.hidden = true; }, 180);
 }
 
@@ -781,48 +783,72 @@ let libFilterWired = false;
 
 function buildLibFilterPanelHTML() {
   return `
-    <div class="lib-filter-panel-inner">
-      <div class="lib-filter-section">
-        <h4 class="lib-filter-section-title">Platform &amp; Tags</h4>
-        <div class="lib-filter-grid lib-filter-grid--2">
-          <label class="lib-filter-field">
-            <span class="lib-filter-label">Platform</span>
-            <input id="lfPlatform" type="text" placeholder="e.g. ps5, sw2, xsx, win" autocomplete="off" list="lfPlatformList" inputmode="search">
-            <datalist id="lfPlatformList"></datalist>
-          </label>
-          <label class="lib-filter-field">
-            <span class="lib-filter-label">Tags</span>
-            <input id="lfTags" type="text" placeholder='e.g. rpg "co-op"' autocomplete="off" list="lfTagsList" inputmode="search">
-            <datalist id="lfTagsList"></datalist>
-          </label>
+    <div class="lib-filter-panel-inner lib-filter-modern">
+      <div class="lib-filter-sheet-handle" aria-hidden="true"><span></span></div>
+      <div class="lib-filter-header">
+        <div class="lib-filter-header-text">
+          <h3 class="lib-filter-title">Filters</h3>
+          <p class="lib-filter-subtitle">Refine your library</p>
         </div>
-        <p class="lib-filter-hint">Platform: names or shortnames (<code>ps5</code>, <code>xsx</code>, <code>sw2</code>, <code>win</code>…). Tags: space = AND, <code>|</code> = OR, quotes for multi-word.</p>
+        <button type="button" class="lib-filter-close" id="libFilterClose" aria-label="Close filters">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
       </div>
-      <div class="lib-filter-section">
-        <h4 class="lib-filter-section-title">Release Date</h4>
-        <div class="lib-filter-grid lib-filter-grid--range">
-          <label class="lib-filter-field">
-            <span class="lib-filter-label">Year from</span>
-            <input id="lfYearFrom" type="number" min="1900" max="2100" inputmode="numeric" placeholder="1994">
-          </label>
-          <label class="lib-filter-field">
-            <span class="lib-filter-label">Year to</span>
-            <input id="lfYearTo" type="number" min="1900" max="2100" inputmode="numeric" placeholder="2024">
-          </label>
-          <label class="lib-filter-field">
-            <span class="lib-filter-label">Exact from</span>
-            <input id="lfReleaseFrom" type="date">
-          </label>
-          <label class="lib-filter-field">
-            <span class="lib-filter-label">Exact to</span>
-            <input id="lfReleaseTo" type="date">
-          </label>
+      <div class="lib-filter-body">
+        <div class="lib-filter-card">
+          <h4 class="lib-filter-section-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4"></path><path d="M20 12v4H6a2 2 0 0 0-2 2c0 1.1.9 2 2 2h12v-4"></path><path d="M12 12h.01"></path></svg>
+            Platform &amp; Tags
+          </h4>
+          <div class="lib-filter-grid lib-filter-grid--2">
+            <label class="lib-filter-field">
+              <span class="lib-filter-label">Platform</span>
+              <div class="lib-filter-input-wrap">
+                <svg class="lib-filter-input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"></rect><path d="M6 12h4"></path><path d="M8 10v4"></path><circle cx="15" cy="11" r="1" fill="currentColor" stroke="none"></circle><circle cx="18" cy="13" r="1" fill="currentColor" stroke="none"></circle></svg>
+                <input id="lfPlatform" type="text" placeholder="ps5, sw2, xsx, win" autocomplete="off" list="lfPlatformList" inputmode="search">
+              </div>
+              <datalist id="lfPlatformList"></datalist>
+            </label>
+            <label class="lib-filter-field">
+              <span class="lib-filter-label">Tags</span>
+              <div class="lib-filter-input-wrap">
+                <svg class="lib-filter-input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4"></path><path d="M20 12v4H6a2 2 0 0 0-2 2c0 1.1.9 2 2 2h12v-4"></path></svg>
+                <input id="lfTags" type="text" placeholder='rpg, "co-op"' autocomplete="off" list="lfTagsList" inputmode="search">
+              </div>
+              <datalist id="lfTagsList"></datalist>
+            </label>
+          </div>
+          <p class="lib-filter-hint"><span class="lib-filter-hint-dot"></span> <code>ps5</code> <code>sw2</code> <code>win</code> — space = AND, <code>|</code> = OR, quotes for multi-word</p>
         </div>
-        <p class="lib-filter-hint">Year and exact date combine as a range.</p>
+        <div class="lib-filter-card">
+          <h4 class="lib-filter-section-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+            Release Date
+          </h4>
+          <div class="lib-filter-grid lib-filter-grid--range">
+            <label class="lib-filter-field">
+              <span class="lib-filter-label">Year from</span>
+              <input id="lfYearFrom" type="number" min="1900" max="2100" inputmode="numeric" placeholder="1994">
+            </label>
+            <label class="lib-filter-field">
+              <span class="lib-filter-label">Year to</span>
+              <input id="lfYearTo" type="number" min="1900" max="2100" inputmode="numeric" placeholder="2024">
+            </label>
+            <label class="lib-filter-field">
+              <span class="lib-filter-label">Exact from</span>
+              <input id="lfReleaseFrom" type="date">
+            </label>
+            <label class="lib-filter-field">
+              <span class="lib-filter-label">Exact to</span>
+              <input id="lfReleaseTo" type="date">
+            </label>
+          </div>
+          <p class="lib-filter-hint">Year and exact date combine into one range</p>
+        </div>
       </div>
-      <div class="lib-filter-actions">
-        <button id="lfClear" class="btn btn-secondary" type="button">Clear all</button>
-        <button id="lfApply" class="btn btn-primary" type="button">Apply</button>
+      <div class="lib-filter-footer">
+        <button id="lfClear" class="btn btn-secondary lib-filter-clear" type="button">Clear all</button>
+        <button id="lfApply" class="btn btn-primary lib-filter-apply" type="button">Apply filters</button>
       </div>
     </div>`;
 }
@@ -952,6 +978,7 @@ function wireLibFilterPanel(panel) {
 
   panel.querySelector('#lfApply')?.addEventListener('click', apply);
   panel.querySelector('#lfClear')?.addEventListener('click', clear);
+  panel.querySelector('#libFilterClose')?.addEventListener('click', closeLibFilterPanel);
   [platEl, tagsEl, yfEl, ytEl, rfEl, rtEl].forEach(el => {
     el.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); apply(); } });
   });
@@ -961,6 +988,7 @@ function openLibFilterPanel() {
   const fab = document.getElementById('libFilterFab');
   const panel = document.getElementById('libFilterPanel');
   const btn = document.getElementById('libFilterBtn');
+  const backdrop = document.getElementById('libFilterBackdrop');
   if (!fab || !panel || !btn) return;
   if (statusFilterOpen) closeStatusFilterPanel();
   if (!panel.innerHTML.trim()) {
@@ -969,9 +997,19 @@ function openLibFilterPanel() {
   }
   syncLibFilterInputs();
   panel.hidden = false;
+  if (backdrop) {
+    backdrop.hidden = false;
+    backdrop.style.display = 'block';
+    if (!backdrop.dataset.wired) {
+      backdrop.dataset.wired = '1';
+      backdrop.addEventListener('click', closeLibFilterPanel);
+    }
+  }
+  document.body.classList.add('lib-advanced-open');
   // allow render before transition
   requestAnimationFrame(() => {
     panel.classList.add('lib-filter-panel--open');
+    if (backdrop) backdrop.classList.add('lib-filter-backdrop--open');
   });
   btn.classList.add('lib-filter-btn--open');
   btn.setAttribute('aria-expanded', 'true');
@@ -981,14 +1019,23 @@ function openLibFilterPanel() {
 function closeLibFilterPanel() {
   const panel = document.getElementById('libFilterPanel');
   const btn = document.getElementById('libFilterBtn');
+  const backdrop = document.getElementById('libFilterBackdrop');
   if (!panel || !btn) return;
   panel.classList.remove('lib-filter-panel--open');
+  if (backdrop) backdrop.classList.remove('lib-filter-backdrop--open');
   btn.classList.remove('lib-filter-btn--open');
   btn.setAttribute('aria-expanded', 'false');
   libFilterOpen = false;
+  document.body.classList.remove('lib-advanced-open');
   // delay hidden for transition (180ms)
   setTimeout(() => {
-    if (!libFilterOpen) panel.hidden = true;
+    if (!libFilterOpen) {
+      panel.hidden = true;
+      if (backdrop) {
+        backdrop.hidden = true;
+        backdrop.style.display = '';
+      }
+    }
   }, 180);
 }
 

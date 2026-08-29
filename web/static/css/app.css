@@ -1360,6 +1360,242 @@ a { color: var(--accent); text-decoration: none; }
   font-size: 0.88rem;
 }
 
+/* Backdrop for advanced filters — dims library behind panel */
+.lib-filter-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.38);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  z-index: 44;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease;
+}
+.lib-filter-backdrop--open {
+  opacity: 1;
+  pointer-events: auto;
+}
+.lib-filter-backdrop[hidden] { display: none !important; }
+
+/* Hide stacked FABs when a filter sheet is open — prevents overlay */
+body.lib-advanced-open #statusFilterFab,
+body.lib-advanced-open #fabAdd {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.85);
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+body.lib-status-open #libFilterFab,
+body.lib-status-open #fabAdd {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.85);
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+
+/* ── Modern "Other filters" panel ─────────────────────────────────────── */
+.lib-filter-modern {
+  padding: 0 !important;
+  gap: 0 !important;
+  max-height: inherit;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.lib-filter-sheet-handle {
+  display: none;
+  padding: 10px 0 6px;
+  flex-shrink: 0;
+}
+.lib-filter-sheet-handle span {
+  display: block;
+  width: 36px;
+  height: 4px;
+  margin: 0 auto;
+  border-radius: 999px;
+  background: var(--surface2);
+}
+.lib-filter-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 16px 14px;
+  border-bottom: 1px solid var(--surface2);
+  background: var(--surface);
+  flex-shrink: 0;
+  border-radius: 16px 16px 0 0;
+}
+.lib-filter-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.lib-filter-title {
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  line-height: 1;
+}
+.lib-filter-subtitle {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  line-height: 1;
+}
+.lib-filter-close {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--surface2);
+  background: var(--bg);
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--transition), color var(--transition), border-color var(--transition);
+}
+.lib-filter-close:hover {
+  background: var(--surface2);
+  color: var(--text);
+  border-color: var(--surface2);
+}
+.lib-filter-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: var(--surface);
+}
+.lib-filter-card {
+  background: var(--bg);
+  border: 1px solid color-mix(in srgb, var(--surface2) 85%, transparent);
+  border-radius: 14px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.lib-filter-card .lib-filter-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+.lib-filter-card .lib-filter-section-title svg {
+  color: var(--accent);
+  opacity: 0.9;
+  flex-shrink: 0;
+}
+.lib-filter-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.lib-filter-input-wrap .lib-filter-input-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--text-dim);
+  pointer-events: none;
+  opacity: 0.9;
+}
+.lib-filter-input-wrap input {
+  padding-left: 36px !important;
+}
+.lib-filter-modern .lib-filter-field input,
+.lib-filter-modern .lib-filter-field select {
+  min-height: 46px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--surface2);
+  font-size: 0.92rem;
+}
+.lib-filter-modern .lib-filter-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  background: color-mix(in srgb, var(--surface2) 55%, transparent);
+  border: 1px solid color-mix(in srgb, var(--surface2) 65%, transparent);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 0.72rem;
+  line-height: 1.3;
+}
+.lib-filter-hint-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+.lib-filter-modern .lib-filter-hint code {
+  background: var(--surface);
+  border: 1px solid var(--surface2);
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+.lib-filter-footer {
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--surface2);
+  background: var(--surface);
+  flex-shrink: 0;
+  border-radius: 0 0 16px 16px;
+  position: sticky;
+  bottom: 0;
+}
+.lib-filter-footer .btn {
+  min-height: 46px;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 0.92rem;
+}
+.lib-filter-clear {
+  flex: 0.9;
+  background: transparent !important;
+  border: 1px solid var(--surface2) !important;
+  color: var(--text-dim) !important;
+}
+.lib-filter-clear:hover {
+  background: var(--surface2) !important;
+  color: var(--text) !important;
+}
+.lib-filter-apply {
+  flex: 1.25;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/* Polish the panel container itself for the modern variant */
+.lib-filter-panel:has(.lib-filter-modern) {
+  width: 380px;
+  max-width: calc(100vw - 24px);
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--surface2) 85%, transparent);
+  box-shadow: 0 20px 48px rgba(0,0,0,0.42), 0 8px 20px rgba(0,0,0,0.28);
+  max-height: min(74vh, 620px);
+}
+.lib-filter-panel:has(.lib-filter-modern) .lib-filter-panel-inner {
+  max-height: min(74vh, 620px);
+}
+
 /* Status filter FAB — stacked on bottom-right (middle of vertical stack) */
 .status-filter-fab {
   right: 18px;
@@ -1477,6 +1713,34 @@ a { color: var(--accent); text-decoration: none; }
   .lib-filter-actions .btn {
     width: 100%;
   }
+
+  /* Modern advanced filters — bottom sheet on mobile */
+  .lib-filter-panel:has(.lib-filter-modern) {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+    max-width: none;
+    max-height: min(88dvh, 720px);
+    border-radius: 20px 20px 0 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    box-shadow: 0 -8px 32px rgba(0,0,0,0.38);
+    right: 0;
+    transform: translateY(8px);
+  }
+  .lib-filter-panel:has(.lib-filter-modern).lib-filter-panel--open {
+    transform: translateY(0);
+  }
+  .lib-filter-panel:has(.lib-filter-modern) .lib-filter-panel-inner {
+    max-height: min(88dvh, 720px);
+  }
+  .lib-filter-modern .lib-filter-sheet-handle { display: block; }
+  .lib-filter-modern .lib-filter-header { border-radius: 20px 20px 0 0; padding-top: 6px; }
+  .lib-filter-modern .lib-filter-footer { border-radius: 0; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+  .lib-filter-modern .lib-filter-body { padding: 12px; gap: 12px; }
 }
 
 /* Game grid */
