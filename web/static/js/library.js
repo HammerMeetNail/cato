@@ -971,6 +971,7 @@ function buildLibFilterPanelHTML() {
                 <option value="">Recently updated</option>
                 <option value="added">Recently added</option>
                 <option value="name">Name A–Z</option>
+                <option value="platform">Platform: A–Z</option>
                 <option value="release_new">Release: Newest first</option>
                 <option value="release_old">Release: Oldest first</option>
                 <option value="my_rating">My rating: Highest first</option>
@@ -2115,6 +2116,7 @@ function updateTagFilterBar() {
       '': 'Recently updated',
       'added': 'Recently added',
       'name': 'Name A–Z',
+      'platform': 'Platform: A–Z',
       'release_new': 'Newest first',
       'release_old': 'Oldest first',
       'rating': 'My rating: Highest first',
