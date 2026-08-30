@@ -259,7 +259,8 @@ export async function loadSearchResults(query) {
     searchQuery: query,
   };
 
-  // Hide both FABs while in search mode (search has its own filterbar)
+  // Keep advanced filters inline in search mode, but leave the status filter
+  // available because search results are still part of the Library tab.
   const fab = document.getElementById('libFilterFab');
   if (fab) {
     fab.hidden = true;
@@ -267,8 +268,8 @@ export async function loadSearchResults(query) {
   }
   const statusFab = document.getElementById('statusFilterFab');
   if (statusFab) {
-    statusFab.hidden = true;
     closeStatusFilterPanel();
+    ensureStatusFilterFab();
   }
   const statusTabs = document.getElementById('statusTabs');
   if (statusTabs) statusTabs.style.display = 'none';
@@ -963,7 +964,7 @@ function ensureStatusFilterFab() {
   const panel = document.getElementById('statusFilterPanel');
   const btn = document.getElementById('statusFilterBtn');
   if (!fab || !panel || !btn) return null;
-  if (paginationState.mode !== 'library') {
+  if (paginationState.mode !== 'library' && paginationState.mode !== 'search') {
     fab.hidden = true;
     if (statusFilterOpen) closeStatusFilterPanel();
     return null;
