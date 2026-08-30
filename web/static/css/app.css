@@ -307,7 +307,8 @@ a { color: var(--accent); text-decoration: none; }
   background: var(--surface);
   border: 1px solid var(--surface2);
   border-radius: var(--radius);
-  overflow: hidden;
+  /* overflow visible so the filter badge (-4px) isn't clipped; button carries its own radius */
+  overflow: visible;
   transition: border-color var(--transition);
 }
 
@@ -502,7 +503,7 @@ a { color: var(--accent); text-decoration: none; }
   justify-content: center;
   border: none;
   border-left: 1px solid var(--surface2);
-  border-radius: 0;
+  border-radius: 0 var(--radius) var(--radius) 0;
   background: var(--surface);
   color: var(--text-dim);
   cursor: pointer;
@@ -2957,6 +2958,11 @@ body.modal-open .app-shell {
 }
 .search-wrap .lib-filter-panel.lib-filter-panel--open {
   transform: translateY(0);
+}
+/* When advanced filter is open, lift search-wrap above backdrop (44) so its
+   dropdown panel (45) is not trapped under the backdrop's stacking context. */
+body.lib-advanced-open .search-wrap {
+  z-index: 46;
 }
 
 /* Loading / empty */
