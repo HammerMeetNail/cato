@@ -2296,8 +2296,8 @@ body.modal-open .app-shell {
   max-height: 24px;
 }
 
-/* Available-platforms line under card titles (IGDB data). Single dim line,
-   ellipsized — the full list is in the title attribute. */
+/* Platform lines under card titles. Single dim line, ellipsized — the full
+   list is in the title attribute. */
 .card-platforms {
   padding: 0 10px 4px;
   font-size: 0.72rem;
@@ -2305,6 +2305,10 @@ body.modal-open .app-shell {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.card-owned-platforms {
+  color: var(--text);
 }
 
 /* Release date line on search result cards. */

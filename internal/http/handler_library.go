@@ -210,7 +210,7 @@ func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, use
 	// rating = my rating (li.rating), critic_rating = aggregated critic score.
 	sort := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("sort")))
 	switch sort {
-	case "name", "platform", "platform_desc", "release_new", "release_old", "rating", "rating_low", "my_rating", "my_rating_low", "critic_rating", "critic_rating_low", "critic", "aggregated_rating", "added", "updated":
+	case "name", "platform", "platform_desc", "owned_platform", "owned_platform_desc", "available_platform", "available_platform_desc", "release_new", "release_old", "rating", "rating_low", "my_rating", "my_rating_low", "critic_rating", "critic_rating_low", "critic", "aggregated_rating", "added", "updated":
 	default:
 		sort = "updated"
 	}
@@ -222,6 +222,14 @@ func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, use
 		orderBy = "CASE WHEN li.platform = '' THEN 1 ELSE 0 END, li.platform COLLATE NOCASE ASC, g.name COLLATE NOCASE ASC, li.updated_at DESC"
 	case "platform_desc":
 		orderBy = "CASE WHEN li.platform = '' THEN 1 ELSE 0 END, li.platform COLLATE NOCASE DESC, g.name COLLATE NOCASE ASC, li.updated_at DESC"
+	case "owned_platform":
+		orderBy = "CASE WHEN li.platform = '' THEN 1 ELSE 0 END, li.platform COLLATE NOCASE ASC, g.name COLLATE NOCASE ASC, li.updated_at DESC"
+	case "owned_platform_desc":
+		orderBy = "CASE WHEN li.platform = '' THEN 1 ELSE 0 END, li.platform COLLATE NOCASE DESC, g.name COLLATE NOCASE ASC, li.updated_at DESC"
+	case "available_platform":
+		orderBy = "CASE WHEN ap.available_platform IS NULL OR ap.available_platform = '' THEN 1 ELSE 0 END, ap.available_platform COLLATE NOCASE ASC, g.name COLLATE NOCASE ASC, li.updated_at DESC"
+	case "available_platform_desc":
+		orderBy = "CASE WHEN ap.available_platform IS NULL OR ap.available_platform = '' THEN 1 ELSE 0 END, ap.available_platform COLLATE NOCASE DESC, g.name COLLATE NOCASE ASC, li.updated_at DESC"
 	case "release_new":
 		orderBy = "CASE WHEN g.first_release_date = 0 THEN 1 ELSE 0 END, g.first_release_date DESC, li.updated_at DESC"
 	case "release_old":
@@ -251,9 +259,25 @@ func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, use
 		return
 	}
 
+	availablePlatformJoin := ""
+	if sort == "available_platform" || sort == "available_platform_desc" {
+		availablePlatformJoin = `
+		LEFT JOIN (
+			SELECT gp.game_id,
+				MIN(CASE
+					WHEN gp.platform_id = 0 THEN NULLIF(gp.platform_value, '')
+					ELSE COALESCE(NULLIF(p.name, ''), CAST(gp.platform_id AS TEXT))
+				END) AS available_platform
+			FROM game_platforms gp
+			LEFT JOIN platforms p ON p.id = gp.platform_id
+			WHERE gp.platform_id != 0 OR gp.platform_value != ''
+			GROUP BY gp.game_id
+		) ap ON ap.game_id = g.id`
+	}
+
 	query := `SELECT ` + libraryItemSelect + `
 		FROM library_items li
-		JOIN games g ON g.id = li.game_id
+		JOIN games g ON g.id = li.game_id` + availablePlatformJoin + `
 		WHERE li.user_id = ?` + where +
 		` ORDER BY ` + orderBy + ` LIMIT ? OFFSET ?`
 	args := append([]interface{}{userID}, whereArgs...)

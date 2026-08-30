@@ -326,11 +326,14 @@ func TestLibraryListPlatformSort(t *testing.T) {
 	mux := newTestLibraryMux(database)
 
 	database.Exec(`INSERT INTO games (id, name, slug, normalized_name) VALUES (3, 'Game Three', 'game-three', 'game three')`)
+	database.Exec(`UPDATE games SET platforms_json = '["Xbox"]' WHERE id = 1`)
+	database.Exec(`UPDATE games SET platforms_json = '["Nintendo Switch"]' WHERE id = 2`)
+	database.Exec(`UPDATE games SET platforms_json = '["PC (Microsoft Windows)"]' WHERE id = 3`)
 	database.Exec(`INSERT INTO library_items (user_id, game_id, status, platform) VALUES ('user-1', 1, 'backlog', 'Nintendo Switch')`)
 	database.Exec(`INSERT INTO library_items (user_id, game_id, status, platform) VALUES ('user-1', 2, 'backlog', 'PC (Microsoft Windows)')`)
 	database.Exec(`INSERT INTO library_items (user_id, game_id, status) VALUES ('user-1', 3, 'backlog')`)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/library?sort=platform", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/library?sort=owned_platform", nil)
 	req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -354,7 +357,7 @@ func TestLibraryListPlatformSort(t *testing.T) {
 		}
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/api/library?sort=platform_desc", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/library?sort=owned_platform_desc", nil)
 	req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -372,6 +375,34 @@ func TestLibraryListPlatformSort(t *testing.T) {
 	for i, item := range items {
 		if item.GameID != want[i] {
 			t.Errorf("descending sort: position %d: expected game %d, got %d", i, want[i], item.GameID)
+		}
+	}
+
+	for _, tc := range []struct {
+		sort string
+		want []int64
+	}{
+		{sort: "available_platform", want: []int64{2, 3, 1}},
+		{sort: "available_platform_desc", want: []int64{1, 3, 2}},
+	} {
+		req = httptest.NewRequest(http.MethodGet, "/api/library?sort="+tc.sort, nil)
+		req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})
+		rec = httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s sort: expected 200, got %d: %s", tc.sort, rec.Code, rec.Body.String())
+		}
+		items = nil
+		if err := json.NewDecoder(rec.Body).Decode(&items); err != nil {
+			t.Fatalf("%s sort: decode response: %v", tc.sort, err)
+		}
+		if len(items) != len(tc.want) {
+			t.Fatalf("%s sort: expected %d items, got %d", tc.sort, len(tc.want), len(items))
+		}
+		for i, item := range items {
+			if item.GameID != tc.want[i] {
+				t.Errorf("%s sort: position %d: expected game %d, got %d", tc.sort, i, tc.want[i], item.GameID)
+			}
 		}
 	}
 }
