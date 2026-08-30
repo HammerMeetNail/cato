@@ -413,12 +413,12 @@ a { color: var(--accent); text-decoration: none; }
   background: var(--bg);
 }
 
-/* In-input action buttons (clear + voice + filters). The input reserves the right
-   edge so text never runs underneath them. Filters live inside the search box
+/* In-input action buttons (clear + voice + advanced filter). The input reserves the right
+   edge so text never runs underneath them. Advanced filter lives inside the search box
    on the right side so users can stay in Playing, tap the global search FAB,
-   land on Library search, and immediately filter without hunting for bottom FABs. */
+   land on Library search, and immediately filter. Status filter stays as bottom FAB. */
 .search-wrap input {
-  padding-right: 148px;
+  padding-right: 112px;
 }
 
 .search-clear,
@@ -444,7 +444,6 @@ a { color: var(--accent); text-decoration: none; }
 .search-clear { right: 40px; }
 .voice-btn { right: 6px; }
 .search-filter-btn { background: var(--surface2); color: var(--text-dim); }
-#searchStatusBtn { right: 112px; }
 #searchAdvancedBtn { right: 76px; }
 .search-filter-btn:hover { background: var(--surface2); color: var(--text); }
 .search-filter-btn[aria-expanded="true"] { background: var(--accent); color: #fff; }
@@ -1116,7 +1115,7 @@ a { color: var(--accent); text-decoration: none; }
   pointer-events: auto;
 }
 
-/* Stack order — desktop (search hidden on desktop, filters stay above bottom-tabs) */
+/* Stack order — desktop (search above status, both above bottom-tabs) */
 #libFilterFab {
   right: 18px;
   left: auto;
@@ -1125,7 +1124,7 @@ a { color: var(--accent); text-decoration: none; }
 #statusFilterFab {
   right: 18px;
   left: auto;
-  bottom: calc(18px + 66px + 66px);
+  bottom: calc(18px + 66px);
 }
 
 .lib-filter-fab[hidden] {
@@ -1735,7 +1734,7 @@ body.modal-open .app-shell {
 }
 
 @media (max-width: 600px) {
-  .search-wrap input { padding-right: 156px; }
+  .search-wrap input { padding-right: 120px; }
   .search-clear, .voice-btn, .search-filter-btn { width: 36px; height: 36px; }
   .lib-filter-fab {
     right: 16px;
@@ -1746,7 +1745,7 @@ body.modal-open .app-shell {
   #statusFilterFab {
     right: 16px;
     left: auto;
-    bottom: calc(70px + var(--safe-bottom) + 16px + 66px);
+    bottom: calc(70px + var(--safe-bottom) + 16px);
   }
 
   .lib-filter-panel {
@@ -2845,12 +2844,12 @@ body.modal-open .app-shell {
   cursor: wait;
 }
 
-/* Search FAB — top of vertical stack on bottom-right (above status + advanced) */
+/* Search FAB — above status FAB (global, jumps to Library search) */
 .fab-add {
   display: flex;
   position: fixed;
   right: 18px;
-  bottom: calc(18px + 66px + 132px);
+  bottom: calc(18px + 66px + 66px);
   width: 54px;
   height: 54px;
   border-radius: 50%;
@@ -2869,13 +2868,13 @@ body.modal-open .app-shell {
 }
 
 @media (max-width: 600px) {
-  /* Lift FAB above the PWA bottom bar on mobile — top of stack */
-  .fab-add { bottom: calc(70px + var(--safe-bottom) + 16px + 132px); }
+  /* Lift FAB above the PWA bottom bar on mobile — above status FAB */
+  .fab-add { bottom: calc(70px + var(--safe-bottom) + 16px + 66px); }
 }
 
-/* Hide the old bottom-right filter FABs — filters now live inside the search box.
-   Panels themselves are now anchored to .search-wrap (see below) and remain functional. */
-.lib-filter-fab { display: none !important; }
+/* Advanced filter now lives inline in the search box; hide its legacy FAB.
+   Status FAB remains at bottom-right, library-only. */
+#libFilterFab { display: none !important; }
 
 /* Panels anchored to the search box (dropdown on desktop, bottom sheet on mobile) */
 .search-wrap .lib-filter-panel {
