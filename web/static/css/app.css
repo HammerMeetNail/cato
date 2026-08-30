@@ -1863,24 +1863,23 @@ body.modal-open .app-shell {
 
   /* Modern advanced filters — bottom sheet on mobile */
   .lib-filter-panel:has(.lib-filter-modern) {
-    position: fixed;
-    top: auto;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    width: 100%;
-    max-width: none;
-    max-height: min(88dvh, 720px);
-    border-radius: 20px 20px 0 0;
-    border-left: none;
-    border-right: none;
-    border-bottom: none;
-    box-shadow: 0 -8px 32px rgba(0,0,0,0.38);
-    right: 0;
-    transform: translateY(8px);
+    position: fixed !important;
+    top: auto !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    max-height: min(88dvh, 720px) !important;
+    border-radius: 20px 20px 0 0 !important;
+    border-left: none !important;
+    border-right: none !important;
+    border-bottom: none !important;
+    box-shadow: 0 -8px 32px rgba(0,0,0,0.38) !important;
+    transform: translateY(8px) !important;
   }
   .lib-filter-panel:has(.lib-filter-modern).lib-filter-panel--open {
-    transform: translateY(0);
+    transform: translateY(0) !important;
   }
   .lib-filter-panel:has(.lib-filter-modern) .lib-filter-panel-inner {
     max-height: min(88dvh, 720px);
