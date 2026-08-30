@@ -371,6 +371,7 @@ function buildSearchFilterBarHTML() {
                 <option value="release_new">Newest first</option>
                 <option value="release_old">Oldest first</option>
                 <option value="critic_rating">Critic rating: Highest first</option>
+                <option value="critic_rating_low">Critic rating: Lowest first</option>
                 <option value="popularity">Most popular</option>
                 <option value="name">Name A–Z</option>
               </select>
@@ -971,7 +972,9 @@ function buildLibFilterPanelHTML() {
                 <option value="release_new">Release: Newest first</option>
                 <option value="release_old">Release: Oldest first</option>
                 <option value="my_rating">My rating: Highest first</option>
+                <option value="my_rating_low">My rating: Lowest first</option>
                 <option value="critic_rating">Critic rating: Highest first</option>
+                <option value="critic_rating_low">Critic rating: Lowest first</option>
               </select>
             </label>
           </div>
@@ -2079,7 +2082,9 @@ function updateTagFilterBar() {
       'release_old': 'Oldest first',
       'rating': 'My rating: Highest first',
       'my_rating': 'My rating: Highest first',
+      'my_rating_low': 'My rating: Lowest first',
       'critic_rating': 'Critic rating: Highest first',
+      'critic_rating_low': 'Critic rating: Lowest first',
       'critic': 'Critic rating: Highest first',
       'aggregated_rating': 'Critic rating: Highest first',
     };

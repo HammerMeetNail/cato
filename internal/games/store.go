@@ -35,14 +35,15 @@ func EscapeLike(s string) string {
 
 // ValidSorts whitelists the sort= values accepted on the search endpoint.
 var ValidSorts = map[string]bool{
-	"":              true, // relevance (default)
-	"relevance":     true,
-	"release_new":   true,
-	"release_old":   true,
-	"critic_rating": true,
-	"rating":        true, // legacy alias for critic_rating
-	"popularity":    true,
-	"name":          true,
+	"":                  true, // relevance (default)
+	"relevance":         true,
+	"release_new":       true,
+	"release_old":       true,
+	"critic_rating":     true,
+	"critic_rating_low": true,
+	"rating":            true, // legacy alias for critic_rating
+	"popularity":        true,
+	"name":              true,
 }
 
 // searchOptions controls one search execution.
@@ -367,6 +368,9 @@ func sortOrder(sort string) string {
 		       g.first_release_date ASC, g.popularity_score DESC`
 	case "rating", "critic_rating":
 		return `g.aggregated_rating DESC, g.aggregated_rating_count DESC, g.popularity_score DESC`
+	case "critic_rating_low":
+		return `CASE WHEN g.aggregated_rating_count = 0 THEN 1 ELSE 0 END,
+		       g.aggregated_rating ASC, g.aggregated_rating_count DESC, g.popularity_score DESC`
 	case "popularity":
 		return `g.popularity_score DESC, g.aggregated_rating_count DESC,
 		       g.aggregated_rating DESC, g.first_release_date DESC`

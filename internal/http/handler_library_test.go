@@ -245,7 +245,9 @@ func TestLibraryListRatingSorts(t *testing.T) {
 		want []int64
 	}{
 		{sort: "my_rating", want: []int64{1, 2}},
+		{sort: "my_rating_low", want: []int64{2, 1}},
 		{sort: "critic_rating", want: []int64{2, 1}},
+		{sort: "critic_rating_low", want: []int64{1, 2}},
 	} {
 		req := httptest.NewRequest(http.MethodGet, "/api/library?sort="+tc.sort, nil)
 		req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})

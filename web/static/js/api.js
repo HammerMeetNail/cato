@@ -124,7 +124,8 @@ export async function searchGames(query, signal, includeEditions = false) {
 
 // searchGamesFull fetches a page of full search results plus the total match
 // count (X-Total-Count header). opts: limit, offset, sort ('relevance' |
-// 'release_new' | 'release_old' | 'critic_rating' | 'rating' | 'popularity' | 'name'),
+// 'release_new' | 'release_old' | 'critic_rating' | 'critic_rating_low' |
+// 'rating' | 'popularity' | 'name'),
 // yearFrom/yearTo (numbers), minRating (number), includeEditions (boolean),
 // platform (string), ownedPlatform (string, library only), tags (string[] or string), tagOp ('and'|'or'),
 // inLibrary (true/false/null), libraryStatus (string),
