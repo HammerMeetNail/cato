@@ -1252,8 +1252,12 @@ function wireLibFilterPanel(panel) {
       syncLibraryChips();
       // Keep bottom status FAB in sync
       try { if (typeof syncStatusFilterPanel === 'function') syncStatusFilterPanel(); } catch {}
-      // Apply immediately like the bottom FAB (no need to hit Apply)
-      loadLibrary(paginationState.statuses, paginationState.tagFilter, paginationState.platformFilter, paginationState.ownedPlatformFilter);
+      // Stage the status change like the other fields — don't reload yet.
+      // The advanced panel is transactional (Apply/Clear), so keep the new
+      // statuses in paginationState without wiping the other unsaved inputs
+      // (platform/tags/sort/year) that would happen if we called loadLibrary
+      // here with the stale paginationState.tagFilter etc.
+      try { if (typeof updateLibFilterBadge === 'function') updateLibFilterBadge(); } catch {}
     });
   }
 
