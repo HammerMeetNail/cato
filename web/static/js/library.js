@@ -2008,7 +2008,7 @@ export function filterByOwnedPlatform(platform) {
 }
 
 // updateTagFilterBar shows or hides the "filtered by" bar, covering tag,
-// platform, owned and status filters. Status is multi-select — each selected status
+// platform, owned, status, sort and year filters. Status is multi-select — each selected status
 // gets its own chip with × to remove that one.
 function updateTagFilterBar() {
   const existing = document.getElementById('tagFilterBar');
@@ -2018,7 +2018,12 @@ function updateTagFilterBar() {
   const platform = paginationState.platformFilter;
   const owned = paginationState.ownedPlatformFilter;
   const statuses = currentStatuses();
-  if (!tag && !platform && !owned && statuses.length === 0) return;
+  const sort = paginationState.sort || libraryFilters.sort || '';
+  const yearFrom = libraryFilters.yearFrom || paginationState.yearFrom || '';
+  const yearTo = libraryFilters.yearTo || paginationState.yearTo || '';
+  const hasSort = !!String(sort || '').trim();
+  const hasYear = !!String(yearFrom || '').trim() || !!String(yearTo || '').trim();
+  if (!tag && !platform && !owned && statuses.length === 0 && !hasSort && !hasYear) return;
 
   const { tags: tagList, op } = parseTagQuery(tag || '');
   let display = '';
@@ -2042,6 +2047,27 @@ function updateTagFilterBar() {
     if (display) display += ' ';
     display += `<span class="tag-filter-chip tag-filter-platform" data-owned-platform="${escapeHTML(owned)}">owned:${escapeHTML(owned)}<button type="button" class="tag-filter-chip-x" aria-label="Remove owned platform filter">×</button></span>`;
   }
+  if (hasSort) {
+    const sortLabels = {
+      '': 'Recently updated',
+      'added': 'Recently added',
+      'name': 'Name A–Z',
+      'release_new': 'Newest first',
+      'release_old': 'Oldest first',
+      'rating': 'Highest rated',
+    };
+    const label = sortLabels[sort] || sort;
+    if (display) display += ' ';
+    display += `<span class="tag-filter-chip" data-sort="${escapeHTML(sort)}">Sort: ${escapeHTML(label)}<button type="button" class="tag-filter-chip-x" aria-label="Remove sort">×</button></span>`;
+  }
+  if (hasYear) {
+    let yearLabel = '';
+    if (yearFrom && yearTo) yearLabel = `${escapeHTML(yearFrom)}–${escapeHTML(yearTo)}`;
+    else if (yearFrom) yearLabel = `≥${escapeHTML(yearFrom)}`;
+    else if (yearTo) yearLabel = `≤${escapeHTML(yearTo)}`;
+    if (display) display += ' ';
+    display += `<span class="tag-filter-chip" data-year="1">Year: ${yearLabel}<button type="button" class="tag-filter-chip-x" aria-label="Remove year filter">×</button></span>`;
+  }
 
   const bar = document.createElement('div');
   bar.id = 'tagFilterBar';
@@ -2051,12 +2077,12 @@ function updateTagFilterBar() {
     <button class="tag-filter-clear" type="button" aria-label="Clear all filters">✕ Clear</button>
   `;
   bar.querySelector('.tag-filter-clear').addEventListener('click', () => {
-    // Clear everything including status: go to "All"
-    libraryFilters.yearFrom = ''; libraryFilters.yearTo = ''; libraryFilters.releaseFrom = ''; libraryFilters.releaseTo = '';
-    paginationState.yearFrom = ''; paginationState.yearTo = ''; paginationState.releaseFrom = ''; paginationState.releaseTo = '';
+    // Clear everything including status/sort/year: go to "All"
+    libraryFilters.yearFrom = ''; libraryFilters.yearTo = ''; libraryFilters.releaseFrom = ''; libraryFilters.releaseTo = ''; libraryFilters.sort = '';
+    paginationState.yearFrom = ''; paginationState.yearTo = ''; paginationState.releaseFrom = ''; paginationState.releaseTo = ''; paginationState.sort = '';
     setStatuses([]);
     history.replaceState(null, '', window.location.pathname + window.location.search);
-    loadLibrary([], '', '', '');
+    loadLibrary([], '', '', '', {sort: '', yearFrom: '', yearTo: '', releaseFrom: '', releaseTo: ''});
   });
 
   bar.querySelectorAll('.tag-filter-chip-x').forEach(btn => {
@@ -2077,6 +2103,17 @@ function updateTagFilterBar() {
       }
       if (chip.dataset.ownedPlatform !== undefined) {
         loadLibrary(currentStatuses(), paginationState.tagFilter, paginationState.platformFilter, '');
+        return;
+      }
+      if (chip.dataset.sort !== undefined) {
+        libraryFilters.sort = ''; paginationState.sort = '';
+        loadLibrary(currentStatuses(), paginationState.tagFilter, paginationState.platformFilter, paginationState.ownedPlatformFilter, {sort: ''});
+        return;
+      }
+      if (chip.dataset.year !== undefined) {
+        libraryFilters.yearFrom = ''; libraryFilters.yearTo = ''; libraryFilters.releaseFrom = ''; libraryFilters.releaseTo = '';
+        paginationState.yearFrom = ''; paginationState.yearTo = ''; paginationState.releaseFrom = ''; paginationState.releaseTo = '';
+        loadLibrary(currentStatuses(), paginationState.tagFilter, paginationState.platformFilter, paginationState.ownedPlatformFilter, {yearFrom: '', yearTo: '', releaseFrom: '', releaseTo: ''});
         return;
       }
       const removeTag = chip.dataset.tag;
