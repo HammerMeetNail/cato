@@ -297,6 +297,38 @@ a { color: var(--accent); text-decoration: none; }
   margin-bottom: 24px;
 }
 
+/* search-field wraps the input + inline actions so the filter button height
+   is bound to the input row only (not the hint / results). The field itself
+   carries the border/background; the input is borderless inside it. */
+.search-field {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  background: var(--surface);
+  border: 1px solid var(--surface2);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: border-color var(--transition);
+}
+
+.search-field:focus-within {
+  border-color: var(--accent);
+}
+
+.search-field input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  padding: 12px 16px;
+  font-size: 1rem;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  color: var(--text);
+  outline: none;
+}
+
+/* legacy fallback — input outside field (should not happen) */
 .search-wrap input {
   width: 100%;
   padding: 12px 16px;
@@ -307,10 +339,7 @@ a { color: var(--accent); text-decoration: none; }
   color: var(--text);
   outline: none;
 }
-
-.search-wrap input:focus {
-  border-color: var(--accent);
-}
+.search-wrap input:focus { border-color: var(--accent); }
 
 .search-hint {
   display: none;
@@ -322,8 +351,15 @@ a { color: var(--accent); text-decoration: none; }
 }
 
 /* Reveal the syntax hint only while the box is focused and empty */
+.search-field:focus-within ~ .search-hint,
+.search-wrap input:focus ~ .search-hint,
+.search-wrap:focus-within .search-hint { display: flex; }
+/* Hide hint when input has a value — field wrapper breaks the sibling ~,
+   so use :has (supported in modern browsers). Fallback JS also toggles via placeholder. */
+.search-field:has(input:not(:placeholder-shown)) ~ .search-hint,
+.search-wrap:has(input:not(:placeholder-shown)):focus-within .search-hint { display: none !important; }
+.search-field input:focus:not(:placeholder-shown) ~ .search-hint,
 .search-wrap input:focus:not(:placeholder-shown) ~ .search-hint { display: none; }
-.search-wrap input:focus ~ .search-hint { display: flex; }
 
 .search-hint kbd {
   font-family: inherit;
@@ -413,17 +449,19 @@ a { color: var(--accent); text-decoration: none; }
   background: var(--bg);
 }
 
-/* In-input action buttons (clear + voice + advanced filter). The input reserves the right
-   edge so text never runs underneath them. Advanced filter lives inside the search box
-   on the right side so users can stay in Playing, tap the global search FAB,
-   land on Library search, and immediately filter. Status filter stays as bottom FAB. */
+/* In-input action buttons — clear + voice overlay the text, advanced filter is a
+   flex-attached button at the right edge of .search-field so its height is bound
+   to the input row only (not the helper hint / results). Clear+voice stay circular
+   inside the text area; filter looks like part of the box via left border. */
+.search-field input {
+  padding-right: 72px;
+}
 .search-wrap input {
   padding-right: 112px;
 }
 
 .search-clear,
-.voice-btn,
-.search-filter-btn {
+.voice-btn {
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
@@ -439,27 +477,43 @@ a { color: var(--accent); text-decoration: none; }
   cursor: pointer;
   font-size: 20px;
   line-height: 1;
+  z-index: 1;
 }
 
 .search-clear { right: 84px; }
 .voice-btn { right: 50px; }
-.search-filter-btn { background: var(--surface); color: var(--text-dim); border-left: 1px solid var(--surface2); border-radius: 0 var(--radius) var(--radius) 0; }
+/* .search-field is flex with filter at right (44px). Keep same offsets vs
+   field right so clear/voice sit just left of the filter (voice 6px gap). */
+.search-field .search-clear { right: 84px; }
+.search-field .voice-btn { right: 50px; }
+
+.search-filter-btn { background: var(--surface); color: var(--text-dim); }
 #searchAdvancedBtn {
-  right: 0;
-  width: 44px;
-  height: calc(100% - 2px);
-  top: 1px;
+  position: relative;
+  right: auto;
+  top: auto;
   transform: none;
-  border: 1px solid var(--surface2);
+  flex: 0 0 44px;
+  width: 44px;
+  height: auto;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
   border-left: 1px solid var(--surface2);
-  border-radius: 0 var(--radius) var(--radius) 0;
+  border-radius: 0;
   background: var(--surface);
+  color: var(--text-dim);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--transition), color var(--transition), border-color var(--transition);
 }
 #searchAdvancedBtn:hover { background: var(--surface2); color: var(--text); }
-#searchAdvancedBtn[aria-expanded="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+#searchAdvancedBtn[aria-expanded="true"] { background: var(--accent); color: #fff; border-left-color: var(--accent); }
+.search-field:focus-within #searchAdvancedBtn { border-left-color: var(--accent); }
 .search-wrap input { border-right: none; border-radius: var(--radius) 0 0 var(--radius); }
 .search-wrap:focus-within input { border-color: var(--accent); }
-.search-wrap:focus-within #searchAdvancedBtn { border-color: var(--accent); }
 .search-filter-btn:hover { background: var(--surface2); color: var(--text); }
 .search-filter-btn[aria-expanded="true"] { background: var(--accent); color: #fff; }
 .search-filter-btn .lib-filter-badge {
@@ -479,6 +533,7 @@ a { color: var(--accent); text-decoration: none; }
 }
 
 /* Show ✕ only when there is something to clear */
+.search-field input:placeholder-shown ~ .search-clear,
 .search-wrap input:placeholder-shown ~ .search-clear { display: none; }
 
 /* Voice recording state: pulsing accent ring */
@@ -1750,6 +1805,7 @@ body.modal-open .app-shell {
 
 @media (max-width: 600px) {
   .search-wrap input { padding-right: 120px; }
+  .search-field input { padding-right: 80px; }
   .search-clear, .voice-btn, .search-filter-btn { width: 36px; height: 36px; }
   .lib-filter-fab {
     right: 16px;

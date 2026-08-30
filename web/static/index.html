@@ -41,32 +41,34 @@
     <main class="container" id="mainContainer" aria-live="polite">
       <div id="libraryView">
         <div class="search-wrap">
-          <input type="text" id="searchInput" placeholder="Search games…"
-                 autocomplete="off" enterkeyhint="search"
-                 spellcheck="false" autocapitalize="none" autocorrect="off"
-                 role="combobox" aria-expanded="false"
-                 aria-autocomplete="list" aria-controls="searchResults"
-                 aria-label="Search games">
-          <button type="button" class="search-clear" id="searchClear" aria-label="Clear search">&times;</button>
-          <button type="button" class="voice-btn" id="voiceBtn" aria-label="Search by voice" style="display:none">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-              <rect x="9" y="3" width="6" height="11" rx="3"></rect>
-              <path d="M5 11a7 7 0 0 0 14 0"></path>
-              <line x1="12" y1="18" x2="12" y2="21"></line>
-            </svg>
-          </button>
-          <button type="button" class="search-filter-btn" id="searchAdvancedBtn" aria-label="More filters" aria-expanded="false" aria-controls="libFilterPanel" title="More filters">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
-            <span class="lib-filter-badge" id="libFilterBadgeInline" hidden>0</span>
-          </button>
+          <div class="search-field">
+            <input type="text" id="searchInput" placeholder="Search games…"
+                   autocomplete="off" enterkeyhint="search"
+                   spellcheck="false" autocapitalize="none" autocorrect="off"
+                   role="combobox" aria-expanded="false"
+                   aria-autocomplete="list" aria-controls="searchResults"
+                   aria-label="Search games">
+            <button type="button" class="search-clear" id="searchClear" aria-label="Clear search">&times;</button>
+            <button type="button" class="voice-btn" id="voiceBtn" aria-label="Search by voice" style="display:none">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <rect x="9" y="3" width="6" height="11" rx="3"></rect>
+                <path d="M5 11a7 7 0 0 0 14 0"></path>
+                <line x1="12" y1="18" x2="12" y2="21"></line>
+              </svg>
+            </button>
+            <button type="button" class="search-filter-btn" id="searchAdvancedBtn" aria-label="More filters" aria-expanded="false" aria-controls="libFilterPanel" title="More filters">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
+              <span class="lib-filter-badge" id="libFilterBadgeInline" hidden>0</span>
+            </button>
+          </div>
           <div class="search-hint" aria-hidden="true">
             <span><kbd>$</kbd> filters your library by tag, e.g. <kbd>$rpg</kbd></span>
             <span><kbd>@</kbd> filters by platform, e.g. <kbd>@switch</kbd> · tags with spaces need quotes: <kbd>$"switch 2"</kbd></span>
           </div>
           <div class="search-results" id="searchResults" role="listbox" aria-label="Search results"></div>
+          <!-- Advanced filter panel anchored to search-wrap (status lives at bottom FAB) -->
+          <div class="lib-filter-panel" id="libFilterPanel" hidden></div>
         </div>
-        <!-- Advanced filter panel anchored to search-wrap (status lives at bottom FAB) -->
-        <div class="lib-filter-panel" id="libFilterPanel" hidden></div>
 
         <div class="tabs" id="statusTabs" role="tablist" aria-label="Library filters">
           <button class="tab active" data-status="" role="tab" aria-selected="true">All</button>
@@ -358,16 +360,23 @@
     });
 
     fabAdd?.addEventListener('click', () => {
-      if (libraryView.hidden) {
-        window.location.hash = '#library';
-        setTimeout(() => {
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-          searchInput.focus();
-        }, 0);
-        return;
+      // Keep focus in the same user gesture so iOS opens the keyboard.
+      const needNav = libraryView.hidden;
+      if (needNav) {
+        // Make Library visible synchronously so the input is focusable in this tick.
+        // Update hash without waiting for the async hashchange -> handleRoute cycle.
+        try { history.replaceState(null, '', window.location.pathname + window.location.search + '#library'); } catch {}
+        updateBottomTabs('library');
+        showView('library');
+        // Kick off data load in background (don't await — focus must stay synchronous).
+        handleRoute().catch(() => {});
       }
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      searchInput.focus();
+      // Focus synchronously (preventScroll keeps iOS from blurring on scroll).
+      try { searchInput.focus({ preventScroll: true }); } catch { searchInput.focus(); }
+      // Then bring the search field into view smoothly.
+      requestAnimationFrame(() => {
+        try { searchInput.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch { window.scrollTo({ top: 0, behavior: 'smooth' }); }
+      });
     });
 
     const statsStrip = document.getElementById('statsStrip');
