@@ -247,6 +247,31 @@ function lastTagSegment(raw) {
 export function initSearch(inputEl, resultsEl, onSelect, onSubmit, onTagLookup) {
   activeInputEl = inputEl;
   activeOnSubmit = onSubmit;
+  const searchRegion = inputEl.closest('.search-wrap') || inputEl;
+  const dismissSearchFocus = () => {
+    closeDropdown(inputEl, resultsEl);
+    inputEl.blur();
+  };
+  let suppressOutsideClick = false;
+  let suppressOutsideClickTimer = null;
+  const isOutsideSearch = (target) =>
+    !searchRegion.contains(target) && !resultsEl.contains(target);
+  const blockOutsidePointer = (e) => {
+    if (!isOutsideSearch(e.target) || document.activeElement !== inputEl) return;
+    // Handle the gesture before a touch/mouse can blur the input and then
+    // deliver the same tap to a game card underneath the search UI.
+    e.preventDefault();
+    e.stopPropagation();
+    suppressOutsideClick = true;
+    clearTimeout(suppressOutsideClickTimer);
+    suppressOutsideClickTimer = setTimeout(() => { suppressOutsideClick = false; }, 500);
+    dismissSearchFocus();
+  };
+  // Pointer/touch down is the earliest reliable point to consume the gesture;
+  // mousedown keeps the guard working in browsers without Pointer Events.
+  document.addEventListener('pointerdown', blockOutsidePointer, { capture: true, passive: false });
+  document.addEventListener('touchstart', blockOutsidePointer, { capture: true, passive: false });
+  document.addEventListener('mousedown', blockOutsidePointer, { capture: true, passive: false });
 
   // ARIA combobox wiring. The static HTML carries these too; setting them
   // here keeps the contract in one place.
@@ -255,6 +280,13 @@ export function initSearch(inputEl, resultsEl, onSelect, onSubmit, onTagLookup) 
   inputEl.setAttribute('aria-controls', resultsEl.id || 'searchResults');
   inputEl.setAttribute('aria-expanded', 'false');
   resultsEl.setAttribute('role', 'listbox');
+  resultsEl.addEventListener('mousedown', (e) => {
+    // Keep the input focused while a dropdown control is being clicked. This
+    // prevents the focused layout from reflowing before its click handler.
+    if (e.target.closest && e.target.closest('.search-result-item, .search-result-more, .tag-suggestion-chip, .qa-add')) {
+      e.preventDefault();
+    }
+  });
 
   inputEl.addEventListener('input', () => {
     scheduleSearch(inputEl.value, resultsEl, onSelect, onSubmit, onTagLookup);
@@ -273,10 +305,29 @@ export function initSearch(inputEl, resultsEl, onSelect, onSubmit, onTagLookup) 
   });
 
   document.addEventListener('click', (e) => {
-    if (!inputEl.contains(e.target) && !resultsEl.contains(e.target)) {
-      closeDropdown(inputEl, resultsEl);
+    if (!isOutsideSearch(e.target)) {
+      suppressOutsideClick = false;
+      clearTimeout(suppressOutsideClickTimer);
+      return;
     }
-  });
+    if (suppressOutsideClick) {
+      suppressOutsideClick = false;
+      clearTimeout(suppressOutsideClickTimer);
+      e.preventDefault();
+      e.stopPropagation();
+      dismissSearchFocus();
+      return;
+    }
+    if (document.activeElement === inputEl) {
+      // Consume the first outside click so a focused search cannot pass the
+      // tap through to a game card or another background control.
+      e.preventDefault();
+      e.stopPropagation();
+      dismissSearchFocus();
+      return;
+    }
+    closeDropdown(inputEl, resultsEl);
+  }, true);
 
   return {
     clear() {
