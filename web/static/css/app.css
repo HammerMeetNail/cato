@@ -1879,68 +1879,6 @@ body.modal-open .app-shell {
   box-shadow: 0 1px 3px rgba(0,0,0,0.4);
 }
 
-/* Hover-reveal quick actions on library cards (always visible on touch). */
-.game-card .qa-bar {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 56px;
-  display: flex;
-  justify-content: center;
-  gap: 8px;
-  opacity: 0;
-  transition: opacity var(--transition);
-}
-
-.game-card:hover .qa-bar,
-.game-card:focus-within .qa-bar {
-  opacity: 1;
-}
-
-.qa-btn {
-  width: 36px;
-  height: 36px;
-  border: none;
-  border-radius: 50%;
-  background: rgba(0,0,0,0.75);
-  color: #fff;
-  font-size: 0.95rem;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: background var(--transition), transform var(--transition);
-}
-
-.qa-btn:hover {
-  background: var(--accent);
-  transform: scale(1.08);
-}
-
-.qa-btn.qa-play:hover { background: var(--green); }
-
-/* +30m/+1h time pills on playing cards: wider than the round icon buttons */
-.qa-btn.qa-time {
-  width: auto;
-  border-radius: 999px;
-  padding: 0 9px;
-  font-size: 0.68rem;
-  font-weight: 700;
-}
-
-@media (hover: none) {
-  .game-card .qa-bar {
-    opacity: 1;
-    bottom: 60px;
-    gap: 6px;
-  }
-  .qa-btn {
-    width: 32px;
-    height: 32px;
-    font-size: 0.85rem;
-  }
-}
-
 /* Card removal animation (quick action moved it out of the active filter,
    or the user removed it) */
 .game-card.card-removing {
@@ -2881,24 +2819,6 @@ body.modal-open .app-shell {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.suggest-card .suggest-add {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  background: rgba(0,0,0,0.75);
-  color: #fff;
-  font-size: 1rem;
-  line-height: 26px;
-  text-align: center;
-}
-
-.suggest-card:hover .suggest-add {
-  background: var(--accent);
 }
 
 .suggest-card:disabled {

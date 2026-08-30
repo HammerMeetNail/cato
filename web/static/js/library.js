@@ -1734,7 +1734,6 @@ async function loadSuggestions() {
     <button type="button" class="suggest-card" data-suggest-id="${g.id}" data-suggest-name="${escapeHTML(g.name)}">
       <img src="${getCoverURL(g)}" alt="${escapeHTML(g.name)}" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='/covers/${g.id}.jpg'">
       <span class="suggest-name">${escapeHTML(g.name)}</span>
-      <span class="suggest-add">+</span>
     </button>`).join('');
 
   grid.querySelectorAll('.suggest-card').forEach(card => {
@@ -1814,25 +1813,11 @@ function attachScrollListener() {
     }
   });
 
-  // Delegated click handlers for interactive bits on cards. Delegation (not
-  // per-card listeners) survives the cloneNode rebinding in attachCardEvents.
+  // Delegated click handler for tag chips on cards. Delegation survives the
+  // cloneNode rebinding in attachCardEvents.
   const grid = document.getElementById('gameGrid');
   if (grid) {
     grid.addEventListener('click', (e) => {
-      const qaBtn = e.target.closest('.qa-btn');
-      if (qaBtn) {
-        e.stopPropagation();
-        e.preventDefault();
-        const card = qaBtn.closest('.game-card');
-        const qa = qaBtn.dataset.qa;
-        if (!card || !qa) return;
-        if (qa === '__t30' || qa === '__t60') {
-          quickLogTime(card.dataset.gameId, qa === '__t30' ? 30 : 60, { btn: qaBtn });
-        } else {
-          quickSetStatus(card.dataset.gameId, qa, { card });
-        }
-        return;
-      }
       const chip = e.target.closest('.tag-chip');
       if (chip && chip.dataset.tag) {
         e.stopPropagation();
@@ -1840,84 +1825,6 @@ function attachScrollListener() {
       }
     });
   }
-}
-
-// quickSetStatus patches a library item's status in place: optimistic badge
-// update, PATCH on success of which the item index is refreshed; on failure
-// the badge reverts. When the active tab filter no longer matches the new
-// status the card animates out.
-async function quickSetStatus(gameId, qaAction, { card = null } = {}) {
-  const key = String(gameId);
-  const item = itemsById.get(key);
-  const newStatus = qaAction === '__bought' ? 'backlog' : qaAction;
-  if (!item || !VALID_STATUSES.includes(newStatus)) return;
-
-  card = card || document.querySelector(`.game-card[data-game-id="${key}"]`);
-  const oldStatus = item.status;
-  const oldBadgeHTML = card ? card.querySelector('.card-status')?.outerHTML : '';
-  const oldQaHTML = card ? card.querySelector('.qa-bar')?.outerHTML : '';
-
-  // Optimistic update
-  applyStatusToCard(card, newStatus, null);
-  item.status = newStatus;
-
-  try {
-    const updated = await library.patch(gameId, { status: newStatus });
-    itemsById.set(key, updated);
-    applyStatusToCard(card, updated.status, updated.completed_at);
-    refreshTabCounts();
-    if (qaAction === '__bought') {
-      showToast(`Bought ${updated.game_name} — moved to Backlog`);
-    } else {
-      showToast(newStatus === 'completed' ? `Finished ${updated.game_name} ✓` : `Marked ${updated.game_name} as ${STATUS_LABELS[updated.status]}`);
-    }
-
-    // If the active status filter no longer contains this game, animate it out.
-    const activeStatuses = currentStatuses();
-    if (activeStatuses.length > 0 && !activeStatuses.includes(updated.status) && paginationState.mode === 'library' && !paginationState.tagFilter) {
-      removeCardAnimated(card);
-      itemsById.delete(key);
-    }
-  } catch (err) {
-    item.status = oldStatus;
-    if (card) {
-      if (oldBadgeHTML) card.querySelector('.card-status')?.replaceWith(htmlToEl(oldBadgeHTML));
-      else applyStatusToCard(card, oldStatus, item.completed_at);
-      const qaWrap = card.querySelector('.qa-bar');
-      if (qaWrap) qaWrap.remove();
-      if (oldQaHTML) card.appendChild(htmlToEl(oldQaHTML));
-    }
-    showToast(`Couldn't update ${item.game_name}: ${err.message}`, { type: 'error' });
-  }
-}
-
-// applyStatusToCard re-renders a card's status pill and quick-action bar for
-// the given status. completedAt (when known) feeds the "✓ YYYY" text.
-function applyStatusToCard(card, status, completedAt) {
-  if (!card) return;
-  const isDone = status === 'completed';
-  const badgeText = isDone && completedAt
-    ? `✓ ${formatYear(completedAt)}`
-    : STATUS_LABELS[status] || status;
-
-  let badge = card.querySelector('.card-status');
-  if (!badge) {
-    badge = document.createElement('div');
-    card.insertBefore(badge, card.querySelector('.card-title'));
-  }
-  badge.className = `card-status status-${status}`;
-  badge.textContent = badgeText;
-  badge.title = '';
-
-  let qaBar = card.querySelector('.qa-bar');
-  const actions = quickActionsFor(status);
-  if (!qaBar) {
-    qaBar = document.createElement('div');
-    qaBar.className = 'qa-bar';
-    card.appendChild(qaBar);
-  }
-  qaBar.innerHTML = actions.join('');
-  qaBar.style.display = actions.length ? '' : 'none';
 }
 
 function htmlToEl(html) {
@@ -2102,12 +2009,6 @@ function buildCardHTML(items) {
         ? `✓ ${formatYear(item.completed_at)}`
         : STATUS_LABELS[item.status] || item.status;
       libraryOverlays += `<div class="card-status status-${escapeHTML(item.status)}">${escapeHTML(badgeText)}</div>`;
-
-      // Contextual quick actions (hover-reveal; always visible on touch).
-      const actions = quickActionsFor(item.status);
-      if (actions.length) {
-        libraryOverlays += `<div class="qa-bar">${actions.join('')}</div>`;
-      }
     }
 
     // Ownership info occupies the tag-chip row when there are no tags.
@@ -2145,46 +2046,6 @@ function buildCardHTML(items) {
   `}).join('');
 }
 
-// quickActionsFor builds the contextual quick-action buttons for a status.
-// The special value "__bought" moves a wishlist game into the backlog;
-// "__t30"/"__t60" log playtime without opening the form.
-function quickActionsFor(status) {
-  const actions = [];
-  if (status === 'wishlist') {
-    actions.push('<button type="button" class="qa-btn qa-bought" data-qa="__bought" title="Bought it!" aria-label="Mark as bought">$</button>');
-  }
-  if (status !== 'playing' && status !== 'wishlist') {
-    actions.push('<button type="button" class="qa-btn qa-play" data-qa="playing" title="Mark as playing" aria-label="Mark as playing">▶</button>');
-  } else if (status === 'wishlist') {
-    actions.push('<button type="button" class="qa-btn qa-play" data-qa="playing" title="Started playing" aria-label="Start playing">▶</button>');
-  }
-  if (status === 'playing') {
-    actions.push('<button type="button" class="qa-btn qa-time" data-qa="__t30" title="Log 30 minutes" aria-label="Log 30 minutes">+30m</button>');
-    actions.push('<button type="button" class="qa-btn qa-time" data-qa="__t60" title="Log 1 hour" aria-label="Log 1 hour">+1h</button>');
-  }
-  if (status !== 'completed') {
-    actions.push('<button type="button" class="qa-btn qa-done" data-qa="completed" title="Mark as finished" aria-label="Mark as finished">✓</button>');
-  }
-  return actions;
-}
-
-// quickLogTime patches playtime in place from a card's +30m/+1h button —
-// the same engine as the hero strip, so hours never require the modal.
-async function quickLogTime(gameId, minutes, { btn = null } = {}) {
-  try {
-    if (btn) btn.disabled = true;
-    const updated = await library.patch(gameId, { playtime_delta_minutes: minutes });
-    const item = itemsById.get(String(gameId));
-    if (item) itemsById.set(String(gameId), { ...item, playtime_minutes: updated.playtime_minutes });
-    showToast(`+${fmtDelta(minutes)} logged for ${updated.game_name}`);
-  } catch (err) {
-    showToast(`Couldn't log time: ${err.message}`, { type: 'error' });
-  } finally {
-    if (btn) btn.disabled = false;
-  }
-}
-
-
 // attachCardEvents attaches the click handler to game cards. Clicking a card
 // opens the routable edit modal (the same popup search results use) rather than
 // flipping the card, which is hard to use on small mobile covers.
@@ -2211,9 +2072,9 @@ function attachCardEvents(grid, newItems = null, originalSearchResults = null) {
     bindCoverFallback(card);
 
     card.addEventListener('click', (e) => {
-      // Quick-action buttons and tag chips are handled by the delegated grid
-      // listener; don't also open the edit modal.
-      if (e.target.closest('.qa-btn') || e.target.closest('.tag-chip')) return;
+      // Tag chips are handled by the delegated grid listener; don't also open
+      // the edit modal.
+      if (e.target.closest('.tag-chip')) return;
       const gameId = card.dataset.gameId;
 
       if (paginationState.mode === 'search') {
