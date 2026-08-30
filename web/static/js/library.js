@@ -1293,6 +1293,15 @@ function wireLibFilterPanel(panel) {
     paginationState.releaseTo = '';
     closeLibFilterPanel();
     loadLibrary(paginationState.statuses, newTag, newPlat, newOwned);
+    // Small popup so it's obvious the filters took effect (panel stays open
+    // until Apply/Close/backdrop — sorting no longer auto-closes).
+    const activeCount = [
+      newPlat, newOwned, newTag, newSort,
+      libraryFilters.yearFrom, libraryFilters.yearTo,
+      ...currentStatuses(),
+    ].filter(v => String(v || '').trim()).length;
+    const msg = activeCount ? `Filters applied · ${activeCount} active` : 'Filters applied';
+    try { showToast(msg); } catch {}
   };
 
   const clear = () => {
@@ -1306,6 +1315,7 @@ function wireLibFilterPanel(panel) {
     paginationState.yearFrom = ''; paginationState.yearTo = ''; paginationState.releaseFrom = ''; paginationState.releaseTo = ''; paginationState.sort = '';
     closeLibFilterPanel();
     loadLibrary(paginationState.statuses, '', '', '');
+    try { showToast('Filters cleared'); } catch {}
   };
 
   panel.querySelector('#lfApply')?.addEventListener('click', apply);
@@ -1314,7 +1324,9 @@ function wireLibFilterPanel(panel) {
   [platEl, ownedEl, tagsEl, sortEl, yfEl, ytEl, rfEl, rtEl].filter(Boolean).forEach(el => {
     el.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); apply(); } });
   });
-  if (sortEl) sortEl.addEventListener('change', apply);
+  // Sorting is staged like the other fields — don't auto-apply on change.
+  // The panel stays open until the user hits Apply/Clear/Close or the backdrop,
+  // and Apply shows a toast so it's obvious the filters took effect.
 }
 
 function openLibFilterPanel() {
