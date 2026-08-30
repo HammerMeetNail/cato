@@ -13,6 +13,25 @@ type Migration struct {
 
 var migrations = []Migration{
 	{
+		Version: 16,
+		// Case-insensitive tag indexes. Tag filtering and autocomplete are now
+		// LOWER(tag) based (RPG = rpg). The v15 indexes on (user_id, tag)
+		// can't be used for LOWER(tag) predicates (full scan). Add expression
+		// indexes so WHERE LOWER(tag) IN / LIKE and GROUP BY LOWER(tag) stay
+		// indexed. Also add a case-insensitive unique index so (user_id,
+		// game_id, LOWER(tag)) can't have both "RPG" and "rpg" on the same
+		// game — INSERT OR IGNORE in the v15 triggers will then dedupe
+		// case variants automatically.
+		Up: `CREATE INDEX IF NOT EXISTS idx_library_tags_user_ltag
+		       ON library_tags(user_id, LOWER(tag));
+		     CREATE INDEX IF NOT EXISTS idx_library_tags_user_ltag_game
+		       ON library_tags(user_id, LOWER(tag), game_id);
+		     CREATE INDEX IF NOT EXISTS idx_library_tags_game_user_ltag
+		       ON library_tags(game_id, user_id, LOWER(tag));
+		     CREATE UNIQUE INDEX IF NOT EXISTS idx_library_tags_user_game_ltag
+		       ON library_tags(user_id, game_id, LOWER(tag));`,
+	},
+	{
 		Version: 15,
 		// Search/filter indexes for JSON-backed platform and tag fields. The JSON
 		// columns remain the API/source-of-truth format for compatibility, while

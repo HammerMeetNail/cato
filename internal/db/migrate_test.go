@@ -125,14 +125,18 @@ func TestNormalizedTablesBackfillLegacyJSON(t *testing.T) {
 			VALUES (1, 'Legacy', 'legacy', 'legacy', '[6,"PC (Microsoft Windows)"]');
 		INSERT INTO library_items (user_id, game_id, status, tags_json)
 			VALUES ('u1', 1, 'backlog', '["rpg","rpg"]');
-		DROP TRIGGER game_platforms_ai;
-		DROP TRIGGER game_platforms_au;
-		DROP TRIGGER library_tags_ai;
-		DROP TRIGGER library_tags_au;
-		DROP TRIGGER library_tags_ad;
-		DROP TABLE game_platforms;
-		DROP TABLE library_tags;
-		DELETE FROM schema_migrations WHERE version = 15;`); err != nil {
+		DROP TRIGGER IF EXISTS game_platforms_ai;
+		DROP TRIGGER IF EXISTS game_platforms_au;
+		DROP TRIGGER IF EXISTS library_tags_ai;
+		DROP TRIGGER IF EXISTS library_tags_au;
+		DROP TRIGGER IF EXISTS library_tags_ad;
+		DROP TABLE IF EXISTS game_platforms;
+		DROP TABLE IF EXISTS library_tags;
+		DROP INDEX IF EXISTS idx_library_tags_user_ltag;
+		DROP INDEX IF EXISTS idx_library_tags_user_ltag_game;
+		DROP INDEX IF EXISTS idx_library_tags_game_user_ltag;
+		DROP INDEX IF EXISTS idx_library_tags_user_game_ltag;
+		DELETE FROM schema_migrations WHERE version >= 15;`); err != nil {
 		t.Fatalf("prepare legacy schema: %v", err)
 	}
 	if err := Migrate(database); err != nil {
