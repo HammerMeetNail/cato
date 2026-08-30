@@ -944,7 +944,7 @@ function buildLibFilterPanelHTML() {
           <h3 class="lib-filter-title">Filters</h3>
           <p class="lib-filter-subtitle">Refine your library</p>
         </div>
-        <button type="button" class="lib-filter-close" id="libFilterClose" aria-label="Close filters">
+        <button type="button" class="lib-filter-close" id="libFilterClose" aria-label="Apply and close">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
       </div>
@@ -1318,9 +1318,18 @@ function wireLibFilterPanel(panel) {
     try { showToast('Filters cleared'); } catch {}
   };
 
+  // Expose apply for backdrop/X that live outside this closure (openLibFilterPanel)
+  panel._applyStagedFilters = apply;
   panel.querySelector('#lfApply')?.addEventListener('click', apply);
   panel.querySelector('#lfClear')?.addEventListener('click', clear);
-  panel.querySelector('#libFilterClose')?.addEventListener('click', closeLibFilterPanel);
+  // X and backdrop should also apply — users often hit X expecting the staged
+  // values (e.g. backlog + oldest) to take effect, and "no obvious Apply"
+  // means they miss the footer. Make close-via-X/backdrop transactional.
+  panel.querySelector('#libFilterClose')?.addEventListener('click', () => {
+    // If there are staged changes, apply them so X doesn't silently discard
+    // the user's sort/platform/tags/year selection.
+    try { apply(); } catch { closeLibFilterPanel(); }
+  });
   [platEl, ownedEl, tagsEl, sortEl, yfEl, ytEl, rfEl, rtEl].filter(Boolean).forEach(el => {
     el.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); apply(); } });
   });
@@ -1351,7 +1360,13 @@ function openLibFilterPanel() {
     backdrop.style.display = 'block';
     if (!backdrop.dataset.wired) {
       backdrop.dataset.wired = '1';
-      backdrop.addEventListener('click', closeLibFilterPanel);
+      backdrop.addEventListener('click', () => {
+        const p = document.getElementById('libFilterPanel');
+        try {
+          if (p && typeof p._applyStagedFilters === 'function') p._applyStagedFilters();
+          else closeLibFilterPanel();
+        } catch { closeLibFilterPanel(); }
+      });
     }
   }
   document.body.classList.add('lib-advanced-open');
