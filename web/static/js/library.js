@@ -737,7 +737,8 @@ let filterTouchLockHandler = null;
 
 function isEventInsideFilterPanel(target) {
   if (!target || !target.closest) return false;
-  return !!(target.closest('#libFilterPanel') || target.closest('#statusFilterPanel') || target.closest('#libFilterBackdrop'));
+  return !!(target.closest('#libFilterPanel') || target.closest('#statusFilterPanel') ||
+    target.closest('#libFilterBackdrop') || target.closest('#statusFilterBackdrop'));
 }
 function lockFilterBodyScroll() {
   if (filterScrollLockHandler) return;
@@ -859,6 +860,7 @@ function openStatusFilterPanel() {
   const fab = document.getElementById('statusFilterFab');
   const panel = document.getElementById('statusFilterPanel');
   const btn = document.getElementById('statusFilterBtn');
+  const backdrop = document.getElementById('statusFilterBackdrop');
   if (!fab || !panel || !btn) return;
   // Also close the other FAB if open
   if (libFilterOpen) closeLibFilterPanel();
@@ -870,6 +872,18 @@ function openStatusFilterPanel() {
   panel.hidden = false;
   document.body.classList.add('lib-status-open');
   lockFilterBodyScroll();
+  if (backdrop) {
+    backdrop.hidden = false;
+    backdrop.style.display = 'block';
+    if (!backdrop.dataset.wired) {
+      backdrop.dataset.wired = '1';
+      backdrop.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        closeStatusFilterPanel();
+      });
+    }
+  }
   // Keep wheel inside the panel from chaining to the page: if the chip
   // list can still scroll in the wheel direction, consume the event.
   const chipsEl = panel.querySelector('.lib-filter-chips');
@@ -907,7 +921,10 @@ function openStatusFilterPanel() {
       if (e.cancelable) e.preventDefault();
     }, { passive: false });
   }
-  requestAnimationFrame(() => panel.classList.add('lib-filter-panel--open'));
+  requestAnimationFrame(() => {
+    panel.classList.add('lib-filter-panel--open');
+    if (backdrop) backdrop.classList.add('lib-filter-backdrop--open');
+  });
   btn.classList.add('lib-filter-btn--open');
   btn.setAttribute('aria-expanded', 'true');
   statusFilterOpen = true;
@@ -916,14 +933,24 @@ function openStatusFilterPanel() {
 function closeStatusFilterPanel() {
   const panel = document.getElementById('statusFilterPanel');
   const btn = document.getElementById('statusFilterBtn');
+  const backdrop = document.getElementById('statusFilterBackdrop');
   if (!panel || !btn) return;
   panel.classList.remove('lib-filter-panel--open');
+  if (backdrop) backdrop.classList.remove('lib-filter-backdrop--open');
   btn.classList.remove('lib-filter-btn--open');
   btn.setAttribute('aria-expanded', 'false');
   statusFilterOpen = false;
   document.body.classList.remove('lib-status-open');
   unlockFilterBodyScroll();
-  setTimeout(() => { if (!statusFilterOpen) panel.hidden = true; }, 180);
+  setTimeout(() => {
+    if (!statusFilterOpen) {
+      panel.hidden = true;
+      if (backdrop) {
+        backdrop.hidden = true;
+        backdrop.style.display = '';
+      }
+    }
+  }, 180);
 }
 
 function toggleStatusFilterPanel() {
