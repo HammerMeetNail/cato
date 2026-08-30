@@ -796,6 +796,11 @@ function wireStatusFilterPanel(panel) {
         history.replaceState(null, '', window.location.pathname + window.location.search);
       }
       syncStatusFilterPanel();
+      // Keep advanced filter's library chips in sync when status FAB changes
+      try {
+        const advPanel = document.getElementById('libFilterPanel');
+        if (advPanel && typeof advPanel._syncLibraryChips === 'function') advPanel._syncLibraryChips();
+      } catch {}
       // Reload library with new statuses + existing tag/platform/owned/year filters
       loadLibrary(paginationState.statuses, paginationState.tagFilter, paginationState.platformFilter, paginationState.ownedPlatformFilter);
       // Keep panel open for multi-select (Nabu behavior) — don't auto-close
@@ -946,6 +951,13 @@ function buildLibFilterPanelHTML() {
       <div class="lib-filter-body">
         <div class="lib-filter-card">
           <h4 class="lib-filter-section-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect></svg>
+            Library
+          </h4>
+          <div class="lib-filter-chips" id="lfLibraryChips" role="listbox" aria-label="Filter by library status"></div>
+        </div>
+        <div class="lib-filter-card">
+          <h4 class="lib-filter-section-title">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M7 12h10"></path><path d="M10 18h4"></path></svg>
             Sorting
           </h4>
@@ -1089,6 +1101,21 @@ function syncLibFilterInputs() {
   if (ytEl) ytEl.value = libraryFilters.yearTo || paginationState.yearTo || '';
   if (rfEl) rfEl.value = libraryFilters.releaseFrom || paginationState.releaseFrom || '';
   if (rtEl) rtEl.value = libraryFilters.releaseTo || paginationState.releaseTo || '';
+  // Sync library status chips inside advanced panel (mirrors bottom status FAB)
+  const libChipsEl = panel.querySelector('#lfLibraryChips');
+  if (libChipsEl && typeof panel._syncLibraryChips === 'function') {
+    try { panel._syncLibraryChips(); } catch {}
+  } else if (libChipsEl) {
+    const active = currentStatuses();
+    const hasFilter = active.length > 0;
+    libChipsEl.querySelectorAll('.lib-filter-chip').forEach(chip => {
+      const s = chip.dataset.status || '';
+      const isAll = s === '';
+      const isActive = isAll ? !hasFilter : active.includes(s);
+      chip.classList.toggle('active', isActive);
+      chip.setAttribute('aria-selected', String(isActive));
+    });
+  }
 }
 
 function wireLibFilterPanel(panel) {
@@ -1181,6 +1208,54 @@ function wireLibFilterPanel(panel) {
   setupFilterAutocomplete(platEl, panel.querySelector('#lfPlatformList'), autocompleteGlobalPlatforms, rankPlatformSuggestions);
   setupFilterAutocomplete(ownedEl, panel.querySelector('#lfOwnedPlatformList'), autocompleteGlobalPlatforms, rankPlatformSuggestions);
   setupFilterAutocomplete(tagsEl, panel.querySelector('#lfTagsList'), async (q) => autocompleteTags(q, 20), null);
+
+  // Library status chips inside advanced filter (mirrors bottom status FAB, library-only)
+  const libChipsEl = panel.querySelector('#lfLibraryChips');
+  if (libChipsEl) {
+    const chips = [
+      { status: '', label: 'All' },
+      ...VALID_STATUSES.map(s => ({ status: s, label: STATUS_LABELS[s] || s })),
+    ].map(({ status, label }) => {
+      const color = STATUS_CHIP_COLORS[status];
+      const style = color ? ` style="--chip-color:${color}"` : '';
+      return `<button type="button" class="lib-filter-chip${status === '' ? ' lib-filter-all' : ''}" data-status="${escapeHTML(status)}"${style} role="option" aria-selected="false">${escapeHTML(label)}</button>`;
+    }).join('');
+    libChipsEl.innerHTML = chips;
+    const syncLibraryChips = () => {
+      const active = currentStatuses();
+      const hasFilter = active.length > 0;
+      libChipsEl.querySelectorAll('.lib-filter-chip').forEach(chip => {
+        const s = chip.dataset.status || '';
+        const isAll = s === '';
+        const isActive = isAll ? !hasFilter : active.includes(s);
+        chip.classList.toggle('active', isActive);
+        chip.setAttribute('aria-selected', String(isActive));
+      });
+    };
+    panel._syncLibraryChips = syncLibraryChips;
+    syncLibraryChips();
+    libChipsEl.addEventListener('click', (e) => {
+      const chip = e.target.closest('.lib-filter-chip');
+      if (!chip) return;
+      const status = chip.dataset.status || '';
+      const cur = currentStatuses();
+      let next;
+      if (status === '') next = [];
+      else {
+        if (cur.includes(status)) next = cur.filter(s => s !== status);
+        else next = [...cur, status];
+      }
+      setStatuses(next);
+      if (window.location.hash && VALID_STATUSES.includes(window.location.hash.slice(1))) {
+        history.replaceState(null, '', window.location.pathname + window.location.search);
+      }
+      syncLibraryChips();
+      // Keep bottom status FAB in sync
+      try { if (typeof syncStatusFilterPanel === 'function') syncStatusFilterPanel(); } catch {}
+      // Apply immediately like the bottom FAB (no need to hit Apply)
+      loadLibrary(paginationState.statuses, paginationState.tagFilter, paginationState.platformFilter, paginationState.ownedPlatformFilter);
+    });
+  }
 
   const dismissAutocomplete = () => {
     // Datalist dropdowns are native and stay open while the input retains
