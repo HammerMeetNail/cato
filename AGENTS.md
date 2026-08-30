@@ -133,6 +133,10 @@ make deploy-logs   # tail container logs
 ```
 
 `make deploy` runs the cross-compiled binary into a fresh image and recreates the container.
+When changing any shipped asset under `web/static`, increment the versioned
+`CACHE_NAME` in `web/static/service-worker.js` before deploying (for example,
+`cato-static-v8` to `cato-static-v9`). The new service worker purges the old
+cache on activation; an already-open client may need one reload to activate it.
 WAL conversion of an existing DB happens automatically on first open. Back up the prod DB
 (`cp cato.db cato.db.bak-...`) before any manual DB surgery; `docker` and `sqlite3` are
 available on `nas2` (docker at `/usr/local/bin/docker`, no sudo needed).
