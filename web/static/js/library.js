@@ -160,6 +160,7 @@ const searchFilters = {
   inLibrary: '', libraryStatus: '',
 };
 let searchFiltersQuery = '';
+let searchLoadVersion = 0;
 
 function resetSearchFilters(query) {
   if (searchFiltersQuery === query) return;
@@ -235,6 +236,8 @@ export async function loadSearchResults(query) {
   const grid = document.getElementById('gameGrid');
   if (!grid) return;
 
+  const loadVersion = ++searchLoadVersion;
+
   resetSearchFilters(query);
 
   // Reset pagination state to search mode
@@ -267,6 +270,8 @@ export async function loadSearchResults(query) {
   }
   const statusTabs = document.getElementById('statusTabs');
   if (statusTabs) statusTabs.style.display = 'none';
+  // Do not leave lifetime library totals visible while this query loads.
+  updateSearchStatsStrip(null);
 
   // Create and show results header (+ sort/filter bar + total count)
   const existingHeader = document.getElementById('searchResultsHeader');
@@ -306,16 +311,20 @@ export async function loadSearchResults(query) {
       offset: 0,
       ...filterParams(),
     });
+    if (loadVersion !== searchLoadVersion || paginationState.mode !== 'search' || paginationState.searchQuery !== query) return;
     updateSearchTotal(total);
     // Learn which results are already in the library so cards get a badge
     // and clicks open the edit form instead of a destructive "Add" form.
     ownedStatuses.clear();
     const ids = results.map(r => r.id);
-    for (const it of await library.check(ids)) {
+    const owned = await library.check(ids);
+    if (loadVersion !== searchLoadVersion || paginationState.mode !== 'search' || paginationState.searchQuery !== query) return;
+    for (const it of owned) {
       ownedStatuses.set(Number(it.game_id), it.status);
     }
     renderPagedItems(grid, results, true);
   } catch (err) {
+    if (loadVersion !== searchLoadVersion || paginationState.mode !== 'search' || paginationState.searchQuery !== query) return;
     paginationState.loading = false;
     grid.innerHTML = `<div class="empty-state">Failed to load results: ${err.message}</div>`;
   }
@@ -346,9 +355,34 @@ function filterParams() {
 }
 
 function updateSearchTotal(total) {
+  const count = Number(total);
   const el = document.getElementById('searchTotal');
-  if (!el || !Number.isFinite(total)) return;
-  el.textContent = total === 1 ? ' · 1 game' : ` · ${total} games`;
+  if (!Number.isFinite(count)) return;
+  if (el) el.textContent = count === 1 ? ' · 1 game' : ` · ${count} games`;
+  updateSearchStatsStrip(count);
+}
+
+// Search results are catalog matches, not lifetime library stats. Keep the
+// strip useful in search mode without implying that the finished/playtime
+// values apply to the query.
+function updateSearchStatsStrip(total) {
+  const el = document.getElementById('statsStrip');
+  if (!el) return;
+  el.dataset.context = 'search';
+  el.removeAttribute('role');
+  el.removeAttribute('tabindex');
+  el.removeAttribute('title');
+  if (total == null) {
+    el.style.display = 'none';
+    return;
+  }
+  const count = Number(total);
+  if (!Number.isFinite(count) || count < 0) {
+    el.style.display = 'none';
+    return;
+  }
+  el.textContent = `${count} ${count === 1 ? 'game' : 'games'} found`;
+  el.style.display = '';
 }
 
 // buildSearchFilterBarHTML renders the collapsible sort/filter controls.
@@ -1556,6 +1590,10 @@ export async function loadLibrary(status, tag, platform, ownedPlatform, extraOpt
   const grid = document.getElementById('gameGrid');
   if (!grid) return;
 
+  // Invalidate any search request that is still resolving so it cannot put
+  // stale query totals back into the library view.
+  searchLoadVersion++;
+
   // Handle legacy 4-arg calls where 4th arg is actually extraOpts object (platform+owned shift)
   if (ownedPlatform !== undefined && typeof ownedPlatform === 'object' && ownedPlatform !== null && !Array.isArray(ownedPlatform)) {
     extraOpts = ownedPlatform;
@@ -1746,17 +1784,20 @@ async function loadMore() {
   if (paginationState.loading || !paginationState.hasMore) return;
 
   paginationState.loading = true;
+  const searchVersion = paginationState.mode === 'search' ? searchLoadVersion : null;
 
   const grid = document.getElementById('gameGrid');
   if (!grid) return;
 
   try {
     if (paginationState.mode === 'search') {
-      const { results } = await searchGamesFull(paginationState.searchQuery, {
+      const { results, total } = await searchGamesFull(paginationState.searchQuery, {
         limit: paginationState.pageSize,
         offset: paginationState.offset,
         ...filterParams(),
       });
+      if (searchVersion !== searchLoadVersion || paginationState.mode !== 'search') return;
+      updateSearchTotal(total);
       renderPagedItems(grid, results, false); // false = append, not replace
     } else {
       const { items, hasMore } = await library.list(
@@ -1778,6 +1819,7 @@ async function loadMore() {
       renderPagedItems(grid, items, false, hasMore);
     }
   } catch (err) {
+    if (searchVersion !== null && (searchVersion !== searchLoadVersion || paginationState.mode !== 'search')) return;
     paginationState.loading = false;
     // Scrolling appeared broken with no feedback; surface a visible retry.
     showLoadMoreRetry();
@@ -1807,9 +1849,9 @@ function removeLoadMoreRetry() {
 }
 
 // refreshTabCounts fetches per-status counts and renders them into the tab
-// labels ("Backlog (43)"), plus the lifetime stats strip. With the FAB, the same
-// counts are mirrored onto the floating panel's chips so the user sees tallies
-// without opening the old inline row.
+// labels ("Backlog (43)"), plus the lifetime stats strip in library mode. With
+// the FAB, the same counts are mirrored onto the floating panel's chips so the
+// user sees tallies without opening the old inline row.
 export async function refreshTabCounts() {
   const statusTabs = document.getElementById('statusTabs');
   const counts = await library.counts();
@@ -1836,7 +1878,7 @@ export async function refreshTabCounts() {
       chip.textContent = typeof n === 'number' ? `${base} (${n})` : base;
     });
   }
-  updateStatsStrip(counts);
+  if (paginationState.mode !== 'search') updateStatsStrip(counts);
 }
 
 // updateStatsStrip renders the one-line summary ("12 games · 4 finished ·
@@ -1844,6 +1886,10 @@ export async function refreshTabCounts() {
 function updateStatsStrip(counts) {
   const el = document.getElementById('statsStrip');
   if (!el) return;
+  el.dataset.context = 'library';
+  el.setAttribute('role', 'button');
+  el.setAttribute('tabindex', '0');
+  el.title = 'View detailed stats';
   if (!counts.all || counts.total_minutes == null || counts.total_minutes < 0) {
     el.style.display = 'none';
     return;

@@ -384,7 +384,10 @@
       statsStrip.setAttribute('role', 'button');
       statsStrip.setAttribute('tabindex', '0');
       statsStrip.title = 'View detailed stats';
-      const goStats = () => { window.location.hash = '#stats'; };
+      const goStats = () => {
+        if (statsStrip.dataset.context === 'search') return;
+        window.location.hash = '#stats';
+      };
       statsStrip.addEventListener('click', goStats);
       statsStrip.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goStats(); }
