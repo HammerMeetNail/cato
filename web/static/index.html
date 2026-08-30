@@ -84,7 +84,15 @@
   </div>
 
   <nav id="bottom-tabs" hidden aria-label="Main navigation">
-    <a href="#" class="tab-item" data-nav="library" data-route="library" aria-label="Library" aria-current="page">
+    <a href="#stats" class="tab-item" data-nav="stats" data-route="stats" aria-label="Stats">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <line x1="18" y1="20" x2="18" y2="10"></line>
+        <line x1="12" y1="20" x2="12" y2="4"></line>
+        <line x1="6" y1="20" x2="6" y2="14"></line>
+      </svg>
+      <span>Stats</span>
+    </a>
+    <a href="#library" class="tab-item" data-nav="library" data-route="library" aria-label="Library">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
         <rect x="3" y="3" width="7" height="7" rx="1"></rect>
         <rect x="14" y="3" width="7" height="7" rx="1"></rect>
@@ -93,19 +101,11 @@
       </svg>
       <span>Library</span>
     </a>
-    <a href="#now" class="tab-item" data-nav="now" data-route="now" aria-label="Now Playing">
+    <a href="#" class="tab-item" data-nav="now" data-route="now" aria-label="Now Playing" aria-current="page">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
         <polygon points="5 3 19 12 5 21 5 3"></polygon>
       </svg>
       <span>Playing</span>
-    </a>
-    <a href="#stats" class="tab-item" data-nav="stats" data-route="stats" aria-label="Stats">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-        <line x1="18" y1="20" x2="18" y2="10"></line>
-        <line x1="12" y1="20" x2="12" y2="4"></line>
-        <line x1="6" y1="20" x2="6" y2="14"></line>
-      </svg>
-      <span>Stats</span>
     </a>
     <a href="#settings" class="tab-item" data-nav="settings" data-route="settings" aria-label="Settings">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
@@ -219,36 +219,42 @@
         await renderStatsView(statsView);
         return;
       }
-      if (raw === 'now' || raw === 'now-playing' || raw === 'playing-now') {
-        updateBottomTabs('now');
-        showView('playing');
-        await renderPlayingView(playingView);
-        return;
-      }
       if (raw === 'settings') {
         updateBottomTabs('settings');
         showView('settings');
         await renderSettingsView(settingsView);
         return;
       }
-
-      updateBottomTabs('library');
-      showView('library');
-
-      const searchQuery = getHashSearch();
-      if (searchQuery) {
-        searchInput.value = searchQuery;
-        recordRecentSearch(searchQuery);
-        await loadSearchResults(searchQuery);
+      // Library: explicit #library, status tabs (#backlog etc.), or #game/#search
+      if (raw === 'library' || getHashSearch() !== null || getHashGameId() !== null || getHashStatus() !== '') {
+        updateBottomTabs('library');
+        showView('library');
+        const searchQuery = getHashSearch();
+        if (searchQuery) {
+          searchInput.value = searchQuery;
+          recordRecentSearch(searchQuery);
+          await loadSearchResults(searchQuery);
+          return;
+        }
+        const status = getHashStatus();
+        const gameId = getHashGameId();
+        await loadLibrary(status);
+        if (gameId) {
+          openGameModal(gameId);
+        }
+        return;
+      }
+      if (raw === 'now' || raw === 'now-playing' || raw === 'playing-now' || raw === 'playing' || raw === 'library/playing') {
+        updateBottomTabs('now');
+        showView('playing');
+        await renderPlayingView(playingView);
         return;
       }
 
-      const status = getHashStatus();
-      const gameId = getHashGameId();
-      await loadLibrary(status);
-      if (gameId) {
-        openGameModal(gameId);
-      }
+      // Default: Playing (stats | library | playing | settings, playing is home)
+      updateBottomTabs('now');
+      showView('playing');
+      await renderPlayingView(playingView);
     }
 
     // Service worker registration (PWA) – keep cache fresh, show update toast.
@@ -305,11 +311,12 @@
     document.addEventListener('click', (e) => {
       if (!userMenuDropdown.hidden && !e.target.closest('.user-menu')) setUserMenu(false);
       // Bottom tabs are anchors; prevent full-page navigation and use SPA hash.
+      // Playing is default (empty hash), others use explicit hashes.
       const navEl = e.target.closest('#bottom-tabs .tab-item');
       if (navEl) {
         e.preventDefault();
         const route = navEl.dataset.route;
-        if (route === 'library') {
+        if (route === 'now') {
           history.replaceState(null, '', window.location.pathname + window.location.search);
           handleRoute();
         } else {
@@ -334,7 +341,7 @@
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       e.preventDefault();
       if (libraryView.hidden) {
-        window.location.hash = '';
+        window.location.hash = '#library';
         setTimeout(() => searchInput.focus(), 0);
       } else {
         searchInput.focus();
@@ -343,7 +350,7 @@
 
     fabAdd?.addEventListener('click', () => {
       if (libraryView.hidden) {
-        window.location.hash = '';
+        window.location.hash = '#library';
         setTimeout(() => {
           window.scrollTo({ top: 0, behavior: 'smooth' });
           searchInput.focus();
@@ -452,14 +459,18 @@
     window.addEventListener('hashchange', handleRoute);
     await handleRoute();
 
-    // Keyboard shortcut for bottom tabs: 1=Library, 2=Playing, 3=Stats, 4=Settings
+    // Keyboard shortcut for bottom tabs: 1=Stats, 2=Library, 3=Playing, 4=Settings
     document.addEventListener('keydown', (e) => {
       if (e.altKey || e.ctrlKey || e.metaKey) return;
       const tag = document.activeElement?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-      if (e.key === '1') { e.preventDefault(); window.location.hash = ''; }
-      if (e.key === '2') { e.preventDefault(); window.location.hash = '#now'; }
-      if (e.key === '3') { e.preventDefault(); window.location.hash = '#stats'; }
+      if (e.key === '1') { e.preventDefault(); window.location.hash = '#stats'; }
+      if (e.key === '2') { e.preventDefault(); window.location.hash = '#library'; }
+      if (e.key === '3') {
+        e.preventDefault();
+        history.replaceState(null, '', window.location.pathname + window.location.search);
+        handleRoute();
+      }
       if (e.key === '4') { e.preventDefault(); window.location.hash = '#settings'; }
     });
   </script>
