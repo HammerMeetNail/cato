@@ -966,8 +966,12 @@ function ensureStatusFilterFab() {
       if (e.target.closest('#tagFilterBar')) return;
       // Don't close when clicking the other filter (advanced inline)
       if (e.target.closest('#libFilterPanel') || e.target.closest('#searchAdvancedBtn') || e.target.closest('#libFilterFab')) return;
+      // Dismiss before the click reaches a game card or another background
+      // control. The filter popup should consume this first outside click.
+      e.preventDefault();
+      e.stopPropagation();
       closeStatusFilterPanel();
-    });
+    }, true);
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && statusFilterOpen) {
         e.stopPropagation();
