@@ -302,6 +302,15 @@ func main() {
 		log.Printf("startup: migrated %d items from platform tags to ownership field", n)
 	}
 
+	// One-time dedupe: tags are now case-insensitive ("RPG" = "rpg") for
+	// filtering and autocomplete. Older items may contain both cases as
+	// separate entries; keep the first occurrence's casing and drop the rest.
+	if n, err := games.NewStore(database).RepairTagCaseDuplicates(context.Background()); err != nil {
+		log.Printf("startup: tag case dedupe failed: %v", err)
+	} else if n > 0 {
+		log.Printf("startup: deduplicated tags on %d items", n)
+	}
+
 	srv := http.NewServer(cfg, database)
 	log.Printf("cato listening on %s", cfg.ListenAddr)
 

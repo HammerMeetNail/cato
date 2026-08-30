@@ -270,23 +270,39 @@ func libraryFilter(statuses []string, tags []string, tagOp string) (string, []in
 	args := []interface{}{}
 
 	if len(tags) > 0 {
-		placeholders := make([]string, len(tags))
-		for i := range placeholders {
-			placeholders[i] = "?"
-		}
-		inClause := strings.Join(placeholders, ", ")
-		if tagOp == "and" {
-			// All tags must be present
-			where += ` AND (SELECT COUNT(DISTINCT lt.tag) FROM library_tags lt WHERE lt.user_id = li.user_id AND lt.game_id = li.game_id AND lt.tag IN (` + inClause + `)) = ?`
-			for _, t := range tags {
-				args = append(args, t)
+		// Deduplicate tags case-insensitively: "RPG" and "rpg" are the same filter.
+		seenLower := map[string]bool{}
+		uniq := make([]string, 0, len(tags))
+		for _, t := range tags {
+			lt := strings.ToLower(t)
+			if lt == "" || seenLower[lt] {
+				continue
 			}
-			args = append(args, len(tags))
+			seenLower[lt] = true
+			uniq = append(uniq, t)
+		}
+		tags = uniq
+		if len(tags) == 0 {
+			// All tags were empty duplicates — no filter.
 		} else {
-			// Any tag must be present
-			where += ` AND EXISTS (SELECT 1 FROM library_tags lt WHERE lt.user_id = li.user_id AND lt.game_id = li.game_id AND lt.tag IN (` + inClause + `))`
-			for _, t := range tags {
-				args = append(args, t)
+			placeholders := make([]string, len(tags))
+			for i := range placeholders {
+				placeholders[i] = "?"
+			}
+			inClause := strings.Join(placeholders, ", ")
+			if tagOp == "and" {
+				// All tags must be present — case-insensitive (RPG = rpg)
+				where += ` AND (SELECT COUNT(DISTINCT LOWER(lt.tag)) FROM library_tags lt WHERE lt.user_id = li.user_id AND lt.game_id = li.game_id AND LOWER(lt.tag) IN (` + inClause + `)) = ?`
+				for _, t := range tags {
+					args = append(args, strings.ToLower(t))
+				}
+				args = append(args, len(tags))
+			} else {
+				// Any tag must be present — case-insensitive
+				where += ` AND EXISTS (SELECT 1 FROM library_tags lt WHERE lt.user_id = li.user_id AND lt.game_id = li.game_id AND LOWER(lt.tag) IN (` + inClause + `))`
+				for _, t := range tags {
+					args = append(args, strings.ToLower(t))
+				}
 			}
 		}
 	}
@@ -680,7 +696,22 @@ func (h *LibraryHandler) writeLibraryItem(w http.ResponseWriter, userID string, 
 
 	tagsJSON := "[]"
 	if req.Tags != nil {
-		b, _ := json.Marshal(req.Tags)
+		// Deduplicate tags case-insensitively ("RPG" and "rpg" are the same).
+		seenLower := map[string]bool{}
+		uniq := make([]string, 0, len(req.Tags))
+		for _, t := range req.Tags {
+			trimmed := strings.TrimSpace(t)
+			if trimmed == "" {
+				continue
+			}
+			lt := strings.ToLower(trimmed)
+			if seenLower[lt] {
+				continue
+			}
+			seenLower[lt] = true
+			uniq = append(uniq, trimmed)
+		}
+		b, _ := json.Marshal(uniq)
 		tagsJSON = string(b)
 	}
 
@@ -796,11 +827,16 @@ func (h *LibraryHandler) handleLibraryTags(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Escape LIKE wildcards so searching "100%" doesn't match "1000 things".
-	rows, err := h.db.Query(`SELECT DISTINCT tag
+	// Case-insensitive prefix match: "RPG" matches "rpg". Group by LOWER(tag)
+	// so "RPG" and "rpg" dedupe to one suggestion (the lexicographically first
+	// variant is returned — the user's most canonical casing is preserved in
+	// filtering, but autocomplete doesn't spam duplicates).
+	rows, err := h.db.Query(`SELECT MIN(tag) AS tag
 		FROM library_tags
-		WHERE user_id = ? AND tag LIKE ? ESCAPE '\'
-		ORDER BY tag
-		LIMIT ?`, userID, games.EscapeLike(q)+"%", limit)
+		WHERE user_id = ? AND LOWER(tag) LIKE ? ESCAPE '\'
+		GROUP BY LOWER(tag)
+		ORDER BY LOWER(MIN(tag)), MIN(tag)
+		LIMIT ?`, userID, strings.ToLower(games.EscapeLike(q))+"%", limit)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to fetch tags"))
 		return
@@ -1196,10 +1232,10 @@ func (h *LibraryHandler) handleLibraryStats(w http.ResponseWriter, r *http.Reque
 		stats["by_year"] = byYear
 	}
 
-	rows2, err := h.db.Query(`SELECT tag, COUNT(*) AS c
+	rows2, err := h.db.Query(`SELECT MIN(tag) AS tag, COUNT(*) AS c
 		FROM library_tags
 		WHERE user_id = ?
-		GROUP BY tag ORDER BY c DESC LIMIT 8`, userID)
+		GROUP BY LOWER(tag) ORDER BY c DESC LIMIT 8`, userID)
 	if err == nil {
 		defer rows2.Close()
 		topTags := make([]map[string]interface{}, 0)

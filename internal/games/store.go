@@ -3,6 +3,7 @@ package games
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -212,24 +213,37 @@ func appendGameFilterWhere(b *strings.Builder, args *[]interface{}, o searchOpti
 		}
 	}
 	if len(o.tags) > 0 && o.libraryUserID != "" {
-		placeholders := make([]string, len(o.tags))
-		for i := range placeholders {
-			placeholders[i] = "?"
+		// Deduplicate case-insensitively: "RPG" and "rpg" are the same.
+		seenLower := map[string]bool{}
+		uniq := make([]string, 0, len(o.tags))
+		for _, t := range o.tags {
+			lt := strings.ToLower(t)
+			if lt == "" || seenLower[lt] {
+				continue
+			}
+			seenLower[lt] = true
+			uniq = append(uniq, t)
 		}
-		inClause := strings.Join(placeholders, ", ")
-		if o.tagOp == "or" {
-			conds = append(conds, `EXISTS (SELECT 1 FROM library_tags lt WHERE lt.game_id = g.id AND lt.user_id = ? AND lt.tag IN (`+inClause+`))`)
-			*args = append(*args, o.libraryUserID)
-			for _, t := range o.tags {
-				*args = append(*args, t)
+		if len(uniq) > 0 {
+			placeholders := make([]string, len(uniq))
+			for i := range placeholders {
+				placeholders[i] = "?"
 			}
-		} else {
-			conds = append(conds, `(SELECT COUNT(DISTINCT lt.tag) FROM library_tags lt WHERE lt.game_id = g.id AND lt.user_id = ? AND lt.tag IN (`+inClause+`)) = ?`)
-			*args = append(*args, o.libraryUserID)
-			for _, t := range o.tags {
-				*args = append(*args, t)
+			inClause := strings.Join(placeholders, ", ")
+			if o.tagOp == "or" {
+				conds = append(conds, `EXISTS (SELECT 1 FROM library_tags lt WHERE lt.game_id = g.id AND lt.user_id = ? AND LOWER(lt.tag) IN (`+inClause+`))`)
+				*args = append(*args, o.libraryUserID)
+				for _, t := range uniq {
+					*args = append(*args, strings.ToLower(t))
+				}
+			} else {
+				conds = append(conds, `(SELECT COUNT(DISTINCT LOWER(lt.tag)) FROM library_tags lt WHERE lt.game_id = g.id AND lt.user_id = ? AND LOWER(lt.tag) IN (`+inClause+`)) = ?`)
+				*args = append(*args, o.libraryUserID)
+				for _, t := range uniq {
+					*args = append(*args, strings.ToLower(t))
+				}
+				*args = append(*args, len(uniq))
 			}
-			*args = append(*args, len(o.tags))
 		}
 	}
 	if o.libraryUserID != "" {
@@ -1026,6 +1040,121 @@ func (s *Store) GetStaleQueries(ctx context.Context, limit int) ([]string, error
 		keys = append(keys, k)
 	}
 	return keys, rows.Err()
+}
+
+// RepairTagCaseDuplicates deduplicates tags case-insensitively within each
+// library item. Previously tags were stored as-entered, so a game could have
+// both "RPG" and "rpg" as separate entries (and separate rows in
+// library_tags). With case-insensitive filtering ("RPG" = "rpg") those
+// duplicates are now redundant and inflate autocomplete. This repair keeps
+// the first occurrence's casing and drops later case-duplicates, updating
+// tags_json so the library_tags trigger reconciles. Idempotent.
+func (s *Store) RepairTagCaseDuplicates(ctx context.Context) (int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT user_id, game_id, tags_json FROM library_items`)
+	if err != nil && isMissingTableErr(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	type fix struct {
+		userID string
+		gameID int64
+		tags   []string
+	}
+	var fixes []fix
+	for rows.Next() {
+		var userID string
+		var gameID int64
+		var tagsJSON string
+		if err := rows.Scan(&userID, &gameID, &tagsJSON); err != nil {
+			if isBenignRepairErr(err) {
+				return 0, nil
+			}
+			return 0, err
+		}
+		var tags []string
+		if err := json.Unmarshal([]byte(tagsJSON), &tags); err != nil {
+			continue
+		}
+		if len(tags) <= 1 {
+			continue
+		}
+		seen := map[string]bool{}
+		uniq := make([]string, 0, len(tags))
+		for _, t := range tags {
+			trimmed := strings.TrimSpace(t)
+			if trimmed == "" {
+				continue
+			}
+			lt := strings.ToLower(trimmed)
+			if seen[lt] {
+				continue
+			}
+			seen[lt] = true
+			uniq = append(uniq, trimmed)
+		}
+		if len(uniq) == len(tags) {
+			// Check if any trimming changed a tag (e.g. " rpg " -> "rpg")
+			same := true
+			for i, t := range tags {
+				if strings.TrimSpace(t) != uniq[i] {
+					same = false
+					break
+				}
+			}
+			if same {
+				continue
+			}
+		}
+		// Normalize JSON ordering: keep uniq as-is; if it became empty, store [].
+		fixes = append(fixes, fix{userID: userID, gameID: gameID, tags: uniq})
+	}
+	if err := rows.Err(); err != nil {
+		if isBenignRepairErr(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	if len(fixes) == 0 {
+		return 0, nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		if isBenignRepairErr(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.Prepare(`UPDATE library_items SET tags_json = ? WHERE user_id = ? AND game_id = ?`)
+	if err != nil {
+		if isBenignRepairErr(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	defer stmt.Close()
+	var updated int64
+	for _, f := range fixes {
+		b, _ := json.Marshal(f.tags)
+		if _, err := stmt.Exec(string(b), f.userID, f.gameID); err != nil {
+			if isBenignRepairErr(err) {
+				return updated, nil
+			}
+			return updated, err
+		}
+		updated++
+	}
+	if err := tx.Commit(); err != nil {
+		if isBenignRepairErr(err) {
+			return updated, nil
+		}
+		return updated, err
+	}
+	return updated, nil
 }
 
 // RepairNormalizedAliases re-normalizes stored alias rows that contain
