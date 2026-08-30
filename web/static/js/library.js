@@ -1084,7 +1084,7 @@ function updateLibFilterBadge() {
 
 function syncLibFilterInputs() {
   const panel = document.getElementById('libFilterPanel');
-  if (!panel || panel.hidden) return;
+  if (!panel) return;
   const platEl = panel.querySelector('#lfPlatform');
   const ownedEl = panel.querySelector('#lfOwnedPlatform');
   const tagsEl = panel.querySelector('#lfTags');
@@ -1358,8 +1358,8 @@ function openLibFilterPanel() {
     panel.innerHTML = buildLibFilterPanelHTML();
     wireLibFilterPanel(panel);
   }
-  syncLibFilterInputs();
   panel.hidden = false;
+  syncLibFilterInputs();
   if (backdrop) {
     backdrop.hidden = false;
     backdrop.style.display = 'block';
