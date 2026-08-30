@@ -55,12 +55,22 @@
               <line x1="12" y1="18" x2="12" y2="21"></line>
             </svg>
           </button>
+          <button type="button" class="search-filter-btn" id="searchStatusBtn" aria-label="Filter by status" aria-expanded="false" aria-controls="statusFilterPanel" title="Filter by status">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"></rect><path d="M6 12h4"></path><path d="M8 10v4"></path><path d="M15 11v.01"></path><path d="M18 13v.01"></path></svg>
+          </button>
+          <button type="button" class="search-filter-btn" id="searchAdvancedBtn" aria-label="More filters" aria-expanded="false" aria-controls="libFilterPanel" title="More filters">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
+            <span class="lib-filter-badge" id="libFilterBadgeInline" hidden>0</span>
+          </button>
           <div class="search-hint" aria-hidden="true">
             <span><kbd>$</kbd> filters your library by tag, e.g. <kbd>$rpg</kbd></span>
             <span><kbd>@</kbd> filters by platform, e.g. <kbd>@switch</kbd> · tags with spaces need quotes: <kbd>$"switch 2"</kbd></span>
           </div>
           <div class="search-results" id="searchResults" role="listbox" aria-label="Search results"></div>
         </div>
+        <!-- Filter panels anchored to search-wrap (also used by global search FAB) -->
+        <div class="lib-filter-panel status-filter-panel" id="statusFilterPanel" hidden></div>
+        <div class="lib-filter-panel" id="libFilterPanel" hidden></div>
 
         <div class="tabs" id="statusTabs" role="tablist" aria-label="Library filters">
           <button class="tab active" data-status="" role="tab" aria-selected="true">All</button>
@@ -118,19 +128,15 @@
 
   <div id="toast-container" role="status" aria-live="polite" aria-atomic="false"></div>
 
-  <!-- Status filter FAB — videogame icon, vertically stacked on bottom-right with search + advanced -->
-  <div class="lib-filter-fab status-filter-fab" id="statusFilterFab" hidden>
-    <div class="lib-filter-panel status-filter-panel" id="statusFilterPanel" hidden></div>
-    <button type="button" class="lib-filter-btn" id="statusFilterBtn" aria-expanded="false" aria-controls="statusFilterPanel" aria-label="Filter by status">
+  <div class="lib-filter-backdrop" id="libFilterBackdrop" hidden></div>
+  <!-- Legacy FAB containers kept for backward-compat but hidden; panels now live inside search-wrap -->
+  <div class="lib-filter-fab status-filter-fab" id="statusFilterFab" hidden style="display:none">
+    <button type="button" class="lib-filter-btn" id="statusFilterBtn" aria-expanded="false" aria-controls="statusFilterPanel" aria-label="Filter by status" hidden>
       <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"></rect><path d="M6 12h4"></path><path d="M8 10v4"></path><path d="M15 11v.01"></path><path d="M18 13v.01"></path></svg>
     </button>
   </div>
-
-  <div class="lib-filter-backdrop" id="libFilterBackdrop" hidden></div>
-  <!-- Library filter FAB — bottom-right: Platform/Tags/Release (advanced) -->
-  <div class="lib-filter-fab advanced-filter-fab" id="libFilterFab" hidden>
-    <div class="lib-filter-panel" id="libFilterPanel" hidden></div>
-    <button type="button" class="lib-filter-btn" id="libFilterBtn" aria-expanded="false" aria-controls="libFilterPanel" aria-label="Filter library">
+  <div class="lib-filter-fab advanced-filter-fab" id="libFilterFab" hidden style="display:none">
+    <button type="button" class="lib-filter-btn" id="libFilterBtn" aria-expanded="false" aria-controls="libFilterPanel" aria-label="Filter library" hidden>
       <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
     </button>
     <span class="lib-filter-badge" id="libFilterBadge" hidden>0</span>
@@ -188,7 +194,7 @@
       if (statsView) statsView.hidden = name !== 'stats';
       if (playingView) playingView.hidden = name !== 'playing';
       if (settingsView) settingsView.hidden = name !== 'settings';
-      if (fabAdd) fabAdd.style.display = name === 'library' ? 'flex' : 'none';
+      if (fabAdd) fabAdd.style.display = 'flex';
       const allFabs = [libFilterFab, statusFilterFab];
       const allPanels = [libFilterPanel, statusFilterPanel];
       if (name !== 'library') {
@@ -198,6 +204,11 @@
         if (libFilterBtn) libFilterBtn.classList.remove('lib-filter-btn--open');
         const statusFilterBtn = document.getElementById('statusFilterBtn');
         if (statusFilterBtn) statusFilterBtn.classList.remove('lib-filter-btn--open');
+        // Also reset inline search filter buttons
+        const searchStatusBtn = document.getElementById('searchStatusBtn');
+        if (searchStatusBtn) { searchStatusBtn.classList.remove('lib-filter-btn--open'); searchStatusBtn.setAttribute('aria-expanded', 'false'); }
+        const searchAdvancedBtn = document.getElementById('searchAdvancedBtn');
+        if (searchAdvancedBtn) { searchAdvancedBtn.classList.remove('lib-filter-btn--open'); searchAdvancedBtn.setAttribute('aria-expanded', 'false'); }
       } else {
         // Library view: let library.js decide (search mode hides FAB, library mode shows)
       }

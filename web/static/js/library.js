@@ -807,7 +807,12 @@ function openStatusFilterPanel() {
   const fab = document.getElementById('statusFilterFab');
   const panel = document.getElementById('statusFilterPanel');
   const btn = document.getElementById('statusFilterBtn');
-  if (!fab || !panel || !btn) return;
+  const inlineBtn = document.getElementById('searchStatusBtn');
+  if (!panel) return;
+  if (!fab || !btn) {
+    // Fallback when legacy FAB is hidden but inline button exists
+    if (!inlineBtn) return;
+  }
   // Also close the other FAB if open
   if (libFilterOpen) closeLibFilterPanel();
   if (!panel.innerHTML.trim()) {
@@ -856,18 +861,19 @@ function openStatusFilterPanel() {
     }, { passive: false });
   }
   requestAnimationFrame(() => panel.classList.add('lib-filter-panel--open'));
-  btn.classList.add('lib-filter-btn--open');
-  btn.setAttribute('aria-expanded', 'true');
+  if (btn) { btn.classList.add('lib-filter-btn--open'); btn.setAttribute('aria-expanded', 'true'); }
+  if (inlineBtn) { inlineBtn.classList.add('lib-filter-btn--open'); inlineBtn.setAttribute('aria-expanded', 'true'); }
   statusFilterOpen = true;
 }
 
 function closeStatusFilterPanel() {
   const panel = document.getElementById('statusFilterPanel');
   const btn = document.getElementById('statusFilterBtn');
-  if (!panel || !btn) return;
+  const inlineBtn = document.getElementById('searchStatusBtn');
+  if (!panel) return;
   panel.classList.remove('lib-filter-panel--open');
-  btn.classList.remove('lib-filter-btn--open');
-  btn.setAttribute('aria-expanded', 'false');
+  if (btn) { btn.classList.remove('lib-filter-btn--open'); btn.setAttribute('aria-expanded', 'false'); }
+  if (inlineBtn) { inlineBtn.classList.remove('lib-filter-btn--open'); inlineBtn.setAttribute('aria-expanded', 'false'); }
   statusFilterOpen = false;
   document.body.classList.remove('lib-status-open');
   unlockFilterBodyScroll();
@@ -883,36 +889,54 @@ function ensureStatusFilterFab() {
   const fab = document.getElementById('statusFilterFab');
   const panel = document.getElementById('statusFilterPanel');
   const btn = document.getElementById('statusFilterBtn');
-  if (!fab || !panel || !btn) return null;
+  const inlineBtn = document.getElementById('searchStatusBtn');
+  if (!panel) return null;
+  // Legacy FAB is now hidden via CSS; inline button lives in search-wrap.
+  // Keep fab hidden but don't treat it as source of truth for visibility.
   if (paginationState.mode !== 'library') {
-    fab.hidden = true;
+    if (fab) fab.hidden = true;
     if (statusFilterOpen) closeStatusFilterPanel();
     return null;
   }
   const libraryView = document.getElementById('libraryView');
   if (libraryView && libraryView.hidden) {
-    fab.hidden = true;
+    if (fab) fab.hidden = true;
     if (statusFilterOpen) closeStatusFilterPanel();
     return null;
   }
-  fab.hidden = false;
+  if (fab) fab.hidden = true; // always hidden now, filters are inline
   if (!panel.innerHTML.trim()) {
     panel.innerHTML = buildStatusFilterPanelHTML();
     wireStatusFilterPanel(panel);
   }
   syncStatusFilterPanel();
-  if (!fab.dataset.wired) {
+  // Wire legacy FAB button (hidden, for backward compat)
+  if (fab && btn && !fab.dataset.wired) {
     fab.dataset.wired = '1';
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       toggleStatusFilterPanel();
     });
+  }
+  // Wire inline search status button (the new small filter in search box)
+  if (inlineBtn && !inlineBtn.dataset.wired) {
+    inlineBtn.dataset.wired = '1';
+    inlineBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleStatusFilterPanel();
+    });
+  }
+  // Global outside-click and Escape handlers (once)
+  if (!ensureStatusFilterFab._wiredDoc) {
+    ensureStatusFilterFab._wiredDoc = true;
     document.addEventListener('click', (e) => {
       if (!statusFilterOpen) return;
-      if (fab.contains(e.target)) return;
+      if (panel.contains(e.target)) return;
+      if (e.target.closest('#searchStatusBtn')) return;
+      if (fab && fab.contains(e.target)) return;
       if (e.target.closest('#tagFilterBar')) return;
-      // Don't close when clicking the other FAB
-      if (e.target.closest('#libFilterFab')) return;
+      // Don't close when clicking the other filter
+      if (e.target.closest('#libFilterPanel') || e.target.closest('#searchAdvancedBtn') || e.target.closest('#libFilterFab')) return;
       closeStatusFilterPanel();
     });
     document.addEventListener('keydown', (e) => {
@@ -922,7 +946,7 @@ function ensureStatusFilterFab() {
       }
     });
   }
-  return fab;
+  return fab || inlineBtn;
 }
 
 // Advanced FAB — bottom-right: Platform/Tags/Release (no status)
@@ -1030,8 +1054,6 @@ function buildLibFilterPanelHTML() {
 }
 
 function updateLibFilterBadge() {
-  const badge = document.getElementById('libFilterBadge');
-  if (!badge) return;
   const n = [
     paginationState.platformFilter,
     paginationState.ownedPlatformFilter,
@@ -1040,14 +1062,34 @@ function updateLibFilterBadge() {
     libraryFilters.yearFrom,
     libraryFilters.yearTo,
   ].filter(v => String(v || '').trim()).length;
-  badge.textContent = n > 9 ? '9+' : String(n);
-  badge.hidden = n === 0;
-  badge.setAttribute('aria-label', n ? `${n} filters active` : '');
+  const text = n > 9 ? '9+' : String(n);
+  const hidden = n === 0;
+  const label = n ? `${n} filters active` : '';
+  // Legacy FAB badge
+  const badge = document.getElementById('libFilterBadge');
+  if (badge) {
+    badge.textContent = text;
+    badge.hidden = hidden;
+    badge.setAttribute('aria-label', label);
+  }
+  // Inline search advanced badge
+  const badgeInline = document.getElementById('libFilterBadgeInline');
+  if (badgeInline) {
+    badgeInline.textContent = text;
+    badgeInline.hidden = hidden;
+    badgeInline.setAttribute('aria-label', label);
+  }
   const btn = document.getElementById('libFilterBtn');
   if (btn) {
-    const label = n ? `Filter library, ${n} active` : 'Filter library';
-    btn.setAttribute('aria-label', label);
-    btn.title = label;
+    const l = n ? `Filter library, ${n} active` : 'Filter library';
+    btn.setAttribute('aria-label', l);
+    btn.title = l;
+  }
+  const btnInline = document.getElementById('searchAdvancedBtn');
+  if (btnInline) {
+    const l = n ? `More filters, ${n} active` : 'More filters';
+    btnInline.setAttribute('aria-label', l);
+    btnInline.title = l;
   }
 }
 
@@ -1223,8 +1265,12 @@ function openLibFilterPanel() {
   const fab = document.getElementById('libFilterFab');
   const panel = document.getElementById('libFilterPanel');
   const btn = document.getElementById('libFilterBtn');
+  const inlineBtn = document.getElementById('searchAdvancedBtn');
   const backdrop = document.getElementById('libFilterBackdrop');
-  if (!fab || !panel || !btn) return;
+  if (!panel) return;
+  if (!fab || !btn) {
+    if (!inlineBtn) return;
+  }
   if (statusFilterOpen) closeStatusFilterPanel();
   if (!panel.innerHTML.trim()) {
     panel.innerHTML = buildLibFilterPanelHTML();
@@ -1286,16 +1332,17 @@ function openLibFilterPanel() {
     panel.classList.add('lib-filter-panel--open');
     if (backdrop) backdrop.classList.add('lib-filter-backdrop--open');
   });
-  btn.classList.add('lib-filter-btn--open');
-  btn.setAttribute('aria-expanded', 'true');
+  if (btn) { btn.classList.add('lib-filter-btn--open'); btn.setAttribute('aria-expanded', 'true'); }
+  if (inlineBtn) { inlineBtn.classList.add('lib-filter-btn--open'); inlineBtn.setAttribute('aria-expanded', 'true'); }
   libFilterOpen = true;
 }
 
 function closeLibFilterPanel() {
   const panel = document.getElementById('libFilterPanel');
   const btn = document.getElementById('libFilterBtn');
+  const inlineBtn = document.getElementById('searchAdvancedBtn');
   const backdrop = document.getElementById('libFilterBackdrop');
-  if (!panel || !btn) return;
+  if (!panel) return;
   // Dismiss any open datalist dropdowns (native) that would otherwise linger
   // when the user hits Apply without picking a suggestion (e.g. typing "ps"
   // and applying "ps" as free text).
@@ -1305,8 +1352,8 @@ function closeLibFilterPanel() {
   } catch {}
   panel.classList.remove('lib-filter-panel--open');
   if (backdrop) backdrop.classList.remove('lib-filter-backdrop--open');
-  btn.classList.remove('lib-filter-btn--open');
-  btn.setAttribute('aria-expanded', 'false');
+  if (btn) { btn.classList.remove('lib-filter-btn--open'); btn.setAttribute('aria-expanded', 'false'); }
+  if (inlineBtn) { inlineBtn.classList.remove('lib-filter-btn--open'); inlineBtn.setAttribute('aria-expanded', 'false'); }
   libFilterOpen = false;
   document.body.classList.remove('lib-advanced-open');
   unlockFilterBodyScroll();
@@ -1331,39 +1378,53 @@ function ensureLibFilterFab() {
   const fab = document.getElementById('libFilterFab');
   const panel = document.getElementById('libFilterPanel');
   const btn = document.getElementById('libFilterBtn');
-  if (!fab || !panel || !btn) return null;
+  const inlineBtn = document.getElementById('searchAdvancedBtn');
+  if (!panel) return null;
   if (paginationState.mode !== 'library') {
-    fab.hidden = true;
+    if (fab) fab.hidden = true;
     if (libFilterOpen) closeLibFilterPanel();
     return null;
   }
   const libraryView = document.getElementById('libraryView');
   if (libraryView && libraryView.hidden) {
-    fab.hidden = true;
+    if (fab) fab.hidden = true;
     if (libFilterOpen) closeLibFilterPanel();
     return null;
   }
-  fab.hidden = false;
+  if (fab) fab.hidden = true; // hidden now, filters are inline
   if (!panel.innerHTML.trim()) {
     panel.innerHTML = buildLibFilterPanelHTML();
     wireLibFilterPanel(panel);
   }
   syncLibFilterInputs();
   updateLibFilterBadge();
-  // Wire FAB button once
-  if (!fab.dataset.wired) {
+  // Wire legacy FAB button (hidden, for backward compat)
+  if (fab && btn && !fab.dataset.wired) {
     fab.dataset.wired = '1';
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       toggleLibFilterPanel();
     });
-    // Outside click closes
+  }
+  // Wire inline advanced filter button inside search box
+  if (inlineBtn && !inlineBtn.dataset.wired) {
+    inlineBtn.dataset.wired = '1';
+    inlineBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleLibFilterPanel();
+    });
+  }
+  // Global outside-click and Escape handlers (once)
+  if (!ensureLibFilterFab._wiredDoc) {
+    ensureLibFilterFab._wiredDoc = true;
     document.addEventListener('click', (e) => {
       if (!libFilterOpen) return;
-      if (fab.contains(e.target)) return;
+      if (panel.contains(e.target)) return;
+      if (e.target.closest('#searchAdvancedBtn')) return;
+      if (fab && fab.contains(e.target)) return;
       // Don't close when clicking the tag filter bar or modal
       if (e.target.closest('#tagFilterBar')) return;
-      if (e.target.closest('#statusFilterFab')) return;
+      if (e.target.closest('#statusFilterPanel') || e.target.closest('#searchStatusBtn') || e.target.closest('#statusFilterFab')) return;
       closeLibFilterPanel();
     });
     document.addEventListener('keydown', (e) => {
@@ -1373,7 +1434,7 @@ function ensureLibFilterFab() {
       }
     });
   }
-  return fab;
+  return fab || inlineBtn;
 }
 
 // Back-compat aliases — old calls route to the FABs
