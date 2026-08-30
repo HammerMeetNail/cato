@@ -1,5 +1,5 @@
 import { searchGames, getCoverThumbnailURL, autocompleteTags, autocompletePlatforms, autocompleteGlobalPlatforms, formatTagForQuery, library } from './api.js';
-import { escapeHTML, showToast, formatPlatformName, statusBadgeLabel, openLibraryItemModal, refreshTabCounts } from './library.js';
+import { escapeHTML, showToast, formatPlatformName, statusBadgeLabel, openLibraryItemModal, refreshTabCounts, refreshSearchResults } from './library.js';
 import { releaseLabel, releaseStatus } from './dates.js';
 
 const CONTEMPORARY_RANK = {
@@ -202,6 +202,7 @@ async function quickAdd(btn) {
     try {
       const item = await library.get(id);
       openLibraryItemModal(item);
+      refreshSearchResults().catch(() => {});
     } catch {
       // Fetching the new item failed — backlog add already succeeded, so
       // leave the badge/toast and let the user edit later from the grid.

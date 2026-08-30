@@ -385,7 +385,7 @@
       statsStrip.setAttribute('tabindex', '0');
       statsStrip.title = 'View detailed stats';
       const goStats = () => {
-        if (statsStrip.dataset.context === 'search') return;
+        if (statsStrip.dataset.context !== 'library') return;
         window.location.hash = '#stats';
       };
       statsStrip.addEventListener('click', goStats);

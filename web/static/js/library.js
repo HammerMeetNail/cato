@@ -161,6 +161,7 @@ const searchFilters = {
 };
 let searchFiltersQuery = '';
 let searchLoadVersion = 0;
+let libraryLoadVersion = 0;
 
 function resetSearchFilters(query) {
   if (searchFiltersQuery === query) return;
@@ -237,6 +238,7 @@ export async function loadSearchResults(query) {
   if (!grid) return;
 
   const loadVersion = ++searchLoadVersion;
+  libraryLoadVersion++;
 
   resetSearchFilters(query);
 
@@ -328,6 +330,14 @@ export async function loadSearchResults(query) {
     paginationState.loading = false;
     grid.innerHTML = `<div class="empty-state">Failed to load results: ${err.message}</div>`;
   }
+}
+
+// refreshSearchResults keeps a search view in sync after a library mutation
+// such as moving an item between Wishlist and Backlog. It is a no-op for the
+// normal library view.
+export function refreshSearchResults() {
+  if (paginationState.mode !== 'search' || !paginationState.searchQuery) return Promise.resolve();
+  return loadSearchResults(paginationState.searchQuery);
 }
 
 // filterParams maps searchFilters onto the API's query params.
@@ -1593,6 +1603,7 @@ export async function loadLibrary(status, tag, platform, ownedPlatform, extraOpt
   // Invalidate any search request that is still resolving so it cannot put
   // stale query totals back into the library view.
   searchLoadVersion++;
+  const loadVersion = ++libraryLoadVersion;
 
   // Handle legacy 4-arg calls where 4th arg is actually extraOpts object (platform+owned shift)
   if (ownedPlatform !== undefined && typeof ownedPlatform === 'object' && ownedPlatform !== null && !Array.isArray(ownedPlatform)) {
@@ -1647,6 +1658,7 @@ export async function loadLibrary(status, tag, platform, ownedPlatform, extraOpt
     releaseFrom: libraryFilters.releaseFrom,
     releaseTo: libraryFilters.releaseTo,
   };
+  const filteredView = hasActiveLibraryFilters();
 
   // Hide search results header and show FABs
   const searchHeader = document.getElementById('searchResultsHeader');
@@ -1659,6 +1671,8 @@ export async function loadLibrary(status, tag, platform, ownedPlatform, extraOpt
   ensureLibFilterFab();
   ensureStatusFilterFab();
 
+  const statsStrip = document.getElementById('statsStrip');
+  if (statsStrip) statsStrip.style.display = 'none';
   grid.innerHTML = '<div class="loading">Loading library...</div>';
 
   try {
@@ -1671,9 +1685,12 @@ export async function loadLibrary(status, tag, platform, ownedPlatform, extraOpt
       format: paginationState.formatFilter || null,
       sort: paginationState.sort || null,
     });
+    if (loadVersion !== libraryLoadVersion || paginationState.mode !== 'library') return;
+    if (filteredView) updateLibraryFilterTotal(total);
     renderPagedItems(grid, items, true, hasMore);
     refreshTabCounts();
   } catch (err) {
+    if (loadVersion !== libraryLoadVersion || paginationState.mode !== 'library') return;
     paginationState.loading = false;
     grid.innerHTML = `<div class="empty-state">Failed to load library: ${err.message}</div>`;
   }
@@ -1785,6 +1802,7 @@ async function loadMore() {
 
   paginationState.loading = true;
   const searchVersion = paginationState.mode === 'search' ? searchLoadVersion : null;
+  const libraryVersion = paginationState.mode === 'library' ? libraryLoadVersion : null;
 
   const grid = document.getElementById('gameGrid');
   if (!grid) return;
@@ -1816,10 +1834,12 @@ async function loadMore() {
           sort: paginationState.sort || null,
         }
       );
+      if (libraryVersion !== libraryLoadVersion || paginationState.mode !== 'library') return;
       renderPagedItems(grid, items, false, hasMore);
     }
   } catch (err) {
     if (searchVersion !== null && (searchVersion !== searchLoadVersion || paginationState.mode !== 'search')) return;
+    if (libraryVersion !== null && (libraryVersion !== libraryLoadVersion || paginationState.mode !== 'library')) return;
     paginationState.loading = false;
     // Scrolling appeared broken with no feedback; surface a visible retry.
     showLoadMoreRetry();
@@ -1878,7 +1898,45 @@ export async function refreshTabCounts() {
       chip.textContent = typeof n === 'number' ? `${base} (${n})` : base;
     });
   }
-  if (paginationState.mode !== 'search') updateStatsStrip(counts);
+  if (paginationState.mode !== 'search' && !hasActiveLibraryFilters()) updateStatsStrip(counts);
+}
+
+// hasActiveLibraryFilters identifies filters that change membership. Sorting
+// is intentionally excluded because it changes order, not the total count.
+function hasActiveLibraryFilters() {
+  const hasValue = value => String(value || '').trim() !== '';
+  return currentStatuses().length > 0 ||
+    hasValue(paginationState.tagFilter) ||
+    hasValue(paginationState.platformFilter) ||
+    hasValue(paginationState.ownedPlatformFilter) ||
+    hasValue(paginationState.formatFilter || libraryFilters.format) ||
+    hasValue(paginationState.yearFrom || libraryFilters.yearFrom) ||
+    hasValue(paginationState.yearTo || libraryFilters.yearTo) ||
+    hasValue(paginationState.releaseFrom || libraryFilters.releaseFrom) ||
+    hasValue(paginationState.releaseTo || libraryFilters.releaseTo);
+}
+
+// updateLibraryFilterTotal renders an exact count for a filtered library view.
+// Lifetime completion/playtime stats are intentionally omitted because they
+// would describe the unfiltered library and be misleading here.
+function updateLibraryFilterTotal(total) {
+  const el = document.getElementById('statsStrip');
+  if (!el) return;
+  el.dataset.context = 'filtered-library';
+  el.removeAttribute('role');
+  el.removeAttribute('tabindex');
+  el.removeAttribute('title');
+  if (total == null) {
+    el.style.display = 'none';
+    return;
+  }
+  const count = Number(total);
+  if (!Number.isFinite(count) || count < 0) {
+    el.style.display = 'none';
+    return;
+  }
+  el.textContent = `${count} ${count === 1 ? 'game' : 'games'} found`;
+  el.style.display = '';
 }
 
 // updateStatsStrip renders the one-line summary ("12 games · 4 finished ·
@@ -3089,7 +3147,9 @@ function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status
     // Flush any debounced edit before tearing down — closing must never
     // lose a change. (After removal, runSave no-ops via the removed flag.)
     if (unsavedChanges || saveTimer) await runSave();
-    const shouldRefresh = savedAtLeastOnce && paginationState.mode !== 'search';
+    const viewMode = paginationState.mode;
+    const viewSearchQuery = paginationState.searchQuery;
+    const shouldRefresh = savedAtLeastOnce;
     modal.remove();
     document.body.classList.remove('modal-open');
     document.removeEventListener('keydown', escHandler);
@@ -3100,9 +3160,14 @@ function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status
         history.replaceState(null, '', window.location.pathname + window.location.search + prevHash);
       }
     }
-    // Reflect auto-saved edits in the grid once, on the way out.
+    // Reflect auto-saved edits in the view once, on the way out. Search-mode
+    // refreshes are important when the active filter is Wishlist or Backlog.
     if (shouldRefresh) {
-      loadLibrary(currentStatuses(), paginationState.tagFilter, paginationState.platformFilter);
+      if (viewMode === 'search' && viewSearchQuery) {
+        loadSearchResults(viewSearchQuery);
+      } else if (viewMode === 'library') {
+        loadLibrary(currentStatuses(), paginationState.tagFilter, paginationState.platformFilter);
+      }
     }
   };
   modal.querySelector('.modal-close').addEventListener('click', close);
@@ -3116,6 +3181,8 @@ function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status
   const removeBtn = modal.querySelector('.modal-remove');
   if (removeBtn) {
     removeBtn.addEventListener('click', async () => {
+      const viewMode = paginationState.mode;
+      const viewSearchQuery = paginationState.searchQuery;
       // No confirm() — removal is undoable via the toast instead, which is
       // both faster and safer than a modal nag. Any pending auto-save is
       // dropped: the undo snapshot restores the ORIGINAL values, so a queued
@@ -3145,7 +3212,11 @@ function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status
         // double-reloading.
         savedAtLeastOnce = false;
         close();
-        await loadLibrary(currentStatuses(), paginationState.tagFilter, paginationState.platformFilter);
+        if (viewMode === 'search' && viewSearchQuery) {
+          await loadSearchResults(viewSearchQuery);
+        } else {
+          await loadLibrary(currentStatuses(), paginationState.tagFilter, paginationState.platformFilter);
+        }
         showToast(`Removed ${name}`, {
           action: {
             label: 'Undo',
@@ -3156,7 +3227,11 @@ function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status
               } catch (err) {
                 showToast(`Couldn't restore ${name}: ${err.message}`, { type: 'error' });
               }
-              await loadLibrary(currentStatuses(), paginationState.tagFilter, paginationState.platformFilter);
+              if (viewMode === 'search' && viewSearchQuery) {
+                await loadSearchResults(viewSearchQuery);
+              } else {
+                await loadLibrary(currentStatuses(), paginationState.tagFilter, paginationState.platformFilter);
+              }
             },
           },
         });
