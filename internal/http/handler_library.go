@@ -170,6 +170,24 @@ func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, use
 		}
 	}
 
+	// Format filter: "both" means either a physical or digital copy, while
+	// "none" means the format has not been set.
+	formatFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
+	if formatFilter == "" {
+		// Accept the storage-oriented name for API callers that use medium.
+		formatFilter = strings.ToLower(strings.TrimSpace(r.URL.Query().Get("medium")))
+	}
+	switch formatFilter {
+	case "digital", "physical":
+		where += " AND li.medium = ?"
+		whereArgs = append(whereArgs, formatFilter)
+	case "both":
+		where += " AND li.medium IN (?, ?)"
+		whereArgs = append(whereArgs, "physical", "digital")
+	case "none":
+		where += " AND (li.medium = '' OR li.medium IS NULL)"
+	}
+
 	// Release date range filters (on g.first_release_date, like search).
 	if yf := parseLibraryYearParam(r.URL.Query().Get("year_from"), false); yf != 0 {
 		where += " AND g.first_release_date >= ?"

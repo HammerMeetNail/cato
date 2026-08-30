@@ -268,13 +268,15 @@ export const library = {
   // list returns { items, total, hasMore }. total/hasMore come from the
   // X-Total-Count / X-Has-More response headers; hasMore is exact even when
   // the item count is a multiple of the page size.
-  // Extra filters via opts: { yearFrom, yearTo, releaseFrom, releaseTo, ownedPlatform, sort } (all optional).
+  // Extra filters via opts: { yearFrom, yearTo, releaseFrom, releaseTo, ownedPlatform, format, sort } (all optional).
   async list(status, limit = 60, offset = 0, tag = '', platform = '', opts = null) {
     let yearFrom = null, yearTo = null, releaseFrom = null, releaseTo = null;
     let ownedPlatform = '';
+    let format = '';
     let sort = '';
     if (opts && typeof opts === 'object') {
       ownedPlatform = opts.ownedPlatform ?? '';
+      format = opts.format ?? '';
       sort = opts.sort ?? '';
       yearFrom = opts.yearFrom ?? null;
       yearTo = opts.yearTo ?? null;
@@ -310,6 +312,7 @@ export const library = {
     }
     if (platform) params.append('platform', platform);
     if (ownedPlatform) params.append('owned_platform', ownedPlatform);
+    if (format) params.append('format', format);
     if (sort) params.append('sort', sort);
     if (yearFrom) params.append('year_from', yearFrom);
     if (yearTo) params.append('year_to', yearTo);

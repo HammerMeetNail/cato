@@ -70,6 +70,7 @@ let paginationState = {
   tagFilter: '',
   platformFilter: '',
   ownedPlatformFilter: '',
+  formatFilter: '',
   sort: '',
   offset: 0,
   loading: false,
@@ -113,6 +114,7 @@ const libraryFilters = {
   yearTo: '',
   releaseFrom: '',
   releaseTo: '',
+  format: '',
   sort: '',
 };
 
@@ -668,7 +670,7 @@ function wireSearchFilterBar(header, query) {
 
 // --- library filters — split into two FABs (Nabu-style) --------------------
 // Status: bottom-left, multi-select like Nabu's history filter (All = empty array)
-// Advanced: bottom-right, Platform/Tags/Release (badge shows active count)
+// Advanced: bottom-right, Platform/Tags/Format/Release (badge shows active count)
 
 const STATUS_CHIP_COLORS = {
   wishlist: '#2196f3',
@@ -1017,11 +1019,19 @@ function buildLibFilterPanelHTML() {
               </div>
               <div id="lfOwnedPlatformList" class="lib-filter-autocomplete" hidden></div>
             </label>
-            <div class="lib-filter-field" style="justify-content:center">
-              <p class="lib-filter-hint" style="margin:0">Completed + owned on ps5 = only ps5-owned completed (not just available on ps5).</p>
-            </div>
+            <label class="lib-filter-field">
+              <span class="lib-filter-label">Format</span>
+              <select id="lfFormat">
+                <option value="">Any format</option>
+                <option value="digital">Digital</option>
+                <option value="physical">Physical</option>
+                <option value="both">Both (physical or digital)</option>
+                <option value="none">None (not set)</option>
+              </select>
+            </label>
           </div>
-        </div>
+          <p class="lib-filter-hint">Completed + owned on ps5 = only ps5-owned completed (not just available on ps5).</p>
+         </div>
         <div class="lib-filter-card">
           <h4 class="lib-filter-section-title">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
@@ -1051,6 +1061,7 @@ function updateLibFilterBadge() {
     paginationState.platformFilter,
     paginationState.ownedPlatformFilter,
     paginationState.tagFilter,
+    paginationState.formatFilter || libraryFilters.format,
     paginationState.sort || libraryFilters.sort,
     libraryFilters.yearFrom,
     libraryFilters.yearTo,
@@ -1092,6 +1103,7 @@ function syncLibFilterInputs() {
   const platEl = panel.querySelector('#lfPlatform');
   const ownedEl = panel.querySelector('#lfOwnedPlatform');
   const tagsEl = panel.querySelector('#lfTags');
+  const formatEl = panel.querySelector('#lfFormat');
   const sortEl = panel.querySelector('#lfSort');
   const yfEl = panel.querySelector('#lfYearFrom');
   const ytEl = panel.querySelector('#lfYearTo');
@@ -1100,6 +1112,7 @@ function syncLibFilterInputs() {
   if (platEl) platEl.value = paginationState.platformFilter || '';
   if (ownedEl) ownedEl.value = paginationState.ownedPlatformFilter || '';
   if (tagsEl) tagsEl.value = paginationState.tagFilter || '';
+  if (formatEl) formatEl.value = paginationState.formatFilter || libraryFilters.format || '';
   if (sortEl) sortEl.value = paginationState.sort || libraryFilters.sort || '';
   if (yfEl) yfEl.value = libraryFilters.yearFrom || paginationState.yearFrom || '';
   if (ytEl) ytEl.value = libraryFilters.yearTo || paginationState.yearTo || '';
@@ -1127,6 +1140,7 @@ function wireLibFilterPanel(panel) {
   const platEl = panel.querySelector('#lfPlatform');
   const ownedEl = panel.querySelector('#lfOwnedPlatform');
   const tagsEl = panel.querySelector('#lfTags');
+  const formatEl = panel.querySelector('#lfFormat');
   const sortEl = panel.querySelector('#lfSort');
   const yfEl = panel.querySelector('#lfYearFrom');
   const ytEl = panel.querySelector('#lfYearTo');
@@ -1271,7 +1285,7 @@ function wireLibFilterPanel(panel) {
     // the dropdown would otherwise linger over the dimmed backdrop or next
     // paint. Blur everything in the panel to force the browser to close it.
     try { if (document.activeElement && panel.contains(document.activeElement)) document.activeElement.blur(); } catch {}
-    [platEl, ownedEl, tagsEl, yfEl, ytEl, rfEl, rtEl, sortEl].forEach(el => { try { el && el.blur(); } catch {} });
+    [platEl, ownedEl, tagsEl, formatEl, yfEl, ytEl, rfEl, rtEl, sortEl].forEach(el => { try { el && el.blur(); } catch {} });
   };
 
   const apply = () => {
@@ -1282,6 +1296,7 @@ function wireLibFilterPanel(panel) {
     const newTag = tagsEl.value.trim().slice(0, 200);
     const newPlat = platEl.value.trim().slice(0, 64);
     const newOwned = ownedEl ? ownedEl.value.trim().slice(0, 64) : '';
+    const newFormat = formatEl ? formatEl.value : '';
     const newSort = sortEl ? sortEl.value : '';
     dismissAutocomplete();
     libraryFilters.yearFrom = clampYear(yfEl ? yfEl.value : '');
@@ -1292,6 +1307,8 @@ function wireLibFilterPanel(panel) {
     libraryFilters.releaseTo = '';
     paginationState.yearFrom = libraryFilters.yearFrom;
     paginationState.yearTo = libraryFilters.yearTo;
+    libraryFilters.format = newFormat;
+    paginationState.formatFilter = newFormat;
     paginationState.sort = newSort;
     paginationState.releaseFrom = '';
     paginationState.releaseTo = '';
@@ -1303,11 +1320,12 @@ function wireLibFilterPanel(panel) {
     dismissAutocomplete();
     platEl.value = ''; tagsEl.value = '';
     if (ownedEl) ownedEl.value = '';
+    if (formatEl) formatEl.value = '';
     if (sortEl) sortEl.value = '';
     if (yfEl) yfEl.value = ''; if (ytEl) ytEl.value = '';
     if (rfEl) rfEl.value = ''; if (rtEl) rtEl.value = '';
-    libraryFilters.yearFrom = ''; libraryFilters.yearTo = ''; libraryFilters.releaseFrom = ''; libraryFilters.releaseTo = ''; libraryFilters.sort = '';
-    paginationState.yearFrom = ''; paginationState.yearTo = ''; paginationState.releaseFrom = ''; paginationState.releaseTo = ''; paginationState.sort = '';
+    libraryFilters.yearFrom = ''; libraryFilters.yearTo = ''; libraryFilters.releaseFrom = ''; libraryFilters.releaseTo = ''; libraryFilters.format = ''; libraryFilters.sort = '';
+    paginationState.yearFrom = ''; paginationState.yearTo = ''; paginationState.releaseFrom = ''; paginationState.releaseTo = ''; paginationState.formatFilter = ''; paginationState.sort = '';
     // Clear Library (status) chips as well — Clear should reset everything
     try { setStatuses([]); } catch {}
     try { if (typeof syncStatusFilterPanel === 'function') syncStatusFilterPanel(); } catch {}
@@ -1329,7 +1347,7 @@ function wireLibFilterPanel(panel) {
     // the user's sort/platform/tags/year selection.
     try { apply(); } catch { closeLibFilterPanel(); }
   });
-  [platEl, ownedEl, tagsEl, sortEl, yfEl, ytEl, rfEl, rtEl].filter(Boolean).forEach(el => {
+  [platEl, ownedEl, tagsEl, formatEl, sortEl, yfEl, ytEl, rfEl, rtEl].filter(Boolean).forEach(el => {
     el.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); apply(); } });
   });
   // Sorting is staged like the other fields — don't auto-apply on change.
@@ -1549,15 +1567,18 @@ export async function loadLibrary(status, tag, platform, ownedPlatform, extraOpt
   if (ownedPlatform === undefined) ownedPlatform = paginationState.ownedPlatformFilter;
   // Normalize status input to array (supports single string, comma string, or array for multi-select)
   const normStatuses = normalizeStatuses(status);
-  // Merge extraOpts (release/sort filters) into libraryFilters if provided,
+  // Merge extraOpts (release/format/sort filters) into libraryFilters if provided,
   // otherwise keep current libraryFilters (persisted across pagination).
   if (extraOpts && typeof extraOpts === 'object') {
     if ('yearFrom' in extraOpts) libraryFilters.yearFrom = extraOpts.yearFrom || '';
     if ('yearTo' in extraOpts) libraryFilters.yearTo = extraOpts.yearTo || '';
     if ('releaseFrom' in extraOpts) libraryFilters.releaseFrom = extraOpts.releaseFrom || '';
     if ('releaseTo' in extraOpts) libraryFilters.releaseTo = extraOpts.releaseTo || '';
+    if ('format' in extraOpts) libraryFilters.format = extraOpts.format || '';
     if ('sort' in extraOpts) libraryFilters.sort = extraOpts.sort || '';
   }
+  // If format not provided via extraOpts but paginationState has it, keep it
+  const effectiveFormat = (extraOpts && 'format' in extraOpts) ? libraryFilters.format : (paginationState.formatFilter || libraryFilters.format || '');
   // If sort not provided via extraOpts but paginationState has it, keep it
   const effectiveSort = (extraOpts && 'sort' in extraOpts) ? libraryFilters.sort : (paginationState.sort || libraryFilters.sort || '');
 
@@ -1568,6 +1589,7 @@ export async function loadLibrary(status, tag, platform, ownedPlatform, extraOpt
     tagFilter: tag || '',
     platformFilter: platform || '',
     ownedPlatformFilter: ownedPlatform || '',
+    formatFilter: effectiveFormat || '',
     sort: effectiveSort || '',
     offset: 0,
     // Held true across the fetch below so a scroll event landing in this
@@ -1604,6 +1626,7 @@ export async function loadLibrary(status, tag, platform, ownedPlatform, extraOpt
       releaseFrom: libraryFilters.releaseFrom || null,
       releaseTo: libraryFilters.releaseTo || null,
       ownedPlatform: ownedPlatform || null,
+      format: paginationState.formatFilter || null,
       sort: paginationState.sort || null,
     });
     renderPagedItems(grid, items, true, hasMore);
@@ -1681,6 +1704,7 @@ export function renderLibraryItems(items, status = '') {
     tagFilter: '',
     platformFilter: '',
     ownedPlatformFilter: '',
+    formatFilter: libraryFilters.format,
     offset: 0,
     loading: false,
     hasMore: true,
@@ -1743,6 +1767,7 @@ async function loadMore() {
           releaseFrom: paginationState.releaseFrom || libraryFilters.releaseFrom || null,
           releaseTo: paginationState.releaseTo || libraryFilters.releaseTo || null,
           ownedPlatform: paginationState.ownedPlatformFilter || null,
+          format: paginationState.formatFilter || libraryFilters.format || null,
           sort: paginationState.sort || null,
         }
       );
@@ -2034,7 +2059,7 @@ export function filterByOwnedPlatform(platform) {
 }
 
 // updateTagFilterBar shows or hides the "filtered by" bar, covering tag,
-// platform, owned, status, sort and year filters. Status is multi-select — each selected status
+// platform, owned, format, status, sort and year filters. Status is multi-select — each selected status
 // gets its own chip with × to remove that one.
 function updateTagFilterBar() {
   const existing = document.getElementById('tagFilterBar');
@@ -2043,13 +2068,15 @@ function updateTagFilterBar() {
   const tag = paginationState.tagFilter;
   const platform = paginationState.platformFilter;
   const owned = paginationState.ownedPlatformFilter;
+  const format = paginationState.formatFilter || libraryFilters.format || '';
   const statuses = currentStatuses();
   const sort = paginationState.sort || libraryFilters.sort || '';
   const yearFrom = libraryFilters.yearFrom || paginationState.yearFrom || '';
   const yearTo = libraryFilters.yearTo || paginationState.yearTo || '';
   const hasSort = !!String(sort || '').trim();
+  const hasFormat = !!String(format || '').trim();
   const hasYear = !!String(yearFrom || '').trim() || !!String(yearTo || '').trim();
-  if (!tag && !platform && !owned && statuses.length === 0 && !hasSort && !hasYear) return;
+  if (!tag && !platform && !owned && !hasFormat && statuses.length === 0 && !hasSort && !hasYear) return;
 
   const { tags: tagList, op } = parseTagQuery(tag || '');
   let display = '';
@@ -2072,6 +2099,16 @@ function updateTagFilterBar() {
   if (owned) {
     if (display) display += ' ';
     display += `<span class="tag-filter-chip tag-filter-platform" data-owned-platform="${escapeHTML(owned)}">owned:${escapeHTML(owned)}<button type="button" class="tag-filter-chip-x" aria-label="Remove owned platform filter">×</button></span>`;
+  }
+  if (hasFormat) {
+    const formatLabels = {
+      digital: 'Digital',
+      physical: 'Physical',
+      both: 'Both formats',
+      none: 'No format',
+    };
+    if (display) display += ' ';
+    display += `<span class="tag-filter-chip" data-format="${escapeHTML(format)}">Format: ${escapeHTML(formatLabels[format] || format)}<button type="button" class="tag-filter-chip-x" aria-label="Remove format filter">×</button></span>`;
   }
   if (hasSort) {
     const sortLabels = {
@@ -2110,8 +2147,8 @@ function updateTagFilterBar() {
   `;
   bar.querySelector('.tag-filter-clear').addEventListener('click', () => {
     // Clear everything including status/sort/year: go to "All"
-    libraryFilters.yearFrom = ''; libraryFilters.yearTo = ''; libraryFilters.releaseFrom = ''; libraryFilters.releaseTo = ''; libraryFilters.sort = '';
-    paginationState.yearFrom = ''; paginationState.yearTo = ''; paginationState.releaseFrom = ''; paginationState.releaseTo = ''; paginationState.sort = '';
+    libraryFilters.yearFrom = ''; libraryFilters.yearTo = ''; libraryFilters.releaseFrom = ''; libraryFilters.releaseTo = ''; libraryFilters.format = ''; libraryFilters.sort = '';
+    paginationState.yearFrom = ''; paginationState.yearTo = ''; paginationState.releaseFrom = ''; paginationState.releaseTo = ''; paginationState.formatFilter = ''; paginationState.sort = '';
     setStatuses([]);
     history.replaceState(null, '', window.location.pathname + window.location.search);
     loadLibrary([], '', '', '', {sort: '', yearFrom: '', yearTo: '', releaseFrom: '', releaseTo: ''});
@@ -2135,6 +2172,11 @@ function updateTagFilterBar() {
       }
       if (chip.dataset.ownedPlatform !== undefined) {
         loadLibrary(currentStatuses(), paginationState.tagFilter, paginationState.platformFilter, '');
+        return;
+      }
+      if (chip.dataset.format !== undefined) {
+        libraryFilters.format = ''; paginationState.formatFilter = '';
+        loadLibrary(currentStatuses(), paginationState.tagFilter, paginationState.platformFilter, paginationState.ownedPlatformFilter, {format: ''});
         return;
       }
       if (chip.dataset.sort !== undefined) {

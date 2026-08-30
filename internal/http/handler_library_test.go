@@ -274,6 +274,51 @@ func TestLibraryListRatingSorts(t *testing.T) {
 	}
 }
 
+func TestLibraryListFormatFilter(t *testing.T) {
+	database := setupLibraryTestDB(t)
+	defer database.Close()
+	sessionID := createLibrarySession(t, database, "user-1")
+	mux := newTestLibraryMux(database)
+
+	database.Exec(`INSERT INTO games (id, name, slug, normalized_name) VALUES (3, 'Game Three', 'game-three', 'game three')`)
+	database.Exec(`INSERT INTO library_items (user_id, game_id, status, medium) VALUES ('user-1', 1, 'backlog', 'digital')`)
+	database.Exec(`INSERT INTO library_items (user_id, game_id, status, medium) VALUES ('user-1', 2, 'backlog', 'physical')`)
+	database.Exec(`INSERT INTO library_items (user_id, game_id, status) VALUES ('user-1', 3, 'backlog')`)
+
+	for _, tc := range []struct {
+		format string
+		want   []int64
+	}{
+		{format: "digital", want: []int64{1}},
+		{format: "physical", want: []int64{2}},
+		{format: "both", want: []int64{2, 1}},
+		{format: "none", want: []int64{3}},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/api/library?format="+tc.format+"&sort=name", nil)
+		req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("format %q: expected 200, got %d: %s", tc.format, rec.Code, rec.Body.String())
+		}
+
+		var items []struct {
+			GameID int64 `json:"game_id"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&items); err != nil {
+			t.Fatalf("format %q: decode response: %v", tc.format, err)
+		}
+		if len(items) != len(tc.want) {
+			t.Fatalf("format %q: expected %d items, got %d", tc.format, len(tc.want), len(items))
+		}
+		for i, item := range items {
+			if item.GameID != tc.want[i] {
+				t.Errorf("format %q: position %d: expected game %d, got %d", tc.format, i, tc.want[i], item.GameID)
+			}
+		}
+	}
+}
+
 func TestLibraryInvalidStatus(t *testing.T) {
 	database := setupLibraryTestDB(t)
 	defer database.Close()
