@@ -353,6 +353,27 @@ func TestLibraryListPlatformSort(t *testing.T) {
 			t.Errorf("position %d: expected game %d, got %d", i, want[i], item.GameID)
 		}
 	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/library?sort=platform_desc", nil)
+	req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("descending sort: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	items = nil
+	if err := json.NewDecoder(rec.Body).Decode(&items); err != nil {
+		t.Fatalf("descending sort: decode response: %v", err)
+	}
+	want = []int64{2, 1, 3}
+	if len(items) != len(want) {
+		t.Fatalf("descending sort: expected %d items, got %d", len(want), len(items))
+	}
+	for i, item := range items {
+		if item.GameID != want[i] {
+			t.Errorf("descending sort: position %d: expected game %d, got %d", i, want[i], item.GameID)
+		}
+	}
 }
 
 func TestLibraryInvalidStatus(t *testing.T) {
