@@ -440,10 +440,10 @@ func TestSearchGamesPagedTotalSortFilters(t *testing.T) {
 		t.Errorf("release_old should put Zelda 1986 first; got %v", results)
 	}
 
-	// rating order.
-	results, _, _ = store.SearchGamesPaged(ctx, q, opts("rating"))
+	// critic_rating order.
+	results, _, _ = store.SearchGamesPaged(ctx, q, opts("critic_rating"))
 	if len(results) < 2 || results[0].ID != 2 {
-		t.Errorf("rating sort should put Ocarina (99) first; got %v", results)
+		t.Errorf("critic_rating sort should put Ocarina (99) first; got %v", results)
 	}
 
 	// popularity order.

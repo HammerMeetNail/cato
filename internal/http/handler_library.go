@@ -189,9 +189,10 @@ func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, use
 	}
 
 	// Sorting: library-specific sorts, default is updated (li.updated_at DESC).
+	// rating = my rating (li.rating), critic_rating = aggregated critic score.
 	sort := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("sort")))
 	switch sort {
-	case "name", "release_new", "release_old", "rating", "added", "updated":
+	case "name", "release_new", "release_old", "rating", "my_rating", "critic_rating", "critic", "aggregated_rating", "added", "updated":
 	default:
 		sort = "updated"
 	}
@@ -203,8 +204,10 @@ func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, use
 		orderBy = "CASE WHEN g.first_release_date = 0 THEN 1 ELSE 0 END, g.first_release_date DESC, li.updated_at DESC"
 	case "release_old":
 		orderBy = "CASE WHEN g.first_release_date = 0 THEN 1 ELSE 0 END, g.first_release_date ASC, li.updated_at DESC"
-	case "rating":
+	case "rating", "my_rating":
 		orderBy = "li.rating DESC, li.updated_at DESC"
+	case "critic_rating", "critic", "aggregated_rating":
+		orderBy = "g.aggregated_rating DESC, g.aggregated_rating_count DESC, li.updated_at DESC"
 	case "added":
 		orderBy = "li.created_at DESC, li.updated_at DESC"
 	case "updated":

@@ -370,15 +370,15 @@ function buildSearchFilterBarHTML() {
                 <option value="">Relevance</option>
                 <option value="release_new">Newest first</option>
                 <option value="release_old">Oldest first</option>
-                <option value="rating">Highest rated</option>
+                <option value="critic_rating">Critic rating: Highest first</option>
                 <option value="popularity">Most popular</option>
                 <option value="name">Name A–Z</option>
               </select>
             </label>
             <label class="sf-field">
-              <span class="sf-label">Min rating</span>
+              <span class="sf-label">Min critic rating</span>
               <select id="sfMinRating">
-                <option value="">Any rating</option>
+                <option value="">Any critic rating</option>
                 <option value="60">60+ Good</option>
                 <option value="75">75+ Great</option>
                 <option value="85">85+ Excellent</option>
@@ -970,7 +970,8 @@ function buildLibFilterPanelHTML() {
                 <option value="name">Name A–Z</option>
                 <option value="release_new">Release: Newest first</option>
                 <option value="release_old">Release: Oldest first</option>
-                <option value="rating">Rating: Highest first</option>
+                <option value="my_rating">My rating: Highest first</option>
+                <option value="critic_rating">Critic rating: Highest first</option>
               </select>
             </label>
           </div>
@@ -2076,7 +2077,11 @@ function updateTagFilterBar() {
       'name': 'Name A–Z',
       'release_new': 'Newest first',
       'release_old': 'Oldest first',
-      'rating': 'Highest rated',
+      'rating': 'My rating: Highest first',
+      'my_rating': 'My rating: Highest first',
+      'critic_rating': 'Critic rating: Highest first',
+      'critic': 'Critic rating: Highest first',
+      'aggregated_rating': 'Critic rating: Highest first',
     };
     const label = sortLabels[sort] || sort;
     if (display) display += ' ';

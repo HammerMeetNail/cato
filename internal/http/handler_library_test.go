@@ -225,6 +225,53 @@ func TestLibraryList(t *testing.T) {
 	}
 }
 
+func TestLibraryListRatingSorts(t *testing.T) {
+	database := setupLibraryTestDB(t)
+	defer database.Close()
+	sessionID := createLibrarySession(t, database, "user-1")
+	mux := newTestLibraryMux(database)
+
+	// Personal and critic rankings intentionally disagree so each sort has a
+	// distinct result to verify.
+	database.Exec(`UPDATE games SET aggregated_rating = 70, aggregated_rating_count = 10 WHERE id = 1`)
+	database.Exec(`UPDATE games SET aggregated_rating = 95, aggregated_rating_count = 20 WHERE id = 2`)
+	database.Exec(`INSERT INTO library_items (user_id, game_id, status, rating, playtime_minutes, tags_json, notes)
+		VALUES ('user-1', 1, 'backlog', 90, 0, '[]', '')`)
+	database.Exec(`INSERT INTO library_items (user_id, game_id, status, rating, playtime_minutes, tags_json, notes)
+		VALUES ('user-1', 2, 'backlog', 40, 0, '[]', '')`)
+
+	for _, tc := range []struct {
+		sort string
+		want []int64
+	}{
+		{sort: "my_rating", want: []int64{1, 2}},
+		{sort: "critic_rating", want: []int64{2, 1}},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/api/library?sort="+tc.sort, nil)
+		req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("sort %q: expected 200, got %d: %s", tc.sort, rec.Code, rec.Body.String())
+		}
+
+		var items []struct {
+			GameID int64 `json:"game_id"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&items); err != nil {
+			t.Fatalf("sort %q: decode response: %v", tc.sort, err)
+		}
+		if len(items) != len(tc.want) {
+			t.Fatalf("sort %q: expected %d items, got %d", tc.sort, len(tc.want), len(items))
+		}
+		for i, item := range items {
+			if item.GameID != tc.want[i] {
+				t.Errorf("sort %q: position %d: expected game %d, got %d", tc.sort, i, tc.want[i], item.GameID)
+			}
+		}
+	}
+}
+
 func TestLibraryInvalidStatus(t *testing.T) {
 	database := setupLibraryTestDB(t)
 	defer database.Close()
