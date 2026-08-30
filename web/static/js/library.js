@@ -944,8 +944,8 @@ function buildLibFilterPanelHTML() {
           <h3 class="lib-filter-title">Filters</h3>
           <p class="lib-filter-subtitle">Refine your library</p>
         </div>
-        <button type="button" class="lib-filter-close" id="libFilterClose" aria-label="Apply and close">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        <button type="button" class="lib-filter-close lib-filter-apply-close" id="libFilterClose" aria-label="Apply filters">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>
         </button>
       </div>
       <div class="lib-filter-body">
@@ -1293,15 +1293,6 @@ function wireLibFilterPanel(panel) {
     paginationState.releaseTo = '';
     closeLibFilterPanel();
     loadLibrary(paginationState.statuses, newTag, newPlat, newOwned);
-    // Small popup so it's obvious the filters took effect (panel stays open
-    // until Apply/Close/backdrop — sorting no longer auto-closes).
-    const activeCount = [
-      newPlat, newOwned, newTag, newSort,
-      libraryFilters.yearFrom, libraryFilters.yearTo,
-      ...currentStatuses(),
-    ].filter(v => String(v || '').trim()).length;
-    const msg = activeCount ? `Filters applied · ${activeCount} active` : 'Filters applied';
-    try { showToast(msg); } catch {}
   };
 
   const clear = () => {
@@ -1320,7 +1311,6 @@ function wireLibFilterPanel(panel) {
     history.replaceState(null, '', window.location.pathname + window.location.search);
     closeLibFilterPanel();
     loadLibrary([], '', '', '', {sort: '', yearFrom: '', yearTo: '', releaseFrom: '', releaseTo: ''});
-    try { showToast('Filters cleared'); } catch {}
   };
 
   // Expose apply for backdrop/X that live outside this closure (openLibFilterPanel)

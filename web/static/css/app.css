@@ -1572,6 +1572,16 @@ body.modal-open .app-shell {
   color: var(--text);
   border-color: var(--surface2);
 }
+.lib-filter-apply-close {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.lib-filter-apply-close:hover {
+  background: color-mix(in srgb, var(--accent) 85%, #000);
+  border-color: color-mix(in srgb, var(--accent) 85%, #000);
+  color: #fff;
+}
 .lib-filter-body {
   flex: 1;
   overflow-y: auto;
