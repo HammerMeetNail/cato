@@ -441,10 +441,25 @@ a { color: var(--accent); text-decoration: none; }
   line-height: 1;
 }
 
-.search-clear { right: 40px; }
-.voice-btn { right: 6px; }
-.search-filter-btn { background: var(--surface2); color: var(--text-dim); }
-#searchAdvancedBtn { right: 76px; }
+.search-clear { right: 84px; }
+.voice-btn { right: 50px; }
+.search-filter-btn { background: var(--surface); color: var(--text-dim); border-left: 1px solid var(--surface2); border-radius: 0 var(--radius) var(--radius) 0; }
+#searchAdvancedBtn {
+  right: 0;
+  width: 44px;
+  height: calc(100% - 2px);
+  top: 1px;
+  transform: none;
+  border: 1px solid var(--surface2);
+  border-left: 1px solid var(--surface2);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: var(--surface);
+}
+#searchAdvancedBtn:hover { background: var(--surface2); color: var(--text); }
+#searchAdvancedBtn[aria-expanded="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+.search-wrap input { border-right: none; border-radius: var(--radius) 0 0 var(--radius); }
+.search-wrap:focus-within input { border-color: var(--accent); }
+.search-wrap:focus-within #searchAdvancedBtn { border-color: var(--accent); }
 .search-filter-btn:hover { background: var(--surface2); color: var(--text); }
 .search-filter-btn[aria-expanded="true"] { background: var(--accent); color: #fff; }
 .search-filter-btn .lib-filter-badge {
