@@ -1313,8 +1313,13 @@ function wireLibFilterPanel(panel) {
     if (rfEl) rfEl.value = ''; if (rtEl) rtEl.value = '';
     libraryFilters.yearFrom = ''; libraryFilters.yearTo = ''; libraryFilters.releaseFrom = ''; libraryFilters.releaseTo = ''; libraryFilters.sort = '';
     paginationState.yearFrom = ''; paginationState.yearTo = ''; paginationState.releaseFrom = ''; paginationState.releaseTo = ''; paginationState.sort = '';
+    // Clear Library (status) chips as well — Clear should reset everything
+    try { setStatuses([]); } catch {}
+    try { if (typeof syncStatusFilterPanel === 'function') syncStatusFilterPanel(); } catch {}
+    try { const chipsEl = panel.querySelector('#lfLibraryChips'); if (chipsEl && typeof panel._syncLibraryChips === 'function') panel._syncLibraryChips(); } catch {}
+    history.replaceState(null, '', window.location.pathname + window.location.search);
     closeLibFilterPanel();
-    loadLibrary(paginationState.statuses, '', '', '');
+    loadLibrary([], '', '', '', {sort: '', yearFrom: '', yearTo: '', releaseFrom: '', releaseTo: ''});
     try { showToast('Filters cleared'); } catch {}
   };
 
