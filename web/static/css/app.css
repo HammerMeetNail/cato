@@ -1864,6 +1864,7 @@ body.modal-open .app-shell {
   /* Modern advanced filters — bottom sheet on mobile */
   .lib-filter-panel:has(.lib-filter-modern) {
     position: fixed;
+    top: auto;
     bottom: 0;
     left: 0;
     right: 0;
