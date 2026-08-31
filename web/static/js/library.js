@@ -2115,14 +2115,28 @@ function attachScrollListener() {
   if (scrollListenerAttached) return;
   scrollListenerAttached = true;
 
-  window.addEventListener('scroll', () => {
-    // Load more when user scrolls within 600px of the bottom
+  const onScroll = () => {
+    // .app-shell is the scroll container on mobile (body is flex column with
+    // fixed height); window scrolling is the fallback for narrow desktop where
+    // the doc itself scrolls. Check both so infinite scroll works everywhere.
+    const appShell = document.querySelector('.app-shell');
+    if (appShell && appShell.scrollHeight > appShell.clientHeight) {
+      const pos = appShell.scrollTop + appShell.clientHeight;
+      if (pos >= appShell.scrollHeight - 600) {
+        loadMore();
+        return;
+      }
+    }
     const scrollPos = window.scrollY + window.innerHeight;
     const scrollThreshold = document.documentElement.scrollHeight - 600;
     if (scrollPos >= scrollThreshold) {
       loadMore();
     }
-  });
+  };
+
+  const appShell = document.querySelector('.app-shell');
+  if (appShell) appShell.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('scroll', onScroll, { passive: true });
 
   // Delegated click handler for tag chips on cards. Delegation survives the
   // cloneNode rebinding in attachCardEvents.

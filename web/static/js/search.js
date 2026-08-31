@@ -256,8 +256,21 @@ export function initSearch(inputEl, resultsEl, onSelect, onSubmit, onTagLookup) 
   let suppressOutsideClickTimer = null;
   const isOutsideSearch = (target) =>
     !searchRegion.contains(target) && !resultsEl.contains(target);
+  // Navigation chrome (bottom tabs, topbar) should never be blocked by the
+  // search outside handler — tapping them while search is focused should
+  // dismiss the dropdown and still navigate.
+  const isNavChrome = (target) =>
+    !!(target.closest && (target.closest('#bottom-tabs') || target.closest('.topbar')));
   const blockOutsidePointer = (e) => {
     if (!isOutsideSearch(e.target) || document.activeElement !== inputEl) return;
+    if (isNavChrome(e.target)) {
+      // Dismiss search but let the navigation click proceed.
+      suppressOutsideClick = true;
+      clearTimeout(suppressOutsideClickTimer);
+      suppressOutsideClickTimer = setTimeout(() => { suppressOutsideClick = false; }, 500);
+      dismissSearchFocus();
+      return;
+    }
     // Handle the gesture before a touch/mouse can blur the input and then
     // deliver the same tap to a game card underneath the search UI.
     e.preventDefault();
@@ -308,6 +321,12 @@ export function initSearch(inputEl, resultsEl, onSelect, onSubmit, onTagLookup) 
     if (!isOutsideSearch(e.target)) {
       suppressOutsideClick = false;
       clearTimeout(suppressOutsideClickTimer);
+      return;
+    }
+    if (isNavChrome(e.target)) {
+      suppressOutsideClick = false;
+      clearTimeout(suppressOutsideClickTimer);
+      dismissSearchFocus();
       return;
     }
     if (suppressOutsideClick) {

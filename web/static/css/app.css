@@ -688,7 +688,7 @@ a { color: var(--accent); text-decoration: none; }
 @media (max-width: 600px) {
   .search-wrap { top: 47px; }
   .search-results {
-    max-height: calc(100dvh - 118px);
+    max-height: calc(100dvh - 118px - 66px - var(--safe-bottom));
     box-shadow: 0 14px 34px rgba(0, 0, 0, 0.35);
   }
   .search-clear, .voice-btn { width: 36px; height: 36px; }
@@ -2359,6 +2359,10 @@ body.modal-open .app-shell {
   text-transform: uppercase;
   white-space: nowrap;
   line-height: 1.5;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
 }
 
 /* Login page */
