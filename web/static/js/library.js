@@ -108,6 +108,25 @@ function setStatuses(arr) {
   return norm;
 }
 
+function getSearchStatuses() {
+  if (paginationState.mode !== 'search') return [];
+  if (searchFilters.inLibrary !== 'owned' || !searchFilters.libraryStatus) return [];
+  const s = String(searchFilters.libraryStatus).toLowerCase();
+  return VALID_STATUSES.includes(s) ? [s] : [];
+}
+
+function setSearchStatuses(arr) {
+  const norm = normalizeStatuses(arr);
+  if (norm.length === 0) {
+    searchFilters.inLibrary = '';
+    searchFilters.libraryStatus = '';
+  } else {
+    searchFilters.inLibrary = 'owned';
+    searchFilters.libraryStatus = norm[0];
+  }
+  return norm;
+}
+
 // Library release-date filters (persist across reloads in this session).
 const libraryFilters = {
   yearFrom: '',
@@ -787,7 +806,7 @@ function buildStatusFilterPanelHTML() {
 function syncStatusFilterPanel() {
   const panel = document.getElementById('statusFilterPanel');
   if (!panel) return;
-  const active = currentStatuses();
+  const active = paginationState.mode === 'search' ? getSearchStatuses() : currentStatuses();
   const hasFilter = active.length > 0;
   panel.querySelectorAll('.lib-filter-chip[data-status]').forEach(chip => {
     const s = chip.dataset.status || '';
@@ -827,6 +846,39 @@ function wireStatusFilterPanel(panel) {
   panel.querySelectorAll('.lib-filter-chip[data-status]').forEach(chip => {
     chip.addEventListener('click', () => {
       const status = chip.dataset.status || '';
+      // In search mode, status filter appends to the existing search instead of
+      // switching to library view. It controls searchFilters.inLibrary/libraryStatus
+      // (single-select, matching the search filter bar's Collection/Status).
+      if (paginationState.mode === 'search') {
+        const cur = getSearchStatuses();
+        let next;
+        if (status === '') {
+          next = [];
+        } else {
+          if (cur.includes(status)) {
+            next = cur.filter(s => s !== status);
+          } else {
+            // Single-select for search: replace, not multi-append
+            next = [status];
+          }
+        }
+        setSearchStatuses(next);
+        syncStatusFilterPanel();
+        // Keep search filter bar's Collection/Status selects in sync (they are rebuilt on next load, but also update live if visible)
+        try {
+          const header = document.getElementById('searchResultsHeader');
+          if (header) {
+            const inLibEl = header.querySelector('#sfInLibrary');
+            const statusEl = header.querySelector('#sfLibraryStatus');
+            const wrap = header.querySelector('#sfLibraryStatusWrap');
+            if (inLibEl) inLibEl.value = searchFilters.inLibrary;
+            if (statusEl) statusEl.value = searchFilters.libraryStatus;
+            if (wrap) wrap.style.display = searchFilters.inLibrary === 'owned' ? '' : 'none';
+          }
+        } catch {}
+        loadSearchResults(paginationState.searchQuery);
+        return;
+      }
       const cur = currentStatuses();
       let next;
       if (status === '') {

@@ -129,8 +129,41 @@ func TestTagChipEllipsis(t *testing.T) {
 // service worker cache version so clients don't serve stale JS/CSS.
 func TestServiceWorkerCacheBumped(t *testing.T) {
 	content := readStaticFile(t, "web/static/service-worker.js")
-	if !strings.Contains(content, `CACHE_NAME = "cato-static-v16"`) {
-		t.Fatalf("service-worker.js must have CACHE_NAME v16 after mobile fixes; got: %s", snippet(content, "CACHE_NAME", 60))
+	if !strings.Contains(content, `CACHE_NAME = "cato-static-v17"`) {
+		t.Fatalf("service-worker.js must have CACHE_NAME v17 after mobile fixes; got: %s", snippet(content, "CACHE_NAME", 60))
+	}
+}
+
+// TestStatusFilterAppendsToSearch ensures that when a search is active,
+// changing the library status via the status FAB appends to the existing
+// search instead of discarding it and switching to library view.
+func TestStatusFilterAppendsToSearch(t *testing.T) {
+	content := readStaticFile(t, "web/static/js/library.js")
+	if !strings.Contains(content, "getSearchStatuses") {
+		t.Fatalf("library.js missing getSearchStatuses helper for search-aware status filtering")
+	}
+	if !strings.Contains(content, "setSearchStatuses") {
+		t.Fatalf("library.js missing setSearchStatuses helper for search-aware status filtering")
+	}
+	// The wire handler must branch on search mode and call loadSearchResults
+	if !strings.Contains(content, "if (paginationState.mode === 'search')") {
+		t.Fatalf("library.js wireStatusFilterPanel must branch on search mode")
+	}
+	if !strings.Contains(content, "loadSearchResults(paginationState.searchQuery)") {
+		t.Fatalf("library.js status handler in search mode must reload search via loadSearchResults, not loadLibrary")
+	}
+	if !strings.Contains(content, "searchFilters.inLibrary") || !strings.Contains(content, "searchFilters.libraryStatus") {
+		t.Fatalf("library.js search status handling must update searchFilters.inLibrary/libraryStatus")
+	}
+}
+
+// TestStatusFilterReflectsSearch ensures the status FAB reflects an
+// existing search that is already filtered by library status.
+func TestStatusFilterReflectsSearch(t *testing.T) {
+	content := readStaticFile(t, "web/static/js/library.js")
+	// syncStatusFilterPanel must read from searchFilters when in search mode
+	if !strings.Contains(content, "paginationState.mode === 'search' ? getSearchStatuses() : currentStatuses()") {
+		t.Fatalf("library.js syncStatusFilterPanel must use getSearchStatuses() when in search mode")
 	}
 }
 
