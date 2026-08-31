@@ -1468,6 +1468,25 @@ a { color: var(--accent); text-decoration: none; }
 }
 .lib-filter-backdrop[hidden] { display: none !important; }
 
+/* Search backdrop — captures outside taps when dropdown is open so a tap
+   on a game card dismisses the search instead of opening the game. Like the
+   library filter backdrop, it sits above the grid but below the dropdown and
+   chrome (topbar/bottom-tabs stay interactive). */
+.search-backdrop {
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  z-index: 14;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease;
+}
+.search-backdrop--open {
+  opacity: 1;
+  pointer-events: auto;
+}
+.search-backdrop[hidden] { display: none !important; }
+
 /* The status popup keeps its existing appearance, but this invisible layer
    still makes the first outside tap land on the filter instead of the page. */
 .status-filter-backdrop {

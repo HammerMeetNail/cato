@@ -129,8 +129,35 @@ func TestTagChipEllipsis(t *testing.T) {
 // service worker cache version so clients don't serve stale JS/CSS.
 func TestServiceWorkerCacheBumped(t *testing.T) {
 	content := readStaticFile(t, "web/static/service-worker.js")
-	if !strings.Contains(content, `CACHE_NAME = "cato-static-v18"`) {
-		t.Fatalf("service-worker.js must have CACHE_NAME v18 after mobile fixes; got: %s", snippet(content, "CACHE_NAME", 60))
+	if !strings.Contains(content, `CACHE_NAME = "cato-static-v19"`) {
+		t.Fatalf("service-worker.js must have CACHE_NAME v19 after mobile fixes; got: %s", snippet(content, "CACHE_NAME", 60))
+	}
+}
+
+// TestSearchBackdrop ensures the search dropdown has a backdrop that
+// captures outside taps without interacting with background game cards,
+// like the library filter backdrop does.
+func TestSearchBackdrop(t *testing.T) {
+	htmlContent := readStaticFile(t, "web/static/index.html")
+	if !strings.Contains(htmlContent, `id="searchBackdrop"`) {
+		t.Fatalf("index.html missing searchBackdrop element for capturing outside taps")
+	}
+	cssContent := readStaticFile(t, "web/static/css/app.css")
+	if !strings.Contains(cssContent, ".search-backdrop") {
+		t.Fatalf("app.css missing .search-backdrop styles")
+	}
+	if !strings.Contains(cssContent, "z-index: 14") {
+		t.Fatalf("app.css search-backdrop must have z-index 14 to sit below dropdown/chrome but above grid")
+	}
+	jsContent := readStaticFile(t, "web/static/js/search.js")
+	if !strings.Contains(jsContent, "getSearchBackdrop") {
+		t.Fatalf("search.js missing getSearchBackdrop helper")
+	}
+	if !strings.Contains(jsContent, "search-backdrop--open") {
+		t.Fatalf("search.js must toggle search-backdrop--open class")
+	}
+	if !strings.Contains(jsContent, "searchBackdrop") {
+		t.Fatalf("search.js must handle searchBackdrop element")
 	}
 }
 

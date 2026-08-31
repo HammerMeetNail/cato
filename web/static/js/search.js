@@ -95,15 +95,35 @@ function clearRecentSearches() {
 
 // --- dropdown open/close + ARIA --------------------------------------------
 
+function getSearchBackdrop() {
+  return document.getElementById('searchBackdrop');
+}
+
 function openDropdown(inputEl, resultsEl) {
   resultsEl.classList.add('active');
   inputEl.setAttribute('aria-expanded', 'true');
+  const backdrop = getSearchBackdrop();
+  if (backdrop) {
+    backdrop.hidden = false;
+    // Use rAF so the transition from opacity 0 to 1 is animated
+    requestAnimationFrame(() => backdrop.classList.add('search-backdrop--open'));
+  }
 }
 
 function closeDropdown(inputEl, resultsEl) {
   resultsEl.classList.remove('active');
   inputEl.setAttribute('aria-expanded', 'false');
   inputEl.removeAttribute('aria-activedescendant');
+  const backdrop = getSearchBackdrop();
+  if (backdrop) {
+    backdrop.classList.remove('search-backdrop--open');
+    // Delay hidden for transition (180ms matches CSS)
+    setTimeout(() => {
+      if (!backdrop.classList.contains('search-backdrop--open')) {
+        backdrop.hidden = true;
+      }
+    }, 180);
+  }
 }
 
 // --- highlight --------------------------------------------------------------
@@ -285,6 +305,19 @@ export function initSearch(inputEl, resultsEl, onSelect, onSubmit, onTagLookup) 
   document.addEventListener('pointerdown', blockOutsidePointer, { capture: true, passive: false });
   document.addEventListener('touchstart', blockOutsidePointer, { capture: true, passive: false });
   document.addEventListener('mousedown', blockOutsidePointer, { capture: true, passive: false });
+
+  // Search backdrop — like the library filter backdrop, it sits above the
+  // game grid but below the dropdown/chrome and captures outside taps so a
+  // tap on a game card dismisses the search instead of opening the game.
+  const searchBackdrop = getSearchBackdrop();
+  if (searchBackdrop && !searchBackdrop.dataset.wired) {
+    searchBackdrop.dataset.wired = '1';
+    searchBackdrop.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dismissSearchFocus();
+    });
+  }
 
   // ARIA combobox wiring. The static HTML carries these too; setting them
   // here keeps the contract in one place.
