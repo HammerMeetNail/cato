@@ -1,5 +1,5 @@
 import { searchGames, getCoverThumbnailURL, autocompleteTags, autocompletePlatforms, autocompleteGlobalPlatforms, formatTagForQuery, library } from './api.js';
-import { escapeHTML, showToast, formatPlatformName, statusBadgeLabel, openLibraryItemModal, refreshTabCounts, refreshSearchResults } from './library.js';
+import { escapeHTML, showToast, formatPlatformName, statusBadgeLabel, refreshTabCounts, refreshSearchResults, refreshLibraryView } from './library.js';
 import { releaseLabel, releaseStatus } from './dates.js';
 
 const CONTEMPORARY_RANK = {
@@ -57,6 +57,22 @@ const resultCache = new Map();
 // mapped to their status, so badges say WHICH list the game is in ("Completed ✓").
 // Positives only — a missing ID just means "unknown", never "confirmed absent".
 const ownedStatuses = new Map();
+
+const QUICK_ADD_STATUSES = ['wishlist', 'backlog', 'playing', 'completed', 'abandoned'];
+const QUICK_ADD_LABELS = {
+  wishlist: 'Wishlist',
+  backlog: 'Backlog',
+  playing: 'Playing',
+  completed: 'Completed',
+  abandoned: 'Abandoned',
+};
+const QUICK_ADD_ICONS = {
+  wishlist: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>',
+  backlog: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><polyline points="12 7 12 12 15 13"></polyline></svg>',
+  playing: '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" stroke="none" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>',
+  completed: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>',
+  abandoned: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>',
+};
 
 // --- recent searches (localStorage) ---------------------------------------
 
@@ -161,17 +177,32 @@ function ownedBadgeHTML(status) {
   return `<span class="owned-badge owned-badge-sm${cls}">${escapeHTML(statusBadgeLabel(status))}</span>`;
 }
 
-// swapToAddBadge replaces a "+ Add" button with the ownership badge, labeled
-// by the game's status from the ownedStatuses cache.
-function swapToAddBadge(btn) {
-  if (btn && btn.isConnected) {
-    btn.insertAdjacentHTML('beforebegin', ownedBadgeHTML(ownedStatuses.get(Number(btn.dataset.addId))));
-    btn.remove();
-  }
+function quickAddButtonsHTML(id, name) {
+  const safeName = escapeHTML(name);
+  return `<div class="qa-actions" role="group" aria-label="Add ${safeName} to library">` +
+    QUICK_ADD_STATUSES.map(s =>
+      `<button type="button" class="qa-add qa-add--${s}" data-add-id="${id}" data-add-name="${safeName}" data-add-status="${s}" aria-label="Add ${safeName} to ${QUICK_ADD_LABELS[s]}" title="${QUICK_ADD_LABELS[s]}">${QUICK_ADD_ICONS[s]}</button>`
+    ).join('') +
+    `</div>`;
+}
+
+// swapToAddBadge replaces the quick-add controls (single button or group)
+// with the ownership badge, labeled by the game's status from the ownedStatuses cache.
+function swapToAddBadge(el) {
+  if (!el || !el.isConnected) return;
+  const container = el.closest ? (el.closest('.qa-actions') || el) : el;
+  if (!container.isConnected) return;
+  if (container.dataset.swapped) return;
+  const idAttr = container.dataset.addId || el.dataset.addId || (container.querySelector && container.querySelector('.qa-add')?.dataset.addId);
+  const id = Number(idAttr);
+  if (!Number.isFinite(id)) return;
+  container.dataset.swapped = '1';
+  container.insertAdjacentHTML('beforebegin', ownedBadgeHTML(ownedStatuses.get(id)));
+  container.remove();
 }
 
 // checkOwnership batch-confirms which dropdown rows are already in the
-// library, then patches their rows: "+ Add" flips to a status badge
+// library, then patches their rows: quick-add controls flip to a status badge
 // ("Completed ✓", "Wishlist ✓", …).
 async function checkOwnership(resultsEl, results) {
   const ids = results.map(g => Number(g.id)).filter(id => !ownedStatuses.has(id));
@@ -190,7 +221,12 @@ async function checkOwnership(resultsEl, results) {
 async function quickAdd(btn) {
   const id = Number(btn.dataset.addId);
   const name = btn.dataset.addName || 'game';
-  btn.disabled = true;
+  const rawStatus = btn.dataset.addStatus || 'backlog';
+  const targetStatus = QUICK_ADD_STATUSES.includes(rawStatus) ? rawStatus : 'backlog';
+  const label = QUICK_ADD_LABELS[targetStatus] || 'library';
+  const actions = btn.closest ? btn.closest('.qa-actions') : null;
+  const toDisable = actions ? actions.querySelectorAll('.qa-add') : [btn];
+  toDisable.forEach(b => b.disabled = true);
   try {
     // Guard against a destructive upsert: POST /library/{id} overwrites the
     // stored item, so confirm the game isn't owned before adding.
@@ -207,28 +243,15 @@ async function quickAdd(btn) {
       showToast(`${name} is already in your library`);
       return;
     }
-    await library.add(id, { status: 'backlog' });
-    ownedStatuses.set(id, 'backlog');
+    await library.add(id, { status: targetStatus });
+    ownedStatuses.set(id, targetStatus);
     swapToAddBadge(btn);
-    showToast(`Added ${name} to Backlog`);
+    showToast(`Added ${name} to ${label}`);
     refreshTabCounts().catch(() => {});
-    // Close the dropdown so the edit modal is not hidden behind it, then
-    // open the edit form so platform/format (bought condition) can be set
-    // immediately — backlog stays as the initial status.
-    if (activeInputEl) {
-      const resultsEl = document.getElementById('searchResults');
-      if (resultsEl) closeDropdown(activeInputEl, resultsEl);
-    }
-    try {
-      const item = await library.get(id);
-      openLibraryItemModal(item);
-      refreshSearchResults().catch(() => {});
-    } catch {
-      // Fetching the new item failed — backlog add already succeeded, so
-      // leave the badge/toast and let the user edit later from the grid.
-    }
+    refreshSearchResults().catch(() => {});
+    refreshLibraryView().catch(() => {});
   } catch (err) {
-    btn.disabled = false;
+    toDisable.forEach(b => b.disabled = false);
     showToast(`Couldn't add ${name}: ${err.message}`, { type: 'error' });
   }
 }
@@ -329,7 +352,7 @@ export function initSearch(inputEl, resultsEl, onSelect, onSubmit, onTagLookup) 
   resultsEl.addEventListener('mousedown', (e) => {
     // Keep the input focused while a dropdown control is being clicked. This
     // prevents the focused layout from reflowing before its click handler.
-    if (e.target.closest && e.target.closest('.search-result-item, .search-result-more, .tag-suggestion-chip, .qa-add')) {
+    if (e.target.closest && e.target.closest('.search-result-item, .search-result-more, .tag-suggestion-chip, .qa-add, .qa-actions')) {
       e.preventDefault();
     }
   });
@@ -664,7 +687,7 @@ function renderResults(results, resultsEl, onSelect, onSubmit) {
       const ownedStatus = ownedStatuses.get(id);
       const action = ownedStatus !== undefined
         ? ownedBadgeHTML(ownedStatus)
-        : `<button type="button" class="qa-add" data-add-id="${id}" data-add-name="${escapeHTML(g.name)}" aria-label="Add ${escapeHTML(g.name)} to backlog">+</button>`;
+        : quickAddButtonsHTML(id, g.name);
       // Up to three platform names, shortened ("PC (Microsoft Windows)" →
       // "PC"), so it's obvious what a result can be played on.
       const plats = (g.platforms || []).map(formatPlatformName).filter(Boolean).slice(0, 3).join(' · ');

@@ -365,6 +365,14 @@ export function refreshSearchResults() {
   return loadSearchResults(paginationState.searchQuery);
 }
 
+// refreshLibraryView reloads the current library view with its existing filters.
+// No-op when in search mode — used after quick-add from the search dropdown
+// so the new item appears without requiring a manual reload.
+export function refreshLibraryView() {
+  if (paginationState.mode !== 'library') return Promise.resolve();
+  return loadLibrary(undefined, undefined, undefined, undefined);
+}
+
 // filterParams maps searchFilters onto the API's query params.
 function filterParams() {
   const p = {};

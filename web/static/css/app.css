@@ -591,28 +591,59 @@ a { color: var(--accent); text-decoration: none; }
   white-space: nowrap;
 }
 
+.qa-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 148px;
+}
+
 .qa-add {
   flex: 0 0 auto;
   width: 26px;
   height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid var(--surface2);
   border-radius: 50%;
   background: var(--surface2);
-  color: var(--text);
+  color: var(--text-dim);
   font-size: 1rem;
   line-height: 1;
   cursor: pointer;
-  transition: background var(--transition), border-color var(--transition), transform var(--transition);
+  transition: background var(--transition), border-color var(--transition), color var(--transition), transform var(--transition);
 }
 
 .qa-add:hover {
-  background: var(--accent);
-  border-color: var(--accent);
   color: #fff;
   transform: scale(1.08);
 }
 
-.qa-add:disabled { opacity: 0.5; cursor: default; }
+.qa-add:disabled { opacity: 0.5; cursor: default; transform: none; }
+
+.qa-add--wishlist { color: #2196f3; }
+.qa-add--backlog { color: #ff9800; }
+.qa-add--playing { color: #4caf50; }
+.qa-add--completed { color: #9c27b0; }
+.qa-add--abandoned { color: #f44336; }
+
+.qa-add--wishlist:hover { background: #2196f3; border-color: #2196f3; }
+.qa-add--backlog:hover { background: #ff9800; border-color: #ff9800; }
+.qa-add--playing:hover { background: #4caf50; border-color: #4caf50; }
+.qa-add--completed:hover { background: #9c27b0; border-color: #9c27b0; }
+.qa-add--abandoned:hover { background: #f44336; border-color: #f44336; }
+
+.qa-add svg { pointer-events: none; display: block; }
+
+@media (max-width: 380px) {
+  .qa-actions { max-width: 118px; gap: 3px; }
+  .qa-add { width: 24px; height: 24px; }
+  .qa-add svg { width: 11px; height: 11px; }
+}
 
 /* Recent searches panel (shown when an empty focused input has history) */
 .recents-header {
