@@ -129,8 +129,8 @@ func TestTagChipEllipsis(t *testing.T) {
 // service worker cache version so clients don't serve stale JS/CSS.
 func TestServiceWorkerCacheBumped(t *testing.T) {
 	content := readStaticFile(t, "web/static/service-worker.js")
-	if !strings.Contains(content, `CACHE_NAME = "cato-static-v17"`) {
-		t.Fatalf("service-worker.js must have CACHE_NAME v17 after mobile fixes; got: %s", snippet(content, "CACHE_NAME", 60))
+	if !strings.Contains(content, `CACHE_NAME = "cato-static-v18"`) {
+		t.Fatalf("service-worker.js must have CACHE_NAME v18 after mobile fixes; got: %s", snippet(content, "CACHE_NAME", 60))
 	}
 }
 
@@ -164,6 +164,41 @@ func TestStatusFilterReflectsSearch(t *testing.T) {
 	// syncStatusFilterPanel must read from searchFilters when in search mode
 	if !strings.Contains(content, "paginationState.mode === 'search' ? getSearchStatuses() : currentStatuses()") {
 		t.Fatalf("library.js syncStatusFilterPanel must use getSearchStatuses() when in search mode")
+	}
+}
+
+// TestStatusFilterSupportsMultiple ensures the library filter icon
+// supports selecting multiple libraries (e.g. playing + backlog) when
+// filtering a search, not just a single status.
+func TestStatusFilterSupportsMultiple(t *testing.T) {
+	// Frontend must handle array of statuses
+	libContent := readStaticFile(t, "web/static/js/library.js")
+	if !strings.Contains(libContent, "libraryStatuses") {
+		t.Fatalf("library.js must handle libraryStatuses array for multi-library filtering")
+	}
+	if !strings.Contains(libContent, "searchFilters.libraryStatuses") {
+		t.Fatalf("library.js searchFilters must include libraryStatuses for multi")
+	}
+	// Wire handler must append, not replace (multi)
+	if !strings.Contains(libContent, "next = [...cur, status]") {
+		t.Fatalf("library.js status handler must support multi-append (next = [...cur, status]) for search mode")
+	}
+	// API must send multiple library_status params
+	apiContent := readStaticFile(t, "web/static/js/api.js")
+	if !strings.Contains(apiContent, "Array.isArray(libraryStatus)") {
+		t.Fatalf("api.js must handle libraryStatus as array for multi-library search")
+	}
+	// Backend must handle multiple statuses
+	storeContent := readStaticFile(t, "internal/games/store.go")
+	if !strings.Contains(storeContent, "libraryStatuses") {
+		t.Fatalf("store.go must have libraryStatuses field for multi-library search")
+	}
+	if !strings.Contains(storeContent, "libraryStatuses") || !strings.Contains(storeContent, "IN (") {
+		t.Fatalf("store.go must handle IN clause for multiple library statuses")
+	}
+	handlerContent := readStaticFile(t, "internal/http/handler_games.go")
+	if !strings.Contains(handlerContent, `r.URL.Query()["library_status"]`) && !strings.Contains(handlerContent, "library_status") {
+		t.Fatalf("handler_games.go must parse multiple library_status values")
 	}
 }
 

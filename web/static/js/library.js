@@ -110,6 +110,9 @@ function setStatuses(arr) {
 
 function getSearchStatuses() {
   if (paginationState.mode !== 'search') return [];
+  if (Array.isArray(searchFilters.libraryStatuses) && searchFilters.libraryStatuses.length > 0) {
+    return normalizeStatuses(searchFilters.libraryStatuses);
+  }
   if (searchFilters.inLibrary !== 'owned' || !searchFilters.libraryStatus) return [];
   const s = String(searchFilters.libraryStatus).toLowerCase();
   return VALID_STATUSES.includes(s) ? [s] : [];
@@ -117,6 +120,7 @@ function getSearchStatuses() {
 
 function setSearchStatuses(arr) {
   const norm = normalizeStatuses(arr);
+  searchFilters.libraryStatuses = norm;
   if (norm.length === 0) {
     searchFilters.inLibrary = '';
     searchFilters.libraryStatus = '';
@@ -176,7 +180,7 @@ const searchFilters = {
   sort: '', yearFrom: '', yearTo: '', minRating: '', includeEditions: false,
   platform: '', ownedPlatform: '', tags: '', tagOp: 'and',
   releaseFrom: '', releaseTo: '',
-  inLibrary: '', libraryStatus: '',
+  inLibrary: '', libraryStatus: '', libraryStatuses: [],
 };
 let searchFiltersQuery = '';
 let searchLoadVersion = 0;
@@ -198,6 +202,7 @@ function resetSearchFilters(query) {
   searchFilters.releaseTo = '';
   searchFilters.inLibrary = '';
   searchFilters.libraryStatus = '';
+  searchFilters.libraryStatuses = [];
 }
 
 // itemsById indexes the currently rendered library items by game_id so that a
@@ -379,7 +384,11 @@ function filterParams() {
   }
   if (searchFilters.inLibrary === 'owned') p.inLibrary = true;
   else if (searchFilters.inLibrary === 'not_owned') p.inLibrary = false;
-  if (searchFilters.libraryStatus) p.libraryStatus = searchFilters.libraryStatus;
+  if (Array.isArray(searchFilters.libraryStatuses) && searchFilters.libraryStatuses.length > 0) {
+    p.libraryStatus = searchFilters.libraryStatuses;
+  } else if (searchFilters.libraryStatus) {
+    p.libraryStatus = searchFilters.libraryStatus;
+  }
   if (searchFilters.includeEditions) p.includeEditions = true;
   return p;
 }
@@ -569,13 +578,26 @@ function wireSearchFilterBar(header, query) {
   if (ownedPlatformEl) ownedPlatformEl.value = searchFilters.ownedPlatform;
   if (tagsEl) tagsEl.value = searchFilters.tags;
   if (inLibrary) inLibrary.value = searchFilters.inLibrary;
-  if (libraryStatus) libraryStatus.value = searchFilters.libraryStatus;
+  if (libraryStatus) {
+    const statuses = Array.isArray(searchFilters.libraryStatuses) && searchFilters.libraryStatuses.length > 0
+      ? searchFilters.libraryStatuses[0] : searchFilters.libraryStatus;
+    libraryStatus.value = statuses || '';
+  }
   if (libraryStatusWrap) libraryStatusWrap.style.display = searchFilters.inLibrary === 'owned' ? '' : 'none';
   if (editions) editions.checked = !!searchFilters.includeEditions;
 
   const updateSearchBadge = () => {
     const badge = header.querySelector('#sfBadge');
     if (!badge) return;
+    // Count library statuses as number of selected statuses (multi) or 1 for single
+    const libStatusCount = (() => {
+      if (Array.isArray(searchFilters.libraryStatuses) && searchFilters.libraryStatuses.length > 0) {
+        return searchFilters.libraryStatuses.length;
+      }
+      const cur = libraryStatus ? libraryStatus.value.trim() : '';
+      if (cur) return 1;
+      return 0;
+    })();
     const cur = {
       sort: sortSel.value,
       yearFrom: yearFrom.value.trim(),
@@ -587,7 +609,7 @@ function wireSearchFilterBar(header, query) {
       ownedPlatform: ownedPlatformEl ? ownedPlatformEl.value.trim() : '',
       tags: tagsEl ? tagsEl.value.trim() : '',
       inLibrary: inLibrary ? inLibrary.value : '',
-      libraryStatus: libraryStatus ? libraryStatus.value : '',
+      libraryStatus: libStatusCount ? String(libStatusCount) : '',
       editions: editions && editions.checked ? '1' : '',
     };
     const n = Object.values(cur).filter(Boolean).length;
@@ -698,8 +720,14 @@ function wireSearchFilterBar(header, query) {
     searchFilters.ownedPlatform = ownedPlatformEl ? ownedPlatformEl.value.trim().slice(0, 64) : '';
     searchFilters.tags = tagsEl ? tagsEl.value.trim().slice(0, 200) : '';
     searchFilters.inLibrary = inLibrary ? inLibrary.value : '';
-    searchFilters.libraryStatus = libraryStatus ? libraryStatus.value : '';
-    if (searchFilters.inLibrary !== 'owned') searchFilters.libraryStatus = '';
+    const newStatus = libraryStatus ? libraryStatus.value : '';
+    if (searchFilters.inLibrary !== 'owned') {
+      searchFilters.libraryStatus = '';
+      searchFilters.libraryStatuses = [];
+    } else {
+      searchFilters.libraryStatus = newStatus;
+      searchFilters.libraryStatuses = newStatus ? [newStatus] : [];
+    }
     searchFilters.includeEditions = !!(editions && editions.checked);
     loadSearchResults(query);
   };
@@ -708,7 +736,7 @@ function wireSearchFilterBar(header, query) {
   if (inLibrary) inLibrary.addEventListener('change', () => {
     if (libraryStatusWrap) libraryStatusWrap.style.display = inLibrary.value === 'owned' ? '' : 'none';
     // Don't auto-apply on change to allow picking status, but if switching away from owned, apply immediately to clear status
-    if (inLibrary.value !== 'owned' && searchFilters.libraryStatus) apply();
+    if (inLibrary.value !== 'owned' && (searchFilters.libraryStatus || (Array.isArray(searchFilters.libraryStatuses) && searchFilters.libraryStatuses.length > 0))) apply();
   });
   // Enter on any input applies
   [yearFrom, yearTo, releaseFrom, releaseTo, platformEl, ownedPlatformEl, tagsEl].forEach(el => {
@@ -858,8 +886,7 @@ function wireStatusFilterPanel(panel) {
           if (cur.includes(status)) {
             next = cur.filter(s => s !== status);
           } else {
-            // Single-select for search: replace, not multi-append
-            next = [status];
+            next = [...cur, status];
           }
         }
         setSearchStatuses(next);

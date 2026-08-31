@@ -162,7 +162,15 @@ export async function searchGamesFull(query, {
   }
   if (inLibrary === true) params.append('in_library', '1');
   else if (inLibrary === false) params.append('in_library', '0');
-  if (libraryStatus) params.append('library_status', libraryStatus);
+  if (libraryStatus) {
+    if (Array.isArray(libraryStatus)) {
+      for (const s of libraryStatus) if (s) params.append('library_status', s);
+    } else if (String(libraryStatus).includes(',')) {
+      for (const part of String(libraryStatus).split(',')) if (part.trim()) params.append('library_status', part.trim());
+    } else {
+      params.append('library_status', libraryStatus);
+    }
+  }
   if (includeEditions) params.append('include_editions', '1');
   const { data, res } = await api.getFull(`/api/games/search?${params.toString()}`, { signal });
   return {

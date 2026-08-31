@@ -48,22 +48,23 @@ var ValidSorts = map[string]bool{
 
 // searchOptions controls one search execution.
 type searchOptions struct {
-	limit           int
-	offset          int
-	applyFloor      bool // hide weak tier-3 substring matches unless popular
-	sort            string
-	yearFrom        int64  // unix seconds, inclusive; 0 = unset
-	yearTo          int64  // unix seconds, inclusive; 0 = unset
-	minRating       int64  // aggregated_rating >= minRating with count > 0; 0 = unset
-	platform        string // availability filter: substring of platform name/abbrev
-	ownedPlatform   string // owned filter: substring of owned platform name/abbr/shortname (library only)
-	tags            []string
-	tagOp           string // "and" (default) or "or"
-	libraryUserID   string // when set, enable library-scoped filters below
-	inLibrary       *bool  // nil = no filter; true = only owned, false = not owned
-	libraryStatus   string // when set with libraryUserID, filter to that library status
-	withTotal       bool   // include a total via COUNT(*) OVER()
-	includeEditions bool   // when false, hide IGDB editions (version_parent != 0) unless query explicitly asks for one
+	limit            int
+	offset           int
+	applyFloor       bool // hide weak tier-3 substring matches unless popular
+	sort             string
+	yearFrom         int64 // unix seconds, inclusive; 0 = unset
+	yearTo           int64 // unix seconds, inclusive; 0 = unset
+	minRating        int64 // aggregated_rating >= minRating with count > 0; 0 = unset
+	platform         string
+	ownedPlatform    string // owned filter: substring of owned platform name/abbr/shortname (library only)
+	tags             []string
+	tagOp            string // "and" (default) or "or"
+	libraryUserID    string // when set, enable library-scoped filters below
+	inLibrary        *bool  // nil = no filter; true = only owned, false = not owned
+	libraryStatus    string   // when set with libraryUserID, filter to that library status (single)
+	libraryStatuses  []string // when set, filter to any of these statuses (multi, overrides libraryStatus)
+	withTotal        bool   // include a total via COUNT(*) OVER()
+	includeEditions  bool   // when false, hide IGDB editions (version_parent != 0) unless query explicitly asks for one
 }
 
 func (s *Store) SearchLocal(ctx context.Context, query string, limit int) ([]GameResult, error) {
@@ -257,7 +258,26 @@ func appendGameFilterWhere(b *strings.Builder, args *[]interface{}, o searchOpti
 			}
 			*args = append(*args, o.libraryUserID)
 		}
-		if o.libraryStatus != "" && ValidLibraryStatuses[o.libraryStatus] {
+		// Multi-status takes precedence over single status
+		if len(o.libraryStatuses) > 0 {
+			valid := make([]string, 0, len(o.libraryStatuses))
+			for _, s := range o.libraryStatuses {
+				if ValidLibraryStatuses[s] {
+					valid = append(valid, s)
+				}
+			}
+			if len(valid) > 0 {
+				placeholders := make([]string, len(valid))
+				for i := range placeholders {
+					placeholders[i] = "?"
+				}
+				conds = append(conds, `EXISTS (SELECT 1 FROM library_items li_s WHERE li_s.game_id = g.id AND li_s.user_id = ? AND li_s.status IN (`+strings.Join(placeholders, ", ")+`))`)
+				*args = append(*args, o.libraryUserID)
+				for _, s := range valid {
+					*args = append(*args, s)
+				}
+			}
+		} else if o.libraryStatus != "" && ValidLibraryStatuses[o.libraryStatus] {
 			conds = append(conds, `EXISTS (SELECT 1 FROM library_items li_s WHERE li_s.game_id = g.id AND li_s.user_id = ? AND li_s.status = ?)`)
 			*args = append(*args, o.libraryUserID, o.libraryStatus)
 		}

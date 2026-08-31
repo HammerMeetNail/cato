@@ -88,6 +88,7 @@ func (s *Service) SearchPagedFull(ctx context.Context, query string, limit, offs
 // tags, ownedPlatform and library filters are applied only when libraryUserID is non-empty;
 // callers should obtain it from the session when present. Personal filters are
 // honored on local results and remain stable while an async refresh completes.
+// libraryStatuses (multi) takes precedence over libraryStatus (single) when non-empty.
 func (s *Service) SearchPagedFullWithFilters(ctx context.Context, query string, limit, offset int, sort string, yearFrom, yearTo, minRating int64, platform string, tags []string, tagOp string, libraryUserID string, inLibrary *bool, libraryStatus string, includeEditions bool, ownedPlatform ...string) ([]GameResult, int64, error) {
 	query = NormalizeName(query)
 	if len(query) < 2 {
@@ -101,6 +102,19 @@ func (s *Service) SearchPagedFullWithFilters(ctx context.Context, query string, 
 	ownedPlat := ""
 	if len(ownedPlatform) > 0 {
 		ownedPlat = ownedPlatform[0]
+	}
+
+	// Support multi-status (comma-separated) for library filter
+	var libStatuses []string
+	if strings.Contains(libraryStatus, ",") {
+		for _, part := range strings.Split(libraryStatus, ",") {
+			if s := strings.ToLower(strings.TrimSpace(part)); s != "" && ValidLibraryStatuses[s] {
+				libStatuses = append(libStatuses, s)
+			}
+		}
+		if len(libStatuses) > 0 {
+			libraryStatus = ""
+		}
 	}
 
 	opts := func() searchOptions {
@@ -118,6 +132,7 @@ func (s *Service) SearchPagedFullWithFilters(ctx context.Context, query string, 
 			libraryUserID:   libraryUserID,
 			inLibrary:       inLibrary,
 			libraryStatus:   libraryStatus,
+			libraryStatuses: libStatuses,
 			includeEditions: effectiveInclude,
 		}
 	}

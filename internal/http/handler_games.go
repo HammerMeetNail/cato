@@ -243,20 +243,34 @@ func (h *GameHandler) handleSearchFull(w http.ResponseWriter, r *http.Request, q
 		tagOp = "and"
 	}
 
-	// Library membership filters.
+	// Library membership filters - support multiple statuses (e.g. ?library_status=playing&library_status=backlog or comma-separated)
 	inLibrary := parseInLibraryParam(r)
-	libraryStatus := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("library_status")))
-	if libraryStatus == "" {
-		libraryStatus = strings.ToLower(strings.TrimSpace(r.URL.Query().Get("libraryStatus")))
-	}
-	if libraryStatus != "" && !games.ValidLibraryStatuses[libraryStatus] {
-		libraryStatus = ""
-	}
-	// Also allow filtering by library status via plain "status" when it looks
-	// like a library status (keeps old clients working that sent status=...).
-	if libraryStatus == "" {
-		if s := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status"))); games.ValidLibraryStatuses[s] {
-			libraryStatus = s
+	libraryStatus := ""
+	{
+		var statuses []string
+		for _, key := range []string{"library_status", "libraryStatus", "status"} {
+			for _, raw := range r.URL.Query()[key] {
+				for _, part := range strings.Split(raw, ",") {
+					if s := strings.ToLower(strings.TrimSpace(part)); s != "" && games.ValidLibraryStatuses[s] {
+						statuses = append(statuses, s)
+					}
+				}
+			}
+		}
+		// Deduplicate
+		seen := make(map[string]bool)
+		uniq := statuses[:0]
+		for _, s := range statuses {
+			if !seen[s] {
+				seen[s] = true
+				uniq = append(uniq, s)
+			}
+		}
+		statuses = uniq
+		if len(statuses) == 1 {
+			libraryStatus = statuses[0]
+		} else if len(statuses) > 1 {
+			libraryStatus = strings.Join(statuses, ",")
 		}
 	}
 
