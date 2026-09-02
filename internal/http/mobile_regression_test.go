@@ -129,8 +129,8 @@ func TestTagChipEllipsis(t *testing.T) {
 // service worker cache version so clients don't serve stale JS/CSS.
 func TestServiceWorkerCacheBumped(t *testing.T) {
 	content := readStaticFile(t, "web/static/service-worker.js")
-	if !strings.Contains(content, `CACHE_NAME = "cato-static-v20"`) {
-		t.Fatalf("service-worker.js must have CACHE_NAME v20 after mobile fixes; got: %s", snippet(content, "CACHE_NAME", 60))
+	if !strings.Contains(content, `CACHE_NAME = "cato-static-v21"`) {
+		t.Fatalf("service-worker.js must have CACHE_NAME v21 after desktop filter fix; got: %s", snippet(content, "CACHE_NAME", 60))
 	}
 }
 

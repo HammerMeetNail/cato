@@ -290,6 +290,19 @@ export async function loadSearchResults(query) {
     fab.hidden = true;
     closeLibFilterPanel();
   }
+  // Hide the inline advanced filter button while searching — the search
+  // results header has its own filter bar (buildSearchFilterBarHTML). Leaving
+  // the library's advanced panel reachable in search mode caused the desktop
+  // bug where selecting "wishlist" discarded the query and showed the full
+  // library (loadLibrary) instead of filtered search results.
+  const inlineBtn = document.getElementById('searchAdvancedBtn');
+  if (inlineBtn) {
+    inlineBtn.hidden = true;
+    closeLibFilterPanel();
+  }
+  // Also ensure the FAB helper hides the legacy button/panel for any viewport
+  // (desktop and mobile share the same code path).
+  try { ensureLibFilterFab(); } catch {}
   const statusFab = document.getElementById('statusFilterFab');
   if (statusFab) {
     closeStatusFilterPanel();
@@ -1276,21 +1289,22 @@ function syncLibFilterInputs() {
   const ytEl = panel.querySelector('#lfYearTo');
   const rfEl = panel.querySelector('#lfReleaseFrom');
   const rtEl = panel.querySelector('#lfReleaseTo');
-  if (platEl) platEl.value = paginationState.platformFilter || '';
-  if (ownedEl) ownedEl.value = paginationState.ownedPlatformFilter || '';
-  if (tagsEl) tagsEl.value = paginationState.tagFilter || '';
-  if (formatEl) formatEl.value = paginationState.formatFilter || libraryFilters.format || '';
-  if (sortEl) sortEl.value = paginationState.sort || libraryFilters.sort || '';
-  if (yfEl) yfEl.value = libraryFilters.yearFrom || paginationState.yearFrom || '';
-  if (ytEl) ytEl.value = libraryFilters.yearTo || paginationState.yearTo || '';
-  if (rfEl) rfEl.value = libraryFilters.releaseFrom || paginationState.releaseFrom || '';
-  if (rtEl) rtEl.value = libraryFilters.releaseTo || paginationState.releaseTo || '';
+  const inSearch = paginationState.mode === 'search';
+  if (platEl) platEl.value = inSearch ? (searchFilters.platform || '') : (paginationState.platformFilter || '');
+  if (ownedEl) ownedEl.value = inSearch ? (searchFilters.ownedPlatform || '') : (paginationState.ownedPlatformFilter || '');
+  if (tagsEl) tagsEl.value = inSearch ? (searchFilters.tags || '') : (paginationState.tagFilter || '');
+  if (formatEl) formatEl.value = inSearch ? (libraryFilters.format || '') : (paginationState.formatFilter || libraryFilters.format || '');
+  if (sortEl) sortEl.value = inSearch ? (searchFilters.sort || '') : (paginationState.sort || libraryFilters.sort || '');
+  if (yfEl) yfEl.value = inSearch ? (searchFilters.yearFrom || '') : (libraryFilters.yearFrom || paginationState.yearFrom || '');
+  if (ytEl) ytEl.value = inSearch ? (searchFilters.yearTo || '') : (libraryFilters.yearTo || paginationState.yearTo || '');
+  if (rfEl) rfEl.value = inSearch ? (searchFilters.releaseFrom || '') : (libraryFilters.releaseFrom || paginationState.releaseFrom || '');
+  if (rtEl) rtEl.value = inSearch ? (searchFilters.releaseTo || '') : (libraryFilters.releaseTo || paginationState.releaseTo || '');
   // Sync library status chips inside advanced panel (mirrors bottom status FAB)
   const libChipsEl = panel.querySelector('#lfLibraryChips');
   if (libChipsEl && typeof panel._syncLibraryChips === 'function') {
     try { panel._syncLibraryChips(); } catch {}
   } else if (libChipsEl) {
-    const active = currentStatuses();
+    const active = paginationState.mode === 'search' ? getSearchStatuses() : currentStatuses();
     const hasFilter = active.length > 0;
     libChipsEl.querySelectorAll('.lib-filter-chip').forEach(chip => {
       const s = chip.dataset.status || '';
@@ -1407,7 +1421,10 @@ function wireLibFilterPanel(panel) {
     }).join('');
     libChipsEl.innerHTML = chips;
     const syncLibraryChips = () => {
-      const active = currentStatuses();
+      // In search mode the chips reflect searchFilters (getSearchStatuses),
+      // not library paginationState, so the panel stays consistent with the
+      // status FAB and the search header's Collection/Status selects.
+      const active = paginationState.mode === 'search' ? getSearchStatuses() : currentStatuses();
       const hasFilter = active.length > 0;
       libChipsEl.querySelectorAll('.lib-filter-chip').forEach(chip => {
         const s = chip.dataset.status || '';
@@ -1423,6 +1440,36 @@ function wireLibFilterPanel(panel) {
       const chip = e.target.closest('.lib-filter-chip');
       if (!chip) return;
       const status = chip.dataset.status || '';
+      // Search mode: manipulate searchFilters (like the FAB does) so the
+      // panel can be used to filter an active catalog search without losing
+      // the query. Library mode: manipulate paginationState as before.
+      if (paginationState.mode === 'search') {
+        const cur = getSearchStatuses();
+        let next;
+        if (status === '') next = [];
+        else {
+          if (cur.includes(status)) next = cur.filter(s => s !== status);
+          else next = [...cur, status];
+        }
+        setSearchStatuses(next);
+        syncLibraryChips();
+        try { if (typeof syncStatusFilterPanel === 'function') syncStatusFilterPanel(); } catch {}
+        // Keep search header selects in sync (they are rebuilt on next search
+        // load, but update live if visible so Apply doesn't overwrite).
+        try {
+          const header = document.getElementById('searchResultsHeader');
+          if (header) {
+            const inLibEl = header.querySelector('#sfInLibrary');
+            const statusEl = header.querySelector('#sfLibraryStatus');
+            const wrap = header.querySelector('#sfLibraryStatusWrap');
+            if (inLibEl) inLibEl.value = searchFilters.inLibrary;
+            if (statusEl) statusEl.value = searchFilters.libraryStatus;
+            if (wrap) wrap.style.display = searchFilters.inLibrary === 'owned' ? '' : 'none';
+          }
+        } catch {}
+        try { if (typeof updateLibFilterBadge === 'function') updateLibFilterBadge(); } catch {}
+        return;
+      }
       const cur = currentStatuses();
       let next;
       if (status === '') next = [];
@@ -1466,6 +1513,27 @@ function wireLibFilterPanel(panel) {
     const newFormat = formatEl ? formatEl.value : '';
     const newSort = sortEl ? sortEl.value : '';
     dismissAutocomplete();
+    // Search mode: the advanced panel's fields map onto searchFilters, not
+    // libraryFilters, so applying does not lose the query. Library mode
+    // keeps the original behavior.
+    if (paginationState.mode === 'search') {
+      searchFilters.platform = newPlat;
+      searchFilters.ownedPlatform = newOwned;
+      searchFilters.tags = newTag;
+      const parsed = parseTagQuery(newTag);
+      searchFilters.tagOp = parsed.op;
+      searchFilters.sort = newSort;
+      searchFilters.yearFrom = clampYear(yfEl ? yfEl.value : '');
+      searchFilters.yearTo = clampYear(ytEl ? ytEl.value : '');
+      searchFilters.releaseFrom = '';
+      searchFilters.releaseTo = '';
+      // format is library-only; keep it staged but don't send to search
+      libraryFilters.format = newFormat;
+      // statuses already staged in searchFilters via chip clicks; keep them
+      closeLibFilterPanel();
+      loadSearchResults(paginationState.searchQuery);
+      return;
+    }
     libraryFilters.yearFrom = clampYear(yfEl ? yfEl.value : '');
     libraryFilters.yearTo = clampYear(ytEl ? ytEl.value : '');
     libraryFilters.sort = newSort;
@@ -1491,6 +1559,33 @@ function wireLibFilterPanel(panel) {
     if (sortEl) sortEl.value = '';
     if (yfEl) yfEl.value = ''; if (ytEl) ytEl.value = '';
     if (rfEl) rfEl.value = ''; if (rtEl) rtEl.value = '';
+    if (paginationState.mode === 'search') {
+      // Clear search-specific filters but keep the query
+      searchFilters.platform = '';
+      searchFilters.ownedPlatform = '';
+      searchFilters.tags = '';
+      searchFilters.tagOp = 'and';
+      searchFilters.sort = '';
+      searchFilters.yearFrom = '';
+      searchFilters.yearTo = '';
+      searchFilters.releaseFrom = '';
+      searchFilters.releaseTo = '';
+      searchFilters.inLibrary = '';
+      searchFilters.libraryStatus = '';
+      searchFilters.libraryStatuses = [];
+      libraryFilters.format = '';
+      paginationState.formatFilter = '';
+      paginationState.sort = '';
+      paginationState.yearFrom = '';
+      paginationState.yearTo = '';
+      paginationState.releaseFrom = '';
+      paginationState.releaseTo = '';
+      try { if (typeof syncStatusFilterPanel === 'function') syncStatusFilterPanel(); } catch {}
+      try { const chipsEl = panel.querySelector('#lfLibraryChips'); if (chipsEl && typeof panel._syncLibraryChips === 'function') panel._syncLibraryChips(); } catch {}
+      closeLibFilterPanel();
+      loadSearchResults(paginationState.searchQuery);
+      return;
+    }
     libraryFilters.yearFrom = ''; libraryFilters.yearTo = ''; libraryFilters.releaseFrom = ''; libraryFilters.releaseTo = ''; libraryFilters.format = ''; libraryFilters.sort = '';
     paginationState.yearFrom = ''; paginationState.yearTo = ''; paginationState.releaseFrom = ''; paginationState.releaseTo = ''; paginationState.formatFilter = ''; paginationState.sort = '';
     // Clear Library (status) chips as well — Clear should reset everything
