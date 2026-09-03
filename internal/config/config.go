@@ -1,6 +1,9 @@
 package config
 
-import "os"
+import (
+	"os"
+	"strconv"
+)
 
 type Config struct {
 	ListenAddr      string
@@ -13,6 +16,11 @@ type Config struct {
 	IGDBClientSecret string
 	CookieSecure    bool
 	BaseURL         string
+	// AuthRateLimit overrides the per-IP login/signup/password request limits
+	// when > 0. Production leaves it unset (defaults: 10 login, 5 signup per
+	// minute); test harnesses raise it so parallel API clients aren't
+	// rate-limited as a single shared IP.
+	AuthRateLimit int
 }
 
 func Load() *Config {
@@ -27,7 +35,17 @@ func Load() *Config {
 		IGDBClientSecret: getEnv("IGDB_CLIENT_SECRET", os.Getenv("TWITCH_OAUTH_SECRET")),
 		CookieSecure:    os.Getenv("CATO_SECURE_COOKIES") == "true",
 		BaseURL:         getEnv("CATO_BASE_URL", ""),
+		AuthRateLimit:   intFromEnv("CATO_AUTH_RATE_LIMIT", 0),
 	}
+}
+
+func intFromEnv(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return fallback
 }
 
 func getEnv(key, fallback string) string {

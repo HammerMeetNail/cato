@@ -76,11 +76,20 @@ type GameResult struct {
 type IGDBRateLimiter struct {
 	lastRequest time.Time
 	mu          chan struct{}
+	interval    time.Duration
 }
 
 func NewIGDBRateLimiter() *IGDBRateLimiter {
+	return NewIGDBRateLimiterWithInterval(time.Second)
+}
+
+// NewIGDBRateLimiterWithInterval builds a limiter with a custom request
+// spacing. Production uses 1s (IGDB's ~4 req/s limit, with margin); tests
+// pass 0 to run unthrottled against a local server.
+func NewIGDBRateLimiterWithInterval(interval time.Duration) *IGDBRateLimiter {
 	return &IGDBRateLimiter{
-		mu: make(chan struct{}, 1),
+		mu:       make(chan struct{}, 1),
+		interval: interval,
 	}
 }
 
@@ -96,8 +105,8 @@ func (rl *IGDBRateLimiter) WaitContext(ctx context.Context) error {
 	}
 	defer func() { <-rl.mu }()
 
-	if elapsed := time.Since(rl.lastRequest); elapsed < time.Second {
-		timer := time.NewTimer(time.Second - elapsed)
+	if elapsed := time.Since(rl.lastRequest); elapsed < rl.interval {
+		timer := time.NewTimer(rl.interval - elapsed)
 		defer timer.Stop()
 		select {
 		case <-timer.C:

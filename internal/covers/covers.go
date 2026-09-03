@@ -112,13 +112,19 @@ func (w *Worker) nextJob() (int64, string, int, error) {
 
 	// Prefer a game that's already in someone's library.
 	// INNER JOIN is fast because library_items is small.
+	//
+	// Timestamps here mix SQLite's CURRENT_TIMESTAMP ("YYYY-MM-DD HH:MM:SS",
+	// always UTC) with Go-formatted RFC3339. Both sides must be UTC: SQLite's
+	// space separator sorts before RFC3339's 'T', so same-instant values
+	// compare correctly, but a local-time RFC3339 string is offset from UTC
+	// and shifts every comparison by the host's UTC offset. Use utcNow().
 	err := w.db.QueryRow(`
 		SELECT cj.game_id, cj.source_url, cj.attempts
 		FROM cover_jobs cj
 		INNER JOIN library_items li ON li.game_id = cj.game_id
 		WHERE cj.attempts < 5 AND cj.next_attempt_at <= ?
 		ORDER BY cj.created_at ASC LIMIT 1`,
-		time.Now().Format(time.RFC3339)).Scan(&gameID, &sourceURL, &attempts)
+		utcNow()).Scan(&gameID, &sourceURL, &attempts)
 
 	if err != nil {
 		// sql.ErrNoRows or other error; return 0 to signal idle.
@@ -127,8 +133,14 @@ func (w *Worker) nextJob() (int64, string, int, error) {
 
 	// Reserve the job for 30 minutes so the coordinator loop skips it.
 	w.db.Exec("UPDATE cover_jobs SET next_attempt_at = ? WHERE game_id = ?",
-		time.Now().Add(30*time.Minute).Format(time.RFC3339), gameID)
+		time.Now().UTC().Add(30*time.Minute).Format(time.RFC3339), gameID)
 	return gameID, sourceURL, attempts, nil
+}
+
+// utcNow returns the current UTC time as an RFC3339 string, comparable with
+// SQLite CURRENT_TIMESTAMP defaults (see nextJob).
+func utcNow() string {
+	return time.Now().UTC().Format(time.RFC3339)
 }
 
 // downloadAndSave fetches a cover image and writes it to disk, then updates
@@ -253,7 +265,7 @@ func backoffNext(now time.Time, attempt int) string {
 		return ""
 	}
 	d := time.Duration(1<<uint(attempt)) * time.Minute
-	return now.Add(d).Format(time.RFC3339)
+	return now.UTC().Add(d).Format(time.RFC3339)
 }
 
 // CoverPath returns the on-disk path for a game's locally cached cover.

@@ -27,12 +27,19 @@ type AuthHandler struct {
 }
 
 func NewAuthHandler(db *db.DB, cfg *config.Config) *AuthHandler {
+	// CATO_AUTH_RATE_LIMIT (cfg.AuthRateLimit) overrides the per-IP buckets
+	// when > 0 so test harnesses with many parallel clients sharing one IP
+	// aren't rate-limited. Production leaves it unset and gets the defaults.
+	loginLimit, signupLimit, passwordLimit := 10, 5, 10
+	if cfg != nil && cfg.AuthRateLimit > 0 {
+		loginLimit, signupLimit, passwordLimit = cfg.AuthRateLimit, cfg.AuthRateLimit, cfg.AuthRateLimit
+	}
 	h := &AuthHandler{
 		db:              db,
 		cfg:             cfg,
-		loginLimiter:    auth.NewRateLimiter(10, time.Minute),
-		signupLimiter:   auth.NewRateLimiter(5, time.Minute),
-		passwordLimiter: auth.NewRateLimiter(10, time.Minute),
+		loginLimiter:    auth.NewRateLimiter(loginLimit, time.Minute),
+		signupLimiter:   auth.NewRateLimiter(signupLimit, time.Minute),
+		passwordLimiter: auth.NewRateLimiter(passwordLimit, time.Minute),
 	}
 
 	if cfg.GoogleKey != "" && cfg.GoogleSecret != "" {

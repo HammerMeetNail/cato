@@ -30,6 +30,10 @@ func NewGoogleConfig(clientID, clientSecret, redirectURL string) *oauth2.Config 
 	}
 }
 
+// googleUserInfoURL is the endpoint FetchGoogleUser calls for profile info.
+// A var so tests can point it at a local server.
+var googleUserInfoURL = "https://www.googleapis.com/oauth2/v3/userinfo"
+
 func FetchGoogleUser(ctx context.Context, config *oauth2.Config, code string) (*GoogleUser, error) {
 	token, err := config.Exchange(ctx, code)
 	if err != nil {
@@ -37,7 +41,7 @@ func FetchGoogleUser(ctx context.Context, config *oauth2.Config, code string) (*
 	}
 
 	client := config.Client(ctx, token)
-	resp, err := client.Get("https://www.googleapis.com/oauth2/v3/userinfo")
+	resp, err := client.Get(googleUserInfoURL)
 	if err != nil {
 		return nil, fmt.Errorf("fetch userinfo: %w", err)
 	}

@@ -18,6 +18,13 @@ import (
 // maxBatchIDs is IGDB's hard cap on `where id = (...)` tuple size.
 const maxBatchIDs = 500
 
+// Default endpoints. Kept as fields (not constants) so tests can point the
+// client at a local httptest server instead of the live API.
+const (
+	defaultAPIBase  = "https://api.igdb.com/v4/"
+	defaultAuthBase = "https://id.twitch.tv/oauth2/token"
+)
+
 type Client struct {
 	clientID     string
 	clientSecret string
@@ -26,6 +33,8 @@ type Client struct {
 	httpClient   *http.Client
 	rateLimiter  *games.IGDBRateLimiter
 	mu           sync.Mutex
+	apiBase      string
+	authBase     string
 }
 
 type igdbCover struct {
@@ -95,7 +104,19 @@ func NewClient(clientID, clientSecret string) *Client {
 		clientSecret: clientSecret,
 		rateLimiter:  games.NewIGDBRateLimiter(),
 		httpClient:   &http.Client{Timeout: 10 * time.Second},
+		apiBase:      defaultAPIBase,
+		authBase:     defaultAuthBase,
 	}
+}
+
+// newTestClient builds a client pointed at local test servers, with the rate
+// limiter disabled so tests run unthrottled against httptest servers.
+func newTestClient(clientID, clientSecret, apiBase, authBase string) *Client {
+	c := NewClient(clientID, clientSecret)
+	c.apiBase = apiBase
+	c.authBase = authBase
+	c.rateLimiter = games.NewIGDBRateLimiterWithInterval(0)
+	return c
 }
 
 func (c *Client) SearchGames(ctx context.Context, query string, limit int, includeEditions bool) ([]games.Game, error) {
@@ -123,7 +144,7 @@ func (c *Client) SearchGames(ctx context.Context, query string, limit int, inclu
 	if len(whereParts) > 0 {
 		where = " where " + strings.Join(whereParts, " & ") + ";"
 	}
-	body := fmt.Sprintf(`search "%s"; fields %s;%s limit %d;`, query, igdbFields, where, limit)
+	body := fmt.Sprintf(`search "%s"; fields %s;%s limit %d;`, escapeAPIQLString(query), igdbFields, where, limit)
 
 	igdbGames, err := c.post(ctx, "games", body)
 	if err != nil {
@@ -242,6 +263,21 @@ func decodePlatforms(raw []byte) ([]games.Platform, error) {
 	return out, nil
 }
 
+// escapeAPIQLString neutralizes characters that would break out of the
+// double-quoted string literal in an APIQL `search "..."` clause. The query
+// comes from the search box, so quotes/backslashes/semicolons must not be
+// able to alter the query structure sent to IGDB with our credentials.
+func escapeAPIQLString(s string) string {
+	r := strings.NewReplacer(
+		`\`, `\\`,
+		`"`, `\"`,
+		";", "",
+		"\n", " ",
+		"\r", " ",
+	)
+	return r.Replace(s)
+}
+
 func (c *Client) toGame(g igdbGame) games.Game {
 	var coverID int64
 	var coverURL string
@@ -316,7 +352,7 @@ func (c *Client) authenticate(ctx context.Context) error {
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"https://id.twitch.tv/oauth2/token", strings.NewReader(data.Encode()))
+		c.authBase, strings.NewReader(data.Encode()))
 	if err != nil {
 		return fmt.Errorf("create token request: %w", err)
 	}
@@ -357,7 +393,7 @@ func (c *Client) do(ctx context.Context, endpoint, body string) ([]byte, error) 
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"https://api.igdb.com/v4/"+endpoint, strings.NewReader(body))
+		c.apiBase+endpoint, strings.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
