@@ -92,11 +92,12 @@ web/static/      HTML, CSS, JS (vanilla, no bundler)
   `#now` (aliases `#now-playing`/`#playing-now`) → `renderPlayingView()`
   (`web/static/js/playing.js`), `#stats` → `renderStatsView()`
   (`web/static/js/stats.js`), `#settings` → `renderSettingsView()`
-  (`web/static/js/settings.js`), else Library (status tabs, `#search/<q>`,
-  `#game/<id>` modal). Playing/Stats/Settings data is lazy-fetched when the tab
+  (`web/static/js/settings.js`), `#library`/status tabs/`#search/<q>`/
+  `#game/<id>` modal → Library, else Playing (empty hash is home). Playing/Stats/Settings data is lazy-fetched when the tab
   becomes active; old `/settings` redirects to `/#settings`. `GET /api/me`,
   search, and hash-back navigation must keep working across tabs; don't fold
-  `/login` into the shell. `/#` (hash `#`) is the Library canonical URL. The
+  `/login` into the shell. `#library` is the Library canonical URL (empty hash
+  is the Playing tab's home — `/#` renders Playing, not the grid). The
   old in-library "Playing now" hero strip has been removed in favor of the
   dedicated Playing tab.
 - **PWA installability**: `web/static/manifest.webmanifest` (`name: Cato — Game
