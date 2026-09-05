@@ -607,31 +607,29 @@ function wireSearchFilterBar(header, query) {
   if (libraryStatusWrap) libraryStatusWrap.style.display = searchFilters.inLibrary === 'owned' ? '' : 'none';
   if (editions) editions.checked = !!searchFilters.includeEditions;
 
+  // Badge counts APPLIED filters (searchFilters), not staged input edits:
+  // this panel is transactional — nothing takes effect until Apply/Clear,
+  // so the badge must stay truthful while the user is still editing.
+  // (The status FAB is the instant path; it reloads through searchFilters.)
   const updateSearchBadge = () => {
     const badge = header.querySelector('#sfBadge');
     if (!badge) return;
-    // Count library statuses as number of selected statuses (multi) or 1 for single
-    const libStatusCount = (() => {
-      if (Array.isArray(searchFilters.libraryStatuses) && searchFilters.libraryStatuses.length > 0) {
-        return searchFilters.libraryStatuses.length;
-      }
-      const cur = libraryStatus ? libraryStatus.value.trim() : '';
-      if (cur) return 1;
-      return 0;
-    })();
+    const libStatusCount = Array.isArray(searchFilters.libraryStatuses) && searchFilters.libraryStatuses.length > 0
+      ? searchFilters.libraryStatuses.length
+      : (searchFilters.libraryStatus ? 1 : 0);
     const cur = {
-      sort: sortSel.value,
-      yearFrom: yearFrom.value.trim(),
-      yearTo: yearTo.value.trim(),
-      releaseFrom: releaseFrom ? releaseFrom.value.trim() : '',
-      releaseTo: releaseTo ? releaseTo.value.trim() : '',
-      minRating: minRating.value,
-      platform: platformEl ? platformEl.value.trim() : '',
-      ownedPlatform: ownedPlatformEl ? ownedPlatformEl.value.trim() : '',
-      tags: tagsEl ? tagsEl.value.trim() : '',
-      inLibrary: inLibrary ? inLibrary.value : '',
+      sort: searchFilters.sort,
+      yearFrom: searchFilters.yearFrom,
+      yearTo: searchFilters.yearTo,
+      releaseFrom: searchFilters.releaseFrom,
+      releaseTo: searchFilters.releaseTo,
+      minRating: searchFilters.minRating,
+      platform: searchFilters.platform,
+      ownedPlatform: searchFilters.ownedPlatform,
+      tags: searchFilters.tags,
+      inLibrary: searchFilters.inLibrary,
       libraryStatus: libStatusCount ? String(libStatusCount) : '',
-      editions: editions && editions.checked ? '1' : '',
+      editions: searchFilters.includeEditions ? '1' : '',
     };
     const n = Object.values(cur).filter(Boolean).length;
     badge.textContent = n;
@@ -639,12 +637,6 @@ function wireSearchFilterBar(header, query) {
     badge.setAttribute('aria-label', n ? `${n} filters active` : '');
   };
   updateSearchBadge();
-  // Live badge as user edits
-  [sortSel, yearFrom, yearTo, releaseFrom, releaseTo, minRating, platformEl, ownedPlatformEl, tagsEl, inLibrary, libraryStatus, editions].forEach(el => {
-    if (!el) return;
-    el.addEventListener('input', updateSearchBadge);
-    el.addEventListener('change', updateSearchBadge);
-  });
 
   // Populate datalists for platform/tags (best-effort).
   if (platformEl) {
@@ -753,11 +745,11 @@ function wireSearchFilterBar(header, query) {
     loadSearchResults(query);
   };
   header.querySelector('#sfApply').addEventListener('click', apply);
-  if (editions) editions.addEventListener('change', apply);
+  // Transactional like the library advanced panel: discrete controls stage
+  // their values and only Apply/Clear/Enter commits them. (The status FAB is
+  // the instant path.) Toggling Collection only shows/hides the Status row.
   if (inLibrary) inLibrary.addEventListener('change', () => {
     if (libraryStatusWrap) libraryStatusWrap.style.display = inLibrary.value === 'owned' ? '' : 'none';
-    // Don't auto-apply on change to allow picking status, but if switching away from owned, apply immediately to clear status
-    if (inLibrary.value !== 'owned' && (searchFilters.libraryStatus || (Array.isArray(searchFilters.libraryStatuses) && searchFilters.libraryStatuses.length > 0))) apply();
   });
   // Enter on any input applies
   [yearFrom, yearTo, releaseFrom, releaseTo, platformEl, ownedPlatformEl, tagsEl].forEach(el => {
@@ -1123,8 +1115,8 @@ function buildLibFilterPanelHTML() {
           <h3 class="lib-filter-title">Filters</h3>
           <p class="lib-filter-subtitle">Refine your library</p>
         </div>
-        <button type="button" class="lib-filter-close lib-filter-apply-close" id="libFilterClose" aria-label="Apply filters">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>
+        <button type="button" class="lib-filter-close" id="libFilterClose" aria-label="Close filters">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
       </div>
       <div class="lib-filter-body">
@@ -1436,62 +1428,50 @@ function wireLibFilterPanel(panel) {
     };
     panel._syncLibraryChips = syncLibraryChips;
     syncLibraryChips();
+    // Chips stage their selection in the DOM only — nothing here touches
+    // shared filter state or reloads. Apply reads the staged chips (see
+    // readStagedLibraryStatuses) and commits everything at once; any close
+    // (X, backdrop, Escape, outside tap) discards the staged selection and
+    // closeLibFilterPanel re-syncs the chips back to the applied state.
+    // (The bottom status FAB is the instant path; this panel is transactional.)
     libChipsEl.addEventListener('click', (e) => {
       const chip = e.target.closest('.lib-filter-chip');
       if (!chip) return;
       const status = chip.dataset.status || '';
-      // Search mode: manipulate searchFilters (like the FAB does) so the
-      // panel can be used to filter an active catalog search without losing
-      // the query. Library mode: manipulate paginationState as before.
-      if (paginationState.mode === 'search') {
-        const cur = getSearchStatuses();
-        let next;
-        if (status === '') next = [];
-        else {
-          if (cur.includes(status)) next = cur.filter(s => s !== status);
-          else next = [...cur, status];
-        }
-        setSearchStatuses(next);
-        syncLibraryChips();
-        try { if (typeof syncStatusFilterPanel === 'function') syncStatusFilterPanel(); } catch {}
-        // Keep search header selects in sync (they are rebuilt on next search
-        // load, but update live if visible so Apply doesn't overwrite).
-        try {
-          const header = document.getElementById('searchResultsHeader');
-          if (header) {
-            const inLibEl = header.querySelector('#sfInLibrary');
-            const statusEl = header.querySelector('#sfLibraryStatus');
-            const wrap = header.querySelector('#sfLibraryStatusWrap');
-            if (inLibEl) inLibEl.value = searchFilters.inLibrary;
-            if (statusEl) statusEl.value = searchFilters.libraryStatus;
-            if (wrap) wrap.style.display = searchFilters.inLibrary === 'owned' ? '' : 'none';
-          }
-        } catch {}
-        try { if (typeof updateLibFilterBadge === 'function') updateLibFilterBadge(); } catch {}
-        return;
-      }
-      const cur = currentStatuses();
+      const cur = readStagedLibraryStatuses(libChipsEl);
       let next;
       if (status === '') next = [];
       else {
         if (cur.includes(status)) next = cur.filter(s => s !== status);
         else next = [...cur, status];
       }
-      setStatuses(next);
-      if (window.location.hash && VALID_STATUSES.includes(window.location.hash.slice(1))) {
-        history.replaceState(null, '', window.location.pathname + window.location.search);
-      }
-      syncLibraryChips();
-      // Keep bottom status FAB in sync
-      try { if (typeof syncStatusFilterPanel === 'function') syncStatusFilterPanel(); } catch {}
-      // Stage the status change like the other fields — don't reload yet.
-      // The advanced panel is transactional (Apply/Clear), so keep the new
-      // statuses in paginationState without wiping the other unsaved inputs
-      // (platform/tags/sort/year) that would happen if we called loadLibrary
-      // here with the stale paginationState.tagFilter etc.
-      try { if (typeof updateLibFilterBadge === 'function') updateLibFilterBadge(); } catch {}
+      setStagedLibraryStatuses(libChipsEl, next);
     });
   }
+
+// readStagedLibraryStatuses returns the Library statuses currently staged in
+// the advanced panel's chips (DOM classes only — never shared filter state).
+function readStagedLibraryStatuses(libChipsEl) {
+  const out = [];
+  libChipsEl.querySelectorAll('.lib-filter-chip[data-status]').forEach(chip => {
+    const s = chip.dataset.status || '';
+    if (s && chip.classList.contains('active') && VALID_STATUSES.includes(s)) out.push(s);
+  });
+  return out;
+}
+
+// setStagedLibraryStatuses paints a staged selection onto the chips,
+// including the All chip (active exactly when nothing is selected).
+function setStagedLibraryStatuses(libChipsEl, statuses) {
+  const active = normalizeStatuses(statuses);
+  const hasFilter = active.length > 0;
+  libChipsEl.querySelectorAll('.lib-filter-chip[data-status]').forEach(chip => {
+    const s = chip.dataset.status || '';
+    const isActive = s === '' ? !hasFilter : active.includes(s);
+    chip.classList.toggle('active', isActive);
+    chip.setAttribute('aria-selected', String(isActive));
+  });
+}
 
   const dismissAutocomplete = () => {
     // Datalist dropdowns are native and stay open while the input retains
@@ -1513,6 +1493,11 @@ function wireLibFilterPanel(panel) {
     const newFormat = formatEl ? formatEl.value : '';
     const newSort = sortEl ? sortEl.value : '';
     dismissAutocomplete();
+    // Commit the staged Library chips together with the other fields, so a
+    // status tap and a sort/text edit apply atomically on Apply.
+    const stagedStatuses = panel.querySelector('#lfLibraryChips')
+      ? readStagedLibraryStatuses(panel.querySelector('#lfLibraryChips'))
+      : (paginationState.mode === 'search' ? getSearchStatuses() : currentStatuses());
     // Search mode: the advanced panel's fields map onto searchFilters, not
     // libraryFilters, so applying does not lose the query. Library mode
     // keeps the original behavior.
@@ -1529,7 +1514,8 @@ function wireLibFilterPanel(panel) {
       searchFilters.releaseTo = '';
       // format is library-only; keep it staged but don't send to search
       libraryFilters.format = newFormat;
-      // statuses already staged in searchFilters via chip clicks; keep them
+      setSearchStatuses(stagedStatuses);
+      try { if (typeof syncStatusFilterPanel === 'function') syncStatusFilterPanel(); } catch {}
       closeLibFilterPanel();
       loadSearchResults(paginationState.searchQuery);
       return;
@@ -1547,6 +1533,11 @@ function wireLibFilterPanel(panel) {
     paginationState.sort = newSort;
     paginationState.releaseFrom = '';
     paginationState.releaseTo = '';
+    setStatuses(stagedStatuses);
+    // A single-status hash deep-link no longer describes a multi-select view.
+    if (window.location.hash && VALID_STATUSES.includes(window.location.hash.slice(1))) {
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
     closeLibFilterPanel();
     loadLibrary(paginationState.statuses, newTag, newPlat, newOwned);
   };
@@ -1597,24 +1588,20 @@ function wireLibFilterPanel(panel) {
     loadLibrary([], '', '', '', {sort: '', yearFrom: '', yearTo: '', releaseFrom: '', releaseTo: ''});
   };
 
-  // Expose apply for backdrop/X that live outside this closure (openLibFilterPanel)
-  panel._applyStagedFilters = apply;
   panel.querySelector('#lfApply')?.addEventListener('click', apply);
   panel.querySelector('#lfClear')?.addEventListener('click', clear);
-  // X and backdrop should also apply — users often hit X expecting the staged
-  // values (e.g. backlog + oldest) to take effect, and "no obvious Apply"
-  // means they miss the footer. Make close-via-X/backdrop transactional.
+  // X discards staged edits like every other close path (backdrop, Escape,
+  // outside tap): only Apply/Clear commits. The footer Apply is sticky and
+  // always visible, so there is an obvious commit action on every viewport.
   panel.querySelector('#libFilterClose')?.addEventListener('click', () => {
-    // If there are staged changes, apply them so X doesn't silently discard
-    // the user's sort/platform/tags/year selection.
-    try { apply(); } catch { closeLibFilterPanel(); }
+    closeLibFilterPanel();
   });
   [platEl, ownedEl, tagsEl, formatEl, sortEl, yfEl, ytEl, rfEl, rtEl].filter(Boolean).forEach(el => {
     el.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); apply(); } });
   });
   // Sorting is staged like the other fields — don't auto-apply on change.
-  // The panel stays open until the user hits Apply/Clear/Close or the backdrop,
-  // and Apply shows a toast so it's obvious the filters took effect.
+  // The panel stays open until the user hits Apply/Clear, and any other
+  // close (X, backdrop, Escape, outside tap) discards staged edits.
 }
 
 function openLibFilterPanel() {
@@ -1639,12 +1626,10 @@ function openLibFilterPanel() {
     backdrop.style.display = 'block';
     if (!backdrop.dataset.wired) {
       backdrop.dataset.wired = '1';
+      // Backdrop is a discard-close like every other close path — only
+      // Apply/Clear commits staged filters.
       backdrop.addEventListener('click', () => {
-        const p = document.getElementById('libFilterPanel');
-        try {
-          if (p && typeof p._applyStagedFilters === 'function') p._applyStagedFilters();
-          else closeLibFilterPanel();
-        } catch { closeLibFilterPanel(); }
+        closeLibFilterPanel();
       });
     }
   }
@@ -1719,6 +1704,11 @@ function closeLibFilterPanel() {
   libFilterOpen = false;
   document.body.classList.remove('lib-advanced-open');
   unlockFilterBodyScroll();
+  // Discard any staged-but-unapplied edits so the hidden DOM never disagrees
+  // with the applied filter state (badge, Filtered bar, FAB all read that).
+  // The next open re-syncs anyway; doing it here keeps things truthful even
+  // if the panel is inspected while hidden.
+  try { syncLibFilterInputs(); } catch {}
   // delay hidden for transition (180ms)
   setTimeout(() => {
     if (!libFilterOpen) {
@@ -2963,8 +2953,9 @@ function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status
   let lastSnapshot = null;
   let flashTimer = null;
 
-  // Chip rows are single-select groups of buttons; Format may be cleared by
-  // re-tapping the selected chip, Status always keeps a value.
+  // Format chips are a single-select button group; re-tapping the selected
+  // chip clears the value (allowClear). Status uses a native select instead
+  // (see statusSel below) — both commit through the same auto-save path.
   const setupChipRow = (row, initial, allowClear) => {
     let value = initial;
     row.addEventListener('click', (e) => {

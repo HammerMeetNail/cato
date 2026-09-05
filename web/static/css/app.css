@@ -997,7 +997,9 @@ a { color: var(--accent); text-decoration: none; }
   }
 
   .sf-actions {
-    flex-direction: column-reverse;
+    /* Primary Apply last (bottom) — same order as desktop's Clear/Apply row,
+       with the commit action nearest the thumb. */
+    flex-direction: column;
     gap: 8px;
   }
 
@@ -1630,16 +1632,6 @@ body.modal-open .app-shell {
   color: var(--text);
   border-color: var(--surface2);
 }
-.lib-filter-apply-close {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
-.lib-filter-apply-close:hover {
-  background: color-mix(in srgb, var(--accent) 85%, #000);
-  border-color: color-mix(in srgb, var(--accent) 85%, #000);
-  color: #fff;
-}
 .lib-filter-body {
   flex: 1;
   overflow-y: auto;
@@ -1922,7 +1914,8 @@ body.modal-open .app-shell {
   }
 
   .lib-filter-actions {
-    flex-direction: column-reverse;
+    /* Primary Apply last (bottom) — same order as desktop's Clear/Apply row. */
+    flex-direction: column;
   }
 
   .lib-filter-actions .btn {
@@ -3314,9 +3307,10 @@ body.modal-open {
   background: var(--surface2);
 }
 
-/* Chip selectors (Status / Format): every option is always visible and
-   thumb-sized — no dropdowns. Single-select; Format can be cleared by
-   re-tapping. */
+/* Status + Format pickers in the game form: Status is a native select
+   (compact for 5 options, familiar picker wheel on phones), Format is a
+   thumb-sized chip row (2 options, clearable by re-tapping). Both commit
+   through the same auto-save path. */
 .chip-row {
   display: flex;
   flex-wrap: wrap;

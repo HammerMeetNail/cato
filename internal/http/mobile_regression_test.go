@@ -129,8 +129,8 @@ func TestTagChipEllipsis(t *testing.T) {
 // service worker cache version so clients don't serve stale JS/CSS.
 func TestServiceWorkerCacheBumped(t *testing.T) {
 	content := readStaticFile(t, "web/static/service-worker.js")
-	if !strings.Contains(content, `CACHE_NAME = "cato-static-v21"`) {
-		t.Fatalf("service-worker.js must have CACHE_NAME v21 after desktop filter fix; got: %s", snippet(content, "CACHE_NAME", 60))
+	if !strings.Contains(content, `CACHE_NAME = "cato-static-v22"`) {
+		t.Fatalf("service-worker.js must have CACHE_NAME v22 after filter-unification fix; got: %s", snippet(content, "CACHE_NAME", 60))
 	}
 }
 
@@ -226,6 +226,43 @@ func TestStatusFilterSupportsMultiple(t *testing.T) {
 	handlerContent := readStaticFile(t, "internal/http/handler_games.go")
 	if !strings.Contains(handlerContent, `r.URL.Query()["library_status"]`) && !strings.Contains(handlerContent, "library_status") {
 		t.Fatalf("handler_games.go must parse multiple library_status values")
+	}
+}
+
+// TestFilterPanelsAreTransactional ensures the library advanced panel and
+// the search filter bar share one rule on every viewport: discrete controls
+// stage their values and only Apply/Clear/Enter commits them. (The bottom
+// status FAB is the separate instant path.) This was a mobile/desktop drift
+// where some close paths (X, backdrop) applied staged filters while others
+// (Escape, outside tap) discarded them, and where the search bar auto-applied
+// the editions checkbox and Collection changes but staged everything else.
+func TestFilterPanelsAreTransactional(t *testing.T) {
+	content := readStaticFile(t, "web/static/js/library.js")
+
+	// No close path may smuggle staged filters into effect: X, backdrop,
+	// Escape and the document outside-tap handler must all end at the pure
+	// discard-close.
+	if strings.Contains(content, "_applyStagedFilters") {
+		t.Fatalf("library.js must not apply staged filters on close (found _applyStagedFilters)")
+	}
+	if !strings.Contains(content, "panel.querySelector('#libFilterClose')?.addEventListener('click', () => {\n    closeLibFilterPanel();\n  })") {
+		t.Fatalf("library.js X button must be a pure discard-close (closeLibFilterPanel)")
+	}
+	// Staged Library chips must live in the DOM only until Apply commits
+	// them; a chip tap must not mutate shared filter state or reload.
+	if !strings.Contains(content, "readStagedLibraryStatuses") {
+		t.Fatalf("library.js advanced-panel chips must stage via readStagedLibraryStatuses")
+	}
+	if !strings.Contains(content, "setStagedLibraryStatuses(libChipsEl, next)") {
+		t.Fatalf("library.js advanced-panel chip taps must only repaint staged chips")
+	}
+	// Search filter bar: no auto-apply on change — Collection toggles only
+	// show/hide the Status row, Apply/Clear/Enter commits.
+	if strings.Contains(content, "editions.addEventListener('change', apply)") {
+		t.Fatalf("library.js search bar must not auto-apply the editions checkbox")
+	}
+	if strings.Contains(content, "apply immediately to clear status") {
+		t.Fatalf("library.js search bar must not auto-apply Collection changes")
 	}
 }
 
