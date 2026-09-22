@@ -1,4 +1,4 @@
-import { api } from './api.js';
+import { api, getLibraryRevision } from './api.js';
 import { escapeHTML } from './library.js';
 
 // Stats: lifetime totals, this-year activity, finished-per-year bars,
@@ -102,25 +102,40 @@ function buildStatsHTML(s) {
     </div>`;
 }
 
-export async function renderStatsView(container) {
-  if (!container) return;
-  container.innerHTML = '<div class="stats-page"><div class="loading">Loading stats…</div></div>';
-  let s;
+const statsViews = new WeakMap();
+
+export function renderStatsView(container) {
+  if (!container) return Promise.resolve();
+  let state = statsViews.get(container);
+  if (!state) { state = { revision: -1, pending: null }; statsViews.set(container, state); }
+  if (state.pending) return state.pending;
+  if (state.revision === getLibraryRevision()) return Promise.resolve();
+  state.pending = loadStatsView(container, state).finally(() => { state.pending = null; });
+  return state.pending;
+}
+
+async function loadStatsView(container, state) {
+  if (state.revision < 0) container.innerHTML = '<div class="stats-page"><div class="loading">Loading stats…</div></div>';
   try {
-    s = await fetchStats();
-  } catch (err) {
-    container.innerHTML = '<div class="stats-page"><div class="empty-state"><p>Failed to load stats.</p></div></div>';
-    return;
-  }
-  container.innerHTML = buildStatsHTML(s);
-  // Recent items deep-link into the game modal.
-  container.querySelectorAll('.stat-recent-row').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const id = Number(btn.dataset.gameId);
-      const mod = await import('./library.js');
-      mod.openGameModal(id);
+    // A mutation during the request makes that snapshot obsolete. One owner
+    // retries it, so repeated tab taps cannot race two renders.
+    let stats, revision;
+    do {
+      revision = getLibraryRevision();
+      stats = await fetchStats();
+    } while (revision !== getLibraryRevision());
+    container.innerHTML = buildStatsHTML(stats);
+    state.revision = revision;
+    container.querySelectorAll('.stat-recent-row').forEach(btn => {
+      btn.addEventListener('click', () => {
+        window.location.hash = '#game/' + Number(btn.dataset.gameId);
+      });
     });
-  });
+  } catch {
+    state.revision = -1;
+    container.innerHTML = '<div class="stats-page"><div class="empty-state"><p>Failed to load stats.</p><button type="button" class="btn btn-secondary" data-stats-retry>Retry</button></div></div>';
+    container.querySelector('[data-stats-retry]')?.addEventListener('click', () => renderStatsView(container));
+  }
 }
 
 export async function openStatsDialog() {

@@ -18,8 +18,16 @@
   <a href="#mainContainer" class="skip-link">Skip to content</a>
   <div class="app-shell">
     <header class="topbar" id="top-bar" role="banner">
-      <h1><a class="brand-link" href="/" aria-label="Cato home">Cato</a></h1>
-      <nav aria-label="Account">
+      <h1><a class="brand-link" href="#now" aria-label="Cato home">Cato</a></h1>
+      <nav aria-label="Search and account">
+        <button type="button" class="header-search" id="fabAdd" aria-label="Search games">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">
+            <circle cx="10.5" cy="10.5" r="6.5"></circle>
+            <line x1="15.5" y1="15.5" x2="21" y2="21"></line>
+          </svg>
+          <span>Search</span>
+        </button>
+
         <a href="/login" id="loginLink" style="display:none">Login</a>
         <div class="user-menu" id="userMenu" style="display:none">
           <button type="button" class="user-menu-btn" id="userMenuBtn" aria-haspopup="true" aria-expanded="false" aria-label="Account menu">
@@ -31,14 +39,13 @@
           </button>
           <div class="user-menu-dropdown" id="userMenuDropdown" hidden>
             <span class="user-menu-name" id="userDisplay"></span>
-            <a href="#settings" id="settingsLink">Settings</a>
             <a href="#" id="logoutLink">Logout</a>
           </div>
         </div>
       </nav>
     </header>
 
-    <main class="container" id="mainContainer" aria-live="polite">
+    <main class="container" id="mainContainer" tabindex="-1" aria-live="polite">
       <div id="libraryView">
         <div class="search-wrap">
           <div class="search-field">
@@ -56,18 +63,32 @@
                 <line x1="12" y1="18" x2="12" y2="21"></line>
               </svg>
             </button>
-            <button type="button" class="search-filter-btn" id="searchAdvancedBtn" aria-label="More filters" aria-expanded="false" aria-controls="libFilterPanel" title="More filters">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
-              <span class="lib-filter-badge" id="libFilterBadgeInline" hidden>0</span>
-            </button>
           </div>
           <div class="search-hint" aria-hidden="true">
             <span><kbd>$</kbd> filters your library by tag, e.g. <kbd>$rpg</kbd></span>
             <span><kbd>@</kbd> filters by platform, e.g. <kbd>@switch</kbd> · tags with spaces need quotes: <kbd>$"switch 2"</kbd></span>
           </div>
           <div class="search-results" id="searchResults" role="listbox" aria-label="Search results"></div>
-          <!-- Advanced filter panel anchored to search-wrap (status lives at bottom FAB) -->
+          <!-- Filter panel uses the same controls on phones and desktop. -->
           <div class="lib-filter-panel" id="libFilterPanel" hidden></div>
+        </div>
+
+        <div class="library-toolbar" aria-label="Library controls">
+          <h2>Library</h2>
+          <div class="library-toolbar-actions">
+            <div class="lib-filter-fab status-filter-fab" id="statusFilterFab" hidden>
+              <div class="lib-filter-panel status-filter-panel" id="statusFilterPanel" hidden></div>
+              <button type="button" class="lib-filter-btn" id="statusFilterBtn" aria-expanded="false" aria-controls="statusFilterPanel" aria-label="Filter by status">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"></rect><path d="M6 12h4"></path><path d="M8 10v4"></path><path d="M15 11v.01"></path><path d="M18 13v.01"></path></svg>
+                <span>Status</span>
+              </button>
+            </div>
+            <button type="button" class="search-filter-btn" id="searchAdvancedBtn" aria-label="More filters" aria-expanded="false" aria-controls="libFilterPanel" title="More filters">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
+              <span>Filters</span>
+              <span class="lib-filter-badge" id="libFilterBadgeInline" hidden>0</span>
+            </button>
+          </div>
         </div>
 
         <div class="tabs" id="statusTabs" role="tablist" aria-label="Library filters">
@@ -92,14 +113,6 @@
   </div>
 
   <nav id="bottom-tabs" hidden aria-label="Main navigation">
-    <a href="#stats" class="tab-item" data-nav="stats" data-route="stats" aria-label="Stats">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-        <line x1="18" y1="20" x2="18" y2="10"></line>
-        <line x1="12" y1="20" x2="12" y2="4"></line>
-        <line x1="6" y1="20" x2="6" y2="14"></line>
-      </svg>
-      <span>Stats</span>
-    </a>
     <a href="#library" class="tab-item" data-nav="library" data-route="library" aria-label="Library">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
         <rect x="3" y="3" width="7" height="7" rx="1"></rect>
@@ -109,11 +122,19 @@
       </svg>
       <span>Library</span>
     </a>
-    <a href="#" class="tab-item" data-nav="now" data-route="now" aria-label="Now Playing" aria-current="page">
+    <a href="#now" class="tab-item" data-nav="now" data-route="now" aria-label="Now Playing" aria-current="page">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
         <polygon points="5 3 19 12 5 21 5 3"></polygon>
       </svg>
       <span>Playing</span>
+    </a>
+    <a href="#stats" class="tab-item" data-nav="stats" data-route="stats" aria-label="Stats">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <line x1="18" y1="20" x2="18" y2="10"></line>
+        <line x1="12" y1="20" x2="12" y2="4"></line>
+        <line x1="6" y1="20" x2="6" y2="14"></line>
+      </svg>
+      <span>Stats</span>
     </a>
     <a href="#settings" class="tab-item" data-nav="settings" data-route="settings" aria-label="Settings">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
@@ -129,14 +150,7 @@
   <div class="lib-filter-backdrop" id="libFilterBackdrop" hidden></div>
   <div class="lib-filter-backdrop status-filter-backdrop" id="statusFilterBackdrop" hidden aria-hidden="true"></div>
   <div class="search-backdrop" id="searchBackdrop" hidden></div>
-  <!-- Status FAB — bottom-right, library-only (advanced filter now lives inline in search box) -->
-  <div class="lib-filter-fab status-filter-fab" id="statusFilterFab" hidden>
-    <div class="lib-filter-panel status-filter-panel" id="statusFilterPanel" hidden></div>
-    <button type="button" class="lib-filter-btn" id="statusFilterBtn" aria-expanded="false" aria-controls="statusFilterPanel" aria-label="Filter by status">
-      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"></rect><path d="M6 12h4"></path><path d="M8 10v4"></path><path d="M15 11v.01"></path><path d="M18 13v.01"></path></svg>
-    </button>
-  </div>
-  <!-- Advanced filter legacy container hidden; panel now lives in search-wrap -->
+  <!-- Compatibility handles for the shared library filter controller. -->
   <div class="lib-filter-fab advanced-filter-fab" id="libFilterFab" hidden style="display:none">
     <button type="button" class="lib-filter-btn" id="libFilterBtn" aria-expanded="false" aria-controls="libFilterPanel" aria-label="Filter library" hidden>
       <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
@@ -144,358 +158,7 @@
     <span class="lib-filter-badge" id="libFilterBadge" hidden>0</span>
   </div>
 
-  <!-- Mobile search shortcut: jumps to the search box (the add path). -->
-  <button type="button" class="fab-add" id="fabAdd" aria-label="Search games">
-    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">
-      <circle cx="10.5" cy="10.5" r="6.5"></circle>
-      <line x1="15.5" y1="15.5" x2="21" y2="21"></line>
-    </svg>
-  </button>
 
-  <script type="module">
-    import { checkAuth, logout, library } from '/js/api.js';
-    import { initSearch, initVoiceSearch, recordRecentSearch } from '/js/search.js';
-    import { loadLibrary, loadSearchResults, addGameToLibrary, getHashStatus, getHashGameId, getHashSearch, openGameModal, openLibraryItemModal, filterByTag, filterByPlatform, refreshTabCounts } from '/js/library.js';
-    import { renderStatsView } from '/js/stats.js';
-    import { renderSettingsView } from '/js/settings.js';
-    import { renderPlayingView } from '/js/playing.js';
-
-    const searchInput = document.getElementById('searchInput');
-    const searchResults = document.getElementById('searchResults');
-    const userDisplay = document.getElementById('userDisplay');
-    const loginLink = document.getElementById('loginLink');
-    const userMenuBtn = document.getElementById('userMenuBtn');
-    const userMenuDropdown = document.getElementById('userMenuDropdown');
-    const logoutLink = document.getElementById('logoutLink');
-    const settingsLink = document.getElementById('settingsLink');
-    const statusTabs = document.getElementById('statusTabs');
-    const bottomTabs = document.getElementById('bottom-tabs');
-    const libraryView = document.getElementById('libraryView');
-    const statsView = document.getElementById('statsView');
-    const playingView = document.getElementById('playingView');
-    const settingsView = document.getElementById('settingsView');
-    const fabAdd = document.getElementById('fabAdd');
-    const libFilterFab = document.getElementById('libFilterFab');
-    const libFilterPanel = document.getElementById('libFilterPanel');
-    const statusFilterFab = document.getElementById('statusFilterFab');
-    const statusFilterPanel = document.getElementById('statusFilterPanel');
-
-    function updateBottomTabs(route) {
-      if (!bottomTabs) return;
-      bottomTabs.querySelectorAll('.tab-item').forEach(tab => {
-        const r = tab.dataset.route || '';
-        const active = r === route;
-        tab.classList.toggle('active', active);
-        if (active) tab.setAttribute('aria-current', 'page');
-        else tab.removeAttribute('aria-current');
-      });
-    }
-
-    function showView(name) {
-      if (libraryView) libraryView.hidden = name !== 'library';
-      if (statsView) statsView.hidden = name !== 'stats';
-      if (playingView) playingView.hidden = name !== 'playing';
-      if (settingsView) settingsView.hidden = name !== 'settings';
-      if (fabAdd) fabAdd.style.display = 'flex';
-      const allFabs = [libFilterFab, statusFilterFab];
-      const allPanels = [libFilterPanel, statusFilterPanel];
-      if (name !== 'library') {
-        allFabs.forEach(fab => { if (fab) fab.hidden = true; });
-        allPanels.forEach(panel => { if (panel) { panel.hidden = true; panel.classList.remove('lib-filter-panel--open', 'status-filter-panel--open'); } });
-        const libFilterBtn = document.getElementById('libFilterBtn');
-        if (libFilterBtn) libFilterBtn.classList.remove('lib-filter-btn--open');
-        const statusFilterBtn = document.getElementById('statusFilterBtn');
-        if (statusFilterBtn) statusFilterBtn.classList.remove('lib-filter-btn--open');
-        // Also reset inline search filter buttons
-        const searchStatusBtn = document.getElementById('searchStatusBtn');
-        if (searchStatusBtn) { searchStatusBtn.classList.remove('lib-filter-btn--open'); searchStatusBtn.setAttribute('aria-expanded', 'false'); }
-        const searchAdvancedBtn = document.getElementById('searchAdvancedBtn');
-        if (searchAdvancedBtn) { searchAdvancedBtn.classList.remove('lib-filter-btn--open'); searchAdvancedBtn.setAttribute('aria-expanded', 'false'); }
-      } else {
-        // Library view: let library.js decide (search mode hides FAB, library mode shows)
-      }
-      if (name !== 'library') {
-        const existingModal = document.getElementById('addGameModal');
-        if (existingModal) {
-          existingModal.remove();
-          document.body.classList.remove('modal-open');
-        }
-        document.getElementById('statsDialog')?.remove();
-      }
-    }
-
-    async function handleRoute() {
-      const raw = window.location.hash.slice(1);
-      if (raw === 'stats') {
-        updateBottomTabs('stats');
-        showView('stats');
-        await renderStatsView(statsView);
-        return;
-      }
-      if (raw === 'settings') {
-        updateBottomTabs('settings');
-        showView('settings');
-        await renderSettingsView(settingsView);
-        return;
-      }
-      // Library: explicit #library, status tabs (#backlog etc.), or #game/#search
-      if (raw === 'library' || getHashSearch() !== null || getHashGameId() !== null || getHashStatus() !== '') {
-        updateBottomTabs('library');
-        showView('library');
-        const searchQuery = getHashSearch();
-        if (searchQuery) {
-          searchInput.value = searchQuery;
-          recordRecentSearch(searchQuery);
-          await loadSearchResults(searchQuery);
-          return;
-        }
-        const status = getHashStatus();
-        const gameId = getHashGameId();
-        await loadLibrary(status);
-        if (gameId) {
-          openGameModal(gameId);
-        }
-        return;
-      }
-      if (raw === 'now' || raw === 'now-playing' || raw === 'playing-now' || raw === 'playing' || raw === 'library/playing') {
-        updateBottomTabs('now');
-        showView('playing');
-        await renderPlayingView(playingView);
-        return;
-      }
-
-      // Default: Playing (stats | library | playing | settings, playing is home)
-      updateBottomTabs('now');
-      showView('playing');
-      await renderPlayingView(playingView);
-    }
-
-    // Service worker registration (PWA) – keep cache fresh, show update toast.
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/service-worker.js').then(reg => {
-        window.__catoSW = reg;
-      }).catch(() => {});
-      let hadController = !!navigator.serviceWorker.controller;
-      let refreshing = false;
-      navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (refreshing) return;
-        if (!hadController) { hadController = true; return; }
-        const container = document.getElementById('toast-container');
-        if (!container) return;
-        const toast = document.createElement('div');
-        toast.className = 'toast toast-info';
-        toast.style.cssText = 'display:flex;align-items:center;gap:8px;background:var(--accent);color:#fff;padding:10px 14px;border-radius:8px;';
-        const label = document.createElement('span');
-        label.textContent = 'Update available';
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.textContent = 'Refresh';
-        btn.style.cssText = 'margin-left:auto;background:rgba(255,255,255,0.2);border:none;color:#fff;padding:4px 10px;border-radius:6px;cursor:pointer;font-weight:600;';
-        btn.addEventListener('click', () => { refreshing = true; window.location.reload(); });
-        toast.append(label, btn);
-        container.appendChild(toast);
-        setTimeout(() => { if (!refreshing) toast.remove(); }, 30000);
-      });
-    }
-
-    const auth = await checkAuth();
-
-    if (!auth.authenticated) {
-      window.location.href = '/login' + window.location.hash;
-      throw new Error('Not authenticated');
-    }
-
-    if (auth.display_name) {
-      userDisplay.textContent = auth.display_name;
-    } else {
-      userDisplay.style.display = 'none';
-    }
-    document.getElementById('userMenu').style.display = '';
-    loginLink.style.display = 'none';
-    if (bottomTabs) bottomTabs.hidden = false;
-
-    function setUserMenu(open) {
-      userMenuDropdown.hidden = !open;
-      userMenuBtn.setAttribute('aria-expanded', String(open));
-    }
-
-    userMenuBtn.addEventListener('click', () => setUserMenu(userMenuDropdown.hidden));
-
-    document.addEventListener('click', (e) => {
-      if (!userMenuDropdown.hidden && !e.target.closest('.user-menu')) setUserMenu(false);
-      // Bottom tabs are anchors; prevent full-page navigation and use SPA hash.
-      // Playing is default (empty hash), others use explicit hashes.
-      const navEl = e.target.closest('#bottom-tabs .tab-item');
-      if (navEl) {
-        e.preventDefault();
-        const route = navEl.dataset.route;
-        if (route === 'now') {
-          history.replaceState(null, '', window.location.pathname + window.location.search);
-          handleRoute();
-        } else {
-          window.location.hash = '#' + route;
-        }
-      }
-    });
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && !userMenuDropdown.hidden) {
-        e.stopPropagation();
-        setUserMenu(false);
-      }
-    });
-
-    if (settingsLink) {
-      settingsLink.addEventListener('click', () => setUserMenu(false));
-    }
-
-    document.addEventListener('keydown', (e) => {
-      if (e.key !== '/' || e.ctrlKey || e.metaKey) return;
-      const tag = document.activeElement?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-      e.preventDefault();
-      if (libraryView.hidden) {
-        window.location.hash = '#library';
-        setTimeout(() => searchInput.focus(), 0);
-      } else {
-        searchInput.focus();
-      }
-    });
-
-    fabAdd?.addEventListener('click', () => {
-      // Keep focus in the same user gesture so iOS opens the keyboard.
-      const needNav = libraryView.hidden;
-      if (needNav) {
-        // Make Library visible synchronously so the input is focusable in this tick.
-        // Update hash without waiting for the async hashchange -> handleRoute cycle.
-        try { history.replaceState(null, '', window.location.pathname + window.location.search + '#library'); } catch {}
-        updateBottomTabs('library');
-        showView('library');
-        // Kick off data load in background (don't await — focus must stay synchronous).
-        handleRoute().catch(() => {});
-      }
-      // Focus synchronously (preventScroll keeps iOS from blurring on scroll).
-      try { searchInput.focus({ preventScroll: true }); } catch { searchInput.focus(); }
-      // Then bring the search field into view smoothly.
-      requestAnimationFrame(() => {
-        try { searchInput.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch { window.scrollTo({ top: 0, behavior: 'smooth' }); }
-      });
-    });
-
-    const statsStrip = document.getElementById('statsStrip');
-    if (statsStrip) {
-      statsStrip.setAttribute('role', 'button');
-      statsStrip.setAttribute('tabindex', '0');
-      statsStrip.title = 'View detailed stats';
-      const goStats = () => {
-        if (statsStrip.dataset.context !== 'library') return;
-        window.location.hash = '#stats';
-      };
-      statsStrip.addEventListener('click', goStats);
-      statsStrip.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goStats(); }
-      });
-    }
-
-    logoutLink.addEventListener('click', async (e) => {
-      e.preventDefault();
-      await logout();
-      window.location.href = '/login';
-    });
-
-    initSearch(searchInput, searchResults, (game) => {
-      if (game.status) {
-        openLibraryItemModal(game);
-      } else {
-        addGameToLibrary(game);
-      }
-      searchInput.value = '';
-      searchInput.blur();
-    }, (query) => {
-      if (query.startsWith('$')) {
-        const tag = query.slice(1).trim();
-        if (tag) {
-          searchInput.value = '';
-          searchInput.blur();
-          recordRecentSearch(query);
-          filterByTag(tag);
-          return;
-        }
-      }
-      if (query.startsWith('@')) {
-        const platform = query.slice(1).trim();
-        if (platform) {
-          searchInput.value = '';
-          searchInput.blur();
-          recordRecentSearch(query);
-          filterByPlatform(platform);
-          return;
-        }
-      }
-      searchInput.blur();
-      window.location.hash = '#search/' + encodeURIComponent(query);
-    }, async (tag) => {
-      try {
-        return await library.list('', 8, 0, tag);
-      } catch {
-        return [];
-      }
-    });
-
-    initVoiceSearch(document.getElementById('voiceBtn'), searchInput);
-
-    document.getElementById('searchClear')?.addEventListener('click', () => {
-      searchInput.value = '';
-      searchInput.focus();
-      searchInput.dispatchEvent(new Event('input'));
-    });
-
-    searchResults.addEventListener('tagfilter', (e) => {
-      recordRecentSearch('$' + e.detail.tag);
-      searchInput.value = '';
-      searchInput.blur();
-      filterByTag(e.detail.tag);
-    });
-
-    searchResults.addEventListener('platformfilter', (e) => {
-      recordRecentSearch('@' + e.detail.platform);
-      searchInput.value = '';
-      searchInput.blur();
-      filterByPlatform(e.detail.platform);
-    });
-
-    // Status tabs: accessible tablist handling
-    statusTabs.querySelectorAll('.tab').forEach(tab => {
-      tab.addEventListener('click', async () => {
-        const status = tab.dataset.status || '';
-        // Update aria-selected for accessibility
-        statusTabs.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', String(t === tab)));
-        if (status) {
-          window.location.hash = '#' + status;
-        } else {
-          history.replaceState(null, '', window.location.pathname + window.location.search);
-          searchInput.value = '';
-          await handleRoute();
-        }
-      });
-    });
-
-    window.addEventListener('hashchange', handleRoute);
-    await handleRoute();
-
-    // Keyboard shortcut for bottom tabs: 1=Stats, 2=Library, 3=Playing, 4=Settings
-    document.addEventListener('keydown', (e) => {
-      if (e.altKey || e.ctrlKey || e.metaKey) return;
-      const tag = document.activeElement?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-      if (e.key === '1') { e.preventDefault(); window.location.hash = '#stats'; }
-      if (e.key === '2') { e.preventDefault(); window.location.hash = '#library'; }
-      if (e.key === '3') {
-        e.preventDefault();
-        history.replaceState(null, '', window.location.pathname + window.location.search);
-        handleRoute();
-      }
-      if (e.key === '4') { e.preventDefault(); window.location.hash = '#settings'; }
-    });
-  </script>
+  <script type="module" src="/js/app.js"></script>
 </body>
 </html>

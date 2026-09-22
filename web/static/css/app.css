@@ -16,6 +16,8 @@
   --radius: 8px;
   --transition: 180ms ease;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --nav-height: calc(66px + var(--safe-bottom));
+  --topbar-height: calc(60px + env(safe-area-inset-top, 0px));
   color-scheme: dark;
 }
 
@@ -112,12 +114,12 @@ a { color: var(--accent); text-decoration: none; }
   margin: 0 auto;
   width: 100%;
   max-width: 720px;
-  height: calc(60px + var(--safe-bottom) + 6px);
+  height: var(--nav-height);
   padding-bottom: calc(var(--safe-bottom) + 6px);
   display: flex;
   background: var(--surface);
   border-top: 1px solid var(--surface2);
-  z-index: 40;
+  z-index: 60;
   flex-shrink: 0;
 }
 
@@ -353,8 +355,7 @@ a { color: var(--accent); text-decoration: none; }
 
 /* Reveal the syntax hint only while the box is focused and empty */
 .search-field:focus-within ~ .search-hint,
-.search-wrap input:focus ~ .search-hint,
-.search-wrap:focus-within .search-hint { display: flex; }
+.search-wrap input:focus ~ .search-hint { display: flex; }
 /* Hide hint when input has a value — field wrapper breaks the sibling ~,
    so use :has (supported in modern browsers). Fallback JS also toggles via placeholder. */
 .search-field:has(input:not(:placeholder-shown)) ~ .search-hint,
@@ -444,7 +445,7 @@ a { color: var(--accent); text-decoration: none; }
    The topbar is sticky too (~53px tall), so the wrap parks right under it. */
 .search-wrap {
   position: sticky;
-  top: 53px;
+  top: var(--topbar-height);
   z-index: 15;
   /* Give the floating dropdown an opaque backdrop while stuck. */
   background: var(--bg);
@@ -717,9 +718,10 @@ a { color: var(--accent); text-decoration: none; }
    sticky bar, so results fill the visible viewport beside the keyboard and
    scroll internally (100dvh tracks the dynamic viewport). */
 @media (max-width: 600px) {
-  .search-wrap { top: 47px; }
+  .search-wrap { top: var(--topbar-height); }
+  .search-hint { display: none !important; }
   .search-results {
-    max-height: calc(100dvh - 118px - 66px - var(--safe-bottom));
+    max-height: calc(var(--app-h, 100dvh) - var(--topbar-height) - var(--nav-height) - 84px);
     box-shadow: 0 14px 34px rgba(0, 0, 0, 0.35);
   }
   .search-clear, .voice-btn { width: 36px; height: 36px; }
@@ -1488,8 +1490,7 @@ a { color: var(--accent); text-decoration: none; }
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.38);
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
+
   z-index: 44;
   opacity: 0;
   pointer-events: none;
@@ -1528,21 +1529,6 @@ a { color: var(--accent); text-decoration: none; }
   -webkit-backdrop-filter: none;
 }
 
-/* Hide stacked FABs when a filter sheet is open — prevents overlay */
-body.lib-advanced-open #statusFilterFab,
-body.lib-advanced-open #fabAdd {
-  opacity: 0;
-  pointer-events: none;
-  transform: scale(0.85);
-  transition: opacity 180ms ease, transform 180ms ease;
-}
-body.lib-status-open #libFilterFab,
-body.lib-status-open #fabAdd {
-  opacity: 0;
-  pointer-events: none;
-  transform: scale(0.85);
-  transition: opacity 180ms ease, transform 180ms ease;
-}
 
 /* While any filter sheet is open, lock the background scroll.
    .app-shell is the real scroll container (body is flex column), so both
@@ -1926,12 +1912,12 @@ body.modal-open .app-shell {
   .lib-filter-panel:has(.lib-filter-modern) {
     position: fixed !important;
     top: auto !important;
-    bottom: 0 !important;
+    bottom: var(--nav-height) !important;
     left: 0 !important;
     right: 0 !important;
     width: 100% !important;
-    max-width: none !important;
-    max-height: min(88dvh, 720px) !important;
+    max-width: 720px !important;
+    max-height: min(calc(var(--app-h, 100dvh) - var(--nav-height) - var(--topbar-height) - 12px), 720px) !important;
     border-radius: 20px 20px 0 0 !important;
     border-left: none !important;
     border-right: none !important;
@@ -1943,7 +1929,7 @@ body.modal-open .app-shell {
     transform: translateY(0) !important;
   }
   .lib-filter-panel:has(.lib-filter-modern) .lib-filter-panel-inner {
-    max-height: min(88dvh, 720px);
+    max-height: min(calc(var(--app-h, 100dvh) - var(--nav-height) - var(--topbar-height) - 12px), 720px);
   }
   .lib-filter-modern .lib-filter-sheet-handle { display: block; }
   .lib-filter-modern .lib-filter-header { border-radius: 20px 20px 0 0; padding-top: 6px; }
@@ -2985,34 +2971,6 @@ body.modal-open .app-shell {
   cursor: wait;
 }
 
-/* Search FAB — above status FAB (global, jumps to Library search) */
-.fab-add {
-  display: flex;
-  position: fixed;
-  right: 18px;
-  bottom: calc(18px + 66px + 66px);
-  width: 54px;
-  height: 54px;
-  border-radius: 50%;
-  border: none;
-  background: var(--accent);
-  color: #fff;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 4px 14px rgba(0,0,0,0.45);
-  z-index: 50;
-  cursor: pointer;
-}
-
-.fab-add svg {
-  display: block;
-}
-
-@media (max-width: 600px) {
-  /* Lift FAB above the PWA bottom bar on mobile — above status FAB */
-  .fab-add { bottom: calc(70px + var(--safe-bottom) + 16px + 66px); }
-}
-
 /* Advanced filter now lives inline in the search box; hide its legacy FAB.
    Status FAB remains at bottom-right, library-only. */
 #libFilterFab { display: none !important; }
@@ -3634,4 +3592,156 @@ body.modal-open {
 @keyframes sheet-slide-up {
   from { transform: translateY(100%); }
   to { transform: translateY(0); }
+}
+
+/* Mobile shell: actions occupy their own space, leaving covers unobstructed. */
+.topbar {
+  height: var(--topbar-height);
+  min-height: var(--topbar-height);
+  flex-shrink: 0;
+  padding: 8px max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left));
+  padding-top: calc(8px + env(safe-area-inset-top, 0px));
+  z-index: 60;
+}
+.topbar nav { gap: 8px; }
+.user-menu-btn { width: 44px; height: 44px; }
+.user-menu-dropdown a { min-height: 44px; padding: 13px 12px; }
+.header-search {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--surface2);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+.header-search:hover { background: var(--surface2); }
+.tab-item { font-size: 12px; }
+.tab-item.active { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+#mainContainer { padding-bottom: 24px; scroll-margin-top: var(--topbar-height); }
+.app-shell { overscroll-behavior-y: contain; scroll-padding-top: calc(var(--topbar-height) + 12px); }
+.search-wrap { margin-bottom: 12px; padding-top: 8px; padding-bottom: 4px; }
+.search-field { align-items: center; min-height: 48px; }
+.search-field input {
+  width: 0;
+  flex: 1 1 0;
+  min-height: 46px;
+  padding: 10px 12px;
+  border: 0;
+  background: transparent;
+}
+.search-field .search-clear, .search-field .voice-btn {
+  position: static;
+  transform: none;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+}
+.library-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.library-toolbar h2 { font-size: 1.2rem; }
+.library-toolbar-actions { display: flex; align-items: center; gap: 8px; }
+#statusFilterFab { position: static; }
+#statusFilterBtn, #searchAdvancedBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  width: auto;
+  height: auto;
+  padding: 0 12px;
+  border: 1px solid var(--surface2);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+  box-shadow: none;
+  transform: none;
+  cursor: pointer;
+}
+#statusFilterBtn[aria-expanded="true"], #searchAdvancedBtn[aria-expanded="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+#statusFilterPanel {
+  position: fixed;
+  top: auto;
+  bottom: calc(var(--nav-height) + 8px);
+  left: max(12px, calc((100vw - 696px) / 2));
+  right: max(12px, calc((100vw - 696px) / 2));
+  width: auto;
+  max-width: none;
+  max-height: calc(var(--app-h, 100dvh) - var(--nav-height) - var(--topbar-height) - 16px);
+}
+.status-filter-panel .lib-filter-chips {
+  max-height: min(45dvh, 380px);
+}
+.lib-filter-backdrop { top: var(--topbar-height); bottom: var(--nav-height); }
+.lib-filter-modern .lib-filter-footer { padding-bottom: 12px; }
+.game-grid { align-items: start; }
+.game-grid > .empty-state, .game-grid > .loading, .game-grid > .load-more-retry { grid-column: 1 / -1; }
+.game-card { height: auto; min-width: 0; padding-bottom: 8px; }
+.game-card img { height: auto; aspect-ratio: 264 / 374; flex-shrink: 0; }
+.game-card .card-title {
+  white-space: normal;
+  line-height: 1.35;
+  min-height: 2.7em;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  padding-bottom: 0;
+  margin-bottom: 6px;
+}
+.game-card:has(.rating-display) .card-status { max-width: calc(100% - 54px); }
+.game-card .owned-badge { position: static; align-self: flex-start; margin: 6px 8px 0; }
+.playing-page { padding: 0; margin: 4px auto; background: transparent; }
+.playing-page .hero-card { flex-direction: column; align-items: stretch; padding: 12px; gap: 12px; max-width: none; }
+.hero-open {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.hero-open img { width: 56px; height: 78px; }
+.hero-open .hero-name { font-size: 1rem; white-space: normal; line-height: 1.4; }
+.hero-open .hero-sub { margin-top: 4px; font-size: 0.8rem; }
+.playing-page .hero-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.playing-page .hero-btn { min-width: 0; min-height: 44px; width: auto; height: auto; padding: 8px 4px; font-size: 0.8rem; }
+#toast, #toast-container { bottom: calc(var(--nav-height) + 12px); }
+#toast { max-width: calc(100vw - 24px); width: max-content; }
+.toast-action { min-height: 44px; }
+.modal-footer { padding-bottom: max(14px, var(--safe-bottom)); }
+body.modal-open .app-shell { overflow: hidden; }
+@media (max-width: 600px) {
+  #mainContainer { padding: 8px 12px 24px; }
+  .game-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings-page, .stats-page { margin: 4px auto; padding: 16px; }
+  .settings-row { flex-wrap: wrap; gap: 8px; }
+  .settings-edit { min-width: 0; width: 100%; }
+  .settings-edit input[type="text"] { min-width: 0; }
+  #accountEmail { overflow-wrap: anywhere; }
+  .modal-field input, .modal-field select, .modal-field textarea, .modal-tags-input,
+  .settings-page input, .settings-page select { font-size: 16px; }
+  .opt-chip, .plat-chip, .modal-footer .btn { min-height: 44px; }
 }

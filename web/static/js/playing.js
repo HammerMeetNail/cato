@@ -1,4 +1,4 @@
-import { library, getCoverURL } from './api.js';
+import { library, getCoverURL, getLibraryRevision } from './api.js';
 import { escapeHTML, openLibraryItemModal, showToast } from './library.js';
 
 // Helpers duplicated from library.js hero section (kept there for card quick actions).
@@ -11,7 +11,7 @@ function fmtDelta(minutes) {
   return minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`;
 }
 
-function playingCardHTML(item) {
+function playingCardHTML(item, index) {
   const bits = [];
   if (item.playtime_minutes > 0) bits.push(fmtHours(item.playtime_minutes));
   if (item.started_at) {
@@ -21,26 +21,38 @@ function playingCardHTML(item) {
   const sub = bits.join(' · ');
   return `
     <div class="hero-card" data-game-id="${item.game_id}">
-      <img src="${getCoverURL(item)}" alt="${escapeHTML(item.game_name)}" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='/covers/${item.game_id}.jpg'">
+      <button type="button" class="hero-open" aria-label="Open ${escapeHTML(item.game_name)}">
+      <img width="264" height="374" src="${getCoverURL(item)}" alt="${escapeHTML(item.game_name)}" loading="${index < 2 ? 'eager' : 'lazy'}" ${index < 2 ? 'fetchpriority="high"' : ''} decoding="async" onerror="this.onerror=null;this.src='/covers/${item.game_id}.jpg'">
       <div class="hero-body">
         <div class="hero-name">${escapeHTML(item.game_name)}</div>
-        <div class="hero-controls">
+
           <span class="hero-sub">${escapeHTML(sub)}</span>
+      </div>
+      </button>
           <div class="hero-actions">
             <button type="button" class="hero-btn" data-hero-time="30" title="Log 30 minutes">+30m</button>
             <button type="button" class="hero-btn" data-hero-time="60" title="Log 1 hour">+1h</button>
             <button type="button" class="hero-btn" data-hero-time="120" title="Log 2 hours">+2h</button>
-            <button type="button" class="hero-btn hero-finish" data-hero-finish title="Mark as finished" aria-label="Mark as finished">✓</button>
+            <button type="button" class="hero-btn hero-finish" data-hero-finish title="Mark as finished" aria-label="Mark as finished">Finish</button>
           </div>
-        </div>
-      </div>
     </div>`;
 }
 
 const playingItems = new Map();
+const pendingGames = new Set();
+let renderedRevision = -1;
+let loadVersion = 0;
+let pendingLoad = null;
 
-export async function renderPlayingView(container) {
-  if (!container) return;
+export function renderPlayingView(container) {
+  if (!container || renderedRevision === getLibraryRevision()) return Promise.resolve();
+  if (pendingLoad) return pendingLoad;
+  pendingLoad = loadPlayingView(container).finally(() => { pendingLoad = null; });
+  return pendingLoad;
+}
+async function loadPlayingView(container) {
+  const version = ++loadVersion;
+  const revision = getLibraryRevision();
   container.innerHTML = '<div class="playing-page"><div class="loading">Loading now playing…</div></div>';
 
   let items;
@@ -51,6 +63,9 @@ export async function renderPlayingView(container) {
     return;
   }
 
+  if (version !== loadVersion) return;
+  if (revision !== getLibraryRevision() && !container.hidden) return loadPlayingView(container);
+  renderedRevision = revision;
   playingItems.clear();
   for (const it of items || []) playingItems.set(String(it.game_id), it);
 
@@ -75,7 +90,7 @@ export async function renderPlayingView(container) {
     <h2>Now Playing</h2>
     <div class="playing-count">${items.length} ${items.length === 1 ? 'game' : 'games'} in progress</div>
     <div class="playing-list">
-      ${items.map(it => playingCardHTML(it)).join('')}
+      ${items.map((it, index) => playingCardHTML(it, index)).join('')}
     </div>`;
 
   // Clear and append
@@ -88,23 +103,33 @@ export async function renderPlayingView(container) {
   listEl.addEventListener('click', async (e) => {
     const timeBtn = e.target.closest('[data-hero-time]');
     const finishBtn = e.target.closest('[data-hero-finish]');
-    const coverEl = e.target.closest('.hero-card img');
+    const coverEl = e.target.closest('.hero-open');
     if (!timeBtn && !finishBtn && !coverEl) return;
     const cardEl = (timeBtn || finishBtn || coverEl).closest('.hero-card');
     const gameId = Number(cardEl?.dataset.gameId);
     if (!gameId) return;
 
+    if (pendingGames.has(gameId)) return;
     if (coverEl) {
       const item = playingItems.get(String(gameId));
       if (item) openLibraryItemModal(item);
       return;
     }
 
+    if (pendingGames.has(gameId)) return;
+    pendingGames.add(gameId);
+    const buttons = cardEl.querySelectorAll('button');
+    buttons.forEach(button => { button.disabled = true; });
+    const release = () => {
+      pendingGames.delete(gameId);
+      buttons.forEach(button => { button.disabled = false; });
+    };
     if (timeBtn) {
       const minutes = parseInt(timeBtn.dataset.heroTime, 10) || 0;
       timeBtn.disabled = true;
       try {
         const updated = await library.patch(gameId, { playtime_delta_minutes: minutes });
+        if (version !== loadVersion) return;
         playingItems.set(String(updated.game_id), updated);
         const sub = cardEl.querySelector('.hero-sub');
         const bits = [];
@@ -118,20 +143,20 @@ export async function renderPlayingView(container) {
       } catch (err) {
         showToast(`Couldn't log time: ${err.message}`, { type: 'error' });
       } finally {
-        timeBtn.disabled = false;
+        release();
       }
       return;
     }
 
     // Finish
     const finishItem = playingItems.get(String(gameId));
-    if (!finishItem) return;
+    if (!finishItem) { release(); return; }
     finishBtn.disabled = true;
     try {
       const updated = await library.patch(gameId, { status: 'completed' });
+      if (version !== loadVersion) return;
       showToast(`Finished ${updated.game_name} ✓`);
-      cardEl.classList.add('card-removing');
-      setTimeout(() => {
+
         cardEl.remove();
         playingItems.delete(String(gameId));
         // Update count
@@ -151,10 +176,11 @@ export async function renderPlayingView(container) {
             window.location.hash = '#backlog';
           });
         }
-      }, 260);
+
     } catch (err) {
       showToast(`Couldn't mark as finished: ${err.message}`, { type: 'error' });
-      finishBtn.disabled = false;
+    } finally {
+      release();
     }
   });
 }

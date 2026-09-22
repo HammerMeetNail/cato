@@ -1,4 +1,4 @@
-import { library, getCoverURL, getGame, searchGamesFull, parseTagQuery, formatTagForQuery, autocompleteTags, autocompletePlatforms, autocompleteGlobalPlatforms } from './api.js';
+import { getLibraryRevision, library, getCoverURL, getGame, searchGamesFull, parseTagQuery, formatTagForQuery, autocompleteTags, autocompletePlatforms, autocompleteGlobalPlatforms } from './api.js';
 import { formatYear, releaseLabel, releaseStatus, modalReleaseLabel } from './dates.js';
 
 const VALID_STATUSES = ['wishlist', 'backlog', 'playing', 'completed', 'abandoned'];
@@ -48,7 +48,7 @@ export function setHash(status) {
     }
   } else {
     if (window.location.hash) {
-      history.replaceState(null, '', window.location.pathname + window.location.search);
+      history.replaceState(null, '', window.location.pathname + window.location.search + '#library');
     }
   }
 }
@@ -142,6 +142,43 @@ const libraryFilters = {
 };
 
 let scrollListenerAttached = false;
+let renderedRevision = -1;
+let renderedRoute = '';
+let libraryRoute = 'library/';
+let activeModalClose = null;
+export async function closeGameModal(navigating = false) {
+  return activeModalClose ? activeModalClose(navigating) : true;
+}
+async function refreshVisibleLibrary() {
+  const playing = document.getElementById('playingView');
+  if (playing && !playing.hidden) {
+    const { renderPlayingView } = await import('./playing.js');
+    return renderPlayingView(playing);
+  }
+  if (document.getElementById('libraryView')?.hidden) return;
+  return paginationState.mode === 'search' ? refreshSearchResults() : refreshLibraryView();
+}
+
+export function dismissLibraryFilters() {
+  closeStatusFilterPanel();
+  closeLibFilterPanel();
+  for (const id of ['libFilterBackdrop', 'statusFilterBackdrop']) {
+    const backdrop = document.getElementById(id);
+    if (backdrop) backdrop.hidden = true;
+  }
+}
+
+// Routing reuses the current DOM and pagination; direct filter and mutation
+// refresh calls continue to explicitly reload their data.
+export function resumeLibraryRoute(query, status = '') {
+  const route = query !== null ? `search/${query}` : `library/${status}`;
+  ensureLibFilterFab();
+  ensureStatusFilterFab();
+  if (renderedRoute === route && renderedRevision === getLibraryRevision()) return Promise.resolve();
+  const retainFilters = renderedRoute === route;
+  if (query === null) libraryRoute = route;
+  return query !== null ? loadSearchResults(query) : loadLibrary(retainFilters ? undefined : status);
+}
 
 // Contemporary platform ranking for autocomplete: when user types "ps", ps5/ps4 should surface first.
 const CONTEMPORARY_PLATFORM_RANK = {
@@ -262,8 +299,13 @@ export async function loadSearchResults(query) {
   if (!grid) return;
 
   const loadVersion = ++searchLoadVersion;
+  const revision = getLibraryRevision();
   libraryLoadVersion++;
 
+  renderedRoute = `search/${query}`;
+  renderedRevision = -1;
+  const heading = document.querySelector('.library-toolbar h2');
+  if (heading) heading.textContent = 'Search results';
   resetSearchFilters(query);
 
   // Reset pagination state to search mode
@@ -339,7 +381,7 @@ export async function loadSearchResults(query) {
 
   const clearBtn = header.querySelector('.search-results-clear');
   clearBtn.addEventListener('click', () => {
-    history.replaceState(null, '', window.location.pathname + window.location.search);
+    history.replaceState(null, '', window.location.pathname + window.location.search + '#library');
     loadLibrary('');
   });
 
@@ -363,8 +405,11 @@ export async function loadSearchResults(query) {
       ownedStatuses.set(Number(it.game_id), it.status);
     }
     renderPagedItems(grid, results, true);
+    renderedRevision = revision;
+    renderedRoute = `search/${query}`;
   } catch (err) {
     if (loadVersion !== searchLoadVersion || paginationState.mode !== 'search' || paginationState.searchQuery !== query) return;
+    renderedRevision = -1;
     paginationState.loading = false;
     grid.innerHTML = `<div class="empty-state">Failed to load results: ${err.message}</div>`;
   }
@@ -934,7 +979,7 @@ function wireStatusFilterPanel(panel) {
       setStatuses(next);
       // If hash was showing a single status, clear it — multi-select is local state
       if (window.location.hash && VALID_STATUSES.includes(window.location.hash.slice(1))) {
-        history.replaceState(null, '', window.location.pathname + window.location.search);
+        history.replaceState(null, '', window.location.pathname + window.location.search + '#library');
       }
       syncStatusFilterPanel();
       // Keep advanced filter's library chips in sync when status FAB changes
@@ -1081,6 +1126,7 @@ function ensureStatusFilterFab() {
     });
     document.addEventListener('click', (e) => {
       if (!statusFilterOpen) return;
+      if (e.target.closest('#bottom-tabs, .topbar')) { dismissLibraryFilters(); return; }
       if (fab.contains(e.target)) return;
       if (panel.contains(e.target)) return;
       if (e.target.closest('#tagFilterBar')) return;
@@ -1536,7 +1582,7 @@ function setStagedLibraryStatuses(libChipsEl, statuses) {
     setStatuses(stagedStatuses);
     // A single-status hash deep-link no longer describes a multi-select view.
     if (window.location.hash && VALID_STATUSES.includes(window.location.hash.slice(1))) {
-      history.replaceState(null, '', window.location.pathname + window.location.search);
+      history.replaceState(null, '', window.location.pathname + window.location.search + '#library');
     }
     closeLibFilterPanel();
     loadLibrary(paginationState.statuses, newTag, newPlat, newOwned);
@@ -1583,7 +1629,7 @@ function setStagedLibraryStatuses(libChipsEl, statuses) {
     try { setStatuses([]); } catch {}
     try { if (typeof syncStatusFilterPanel === 'function') syncStatusFilterPanel(); } catch {}
     try { const chipsEl = panel.querySelector('#lfLibraryChips'); if (chipsEl && typeof panel._syncLibraryChips === 'function') panel._syncLibraryChips(); } catch {}
-    history.replaceState(null, '', window.location.pathname + window.location.search);
+    history.replaceState(null, '', window.location.pathname + window.location.search + '#library');
     closeLibFilterPanel();
     loadLibrary([], '', '', '', {sort: '', yearFrom: '', yearTo: '', releaseFrom: '', releaseTo: ''});
   };
@@ -1801,6 +1847,8 @@ function ensureLibraryFilterBar() {
 }
 
 export async function loadLibrary(status, tag, platform, ownedPlatform, extraOpts = null) {
+  const hash = window.location.hash.slice(1);
+  if (hash === 'library' || VALID_STATUSES.includes(hash)) libraryRoute = `library/${hash === 'library' ? '' : hash}`;
   const grid = document.getElementById('gameGrid');
   if (!grid) return;
 
@@ -1808,6 +1856,7 @@ export async function loadLibrary(status, tag, platform, ownedPlatform, extraOpt
   // stale query totals back into the library view.
   searchLoadVersion++;
   const loadVersion = ++libraryLoadVersion;
+  const revision = getLibraryRevision();
 
   // Handle legacy 4-arg calls where 4th arg is actually extraOpts object (platform+owned shift)
   if (ownedPlatform !== undefined && typeof ownedPlatform === 'object' && ownedPlatform !== null && !Array.isArray(ownedPlatform)) {
@@ -1862,6 +1911,10 @@ export async function loadLibrary(status, tag, platform, ownedPlatform, extraOpt
     releaseFrom: libraryFilters.releaseFrom,
     releaseTo: libraryFilters.releaseTo,
   };
+  renderedRoute = libraryRoute;
+  renderedRevision = -1;
+  const heading = document.querySelector('.library-toolbar h2');
+  if (heading) heading.textContent = 'Library';
   const filteredView = hasActiveLibraryFilters();
 
   // Hide search results header and show FABs
@@ -1892,9 +1945,12 @@ export async function loadLibrary(status, tag, platform, ownedPlatform, extraOpt
     if (loadVersion !== libraryLoadVersion || paginationState.mode !== 'library') return;
     if (filteredView) updateLibraryFilterTotal(total);
     renderPagedItems(grid, items, true, hasMore);
+    renderedRevision = revision;
+    renderedRoute = libraryRoute;
     refreshTabCounts();
   } catch (err) {
     if (loadVersion !== libraryLoadVersion || paginationState.mode !== 'library') return;
+    renderedRevision = -1;
     paginationState.loading = false;
     grid.innerHTML = `<div class="empty-state">Failed to load library: ${err.message}</div>`;
   }
@@ -1906,12 +1962,13 @@ export async function loadLibrary(status, tag, platform, ownedPlatform, extraOpt
 // server's exact X-Has-More header.
 function renderPagedItems(grid, items, isFirstPage = true, hasMore = null) {
   removeLoadMoreRetry();
+  if (isFirstPage) { itemsById.clear(); searchResultsById.clear(); }
   if (!items || items.length === 0) {
     if (isFirstPage) {
       renderEmptyState(grid, paginationState.mode);
-      paginationState.hasMore = false;
-      paginationState.loading = false;
     }
+    paginationState.hasMore = false;
+    paginationState.loading = false;
     return;
   }
 
@@ -2002,7 +2059,7 @@ export function renderLibraryItems(items, status = '') {
 }
 
 async function loadMore() {
-  if (paginationState.loading || !paginationState.hasMore) return;
+  if (document.getElementById('libraryView')?.hidden || paginationState.loading || !paginationState.hasMore) return;
 
   paginationState.loading = true;
   const searchVersion = paginationState.mode === 'search' ? searchLoadVersion : null;
@@ -2292,12 +2349,12 @@ function attachScrollListener() {
     // fixed height); window scrolling is the fallback for narrow desktop where
     // the doc itself scrolls. Check both so infinite scroll works everywhere.
     const appShell = document.querySelector('.app-shell');
-    if (appShell && appShell.scrollHeight > appShell.clientHeight) {
+    if (appShell) {
       const pos = appShell.scrollTop + appShell.clientHeight;
       if (pos >= appShell.scrollHeight - 600) {
         loadMore();
-        return;
       }
+      return;
     }
     const scrollPos = window.scrollY + window.innerHeight;
     const scrollThreshold = document.documentElement.scrollHeight - 600;
@@ -2310,8 +2367,7 @@ function attachScrollListener() {
   if (appShell) appShell.addEventListener('scroll', onScroll, { passive: true });
   window.addEventListener('scroll', onScroll, { passive: true });
 
-  // Delegated click handler for tag chips on cards. Delegation survives the
-  // cloneNode rebinding in attachCardEvents.
+  // Delegated tag-chip handling survives appended pages.
   const grid = document.getElementById('gameGrid');
   if (grid) {
     grid.addEventListener('click', (e) => {
@@ -2482,7 +2538,7 @@ function updateTagFilterBar() {
     libraryFilters.yearFrom = ''; libraryFilters.yearTo = ''; libraryFilters.releaseFrom = ''; libraryFilters.releaseTo = ''; libraryFilters.format = ''; libraryFilters.sort = '';
     paginationState.yearFrom = ''; paginationState.yearTo = ''; paginationState.releaseFrom = ''; paginationState.releaseTo = ''; paginationState.formatFilter = ''; paginationState.sort = '';
     setStatuses([]);
-    history.replaceState(null, '', window.location.pathname + window.location.search);
+    history.replaceState(null, '', window.location.pathname + window.location.search + '#library');
     loadLibrary([], '', '', '', {sort: '', yearFrom: '', yearTo: '', releaseFrom: '', releaseTo: ''});
   });
 
@@ -2561,8 +2617,8 @@ function platformsLine(platforms, max = 3) {
 function buildCardHTML(items) {
   const isSearch = paginationState.mode === 'search';
   return items.map((item, index) => {
-    // High priority for the first 8 cards
-    const priority = index < 8 ? ' fetchpriority="high"' : '';
+    const eager = paginationState.offset === 0 && index < (window.innerWidth < 600 ? 2 : 3);
+    const priority = eager ? ' fetchpriority="high"' : '';
     const tagsHTML = (item.tags && item.tags.length)
       ? `<div class="card-tags">${item.tags.map(t => `<span class="tag-chip" data-tag="${escapeHTML(t)}">${escapeHTML(t)}</span>`).join('')}</div>`
       : '';
@@ -2611,7 +2667,7 @@ function buildCardHTML(items) {
 
     return `
     <div class="game-card" data-game-id="${item.game_id}">
-      <img src="${getCoverURL(item)}" alt="${escapeHTML(item.game_name)}" loading="lazy" decoding="async"${priority}>
+      <img src="${getCoverURL(item)}" alt="${escapeHTML(item.game_name)}" width="264" height="374" loading="${eager ? 'eager' : 'lazy'}" decoding="async"${priority}>
       ${libraryOverlays}
       <div class="card-title">${escapeHTML(item.game_name)}</div>
       ${releaseHTML}
@@ -2629,62 +2685,30 @@ function buildCardHTML(items) {
 // flipping the card, which is hard to use on small mobile covers.
 // If items are provided, only attach to cards for those items; otherwise attach to all cards.
 // originalSearchResults is provided in search mode to map back to original result objects.
-function attachCardEvents(grid, newItems = null, originalSearchResults = null) {
-  let cardsToAttach;
-  if (newItems) {
-    // Attach only to cards for the newly added items
-    cardsToAttach = Array.from(grid.querySelectorAll('.game-card')).filter(card =>
-      newItems.some(item => card.dataset.gameId == item.game_id)
-    );
-  } else {
-    // Attach to all cards
-    cardsToAttach = Array.from(grid.querySelectorAll('.game-card'));
-  }
-
-  cardsToAttach.forEach(card => {
-    // Remove existing listeners by cloning (simplest approach)
-    const newCard = card.cloneNode(true);
-    card.parentNode.replaceChild(newCard, card);
-    card = newCard;
-
-    bindCoverFallback(card);
-
-    card.addEventListener('click', (e) => {
-      // Tag chips are handled by the delegated grid listener; don't also open
-      // the edit modal.
-      if (e.target.closest('.tag-chip')) return;
-      const gameId = card.dataset.gameId;
-
-      if (paginationState.mode === 'search') {
-        // In search mode, use original search result
-        const result = searchResultsById.get(gameId);
-        if (!result) return;
-        if (ownedStatuses.has(Number(gameId))) {
-          // Already owned — open the edit form (never the destructive Add form).
-          openLibraryItemById(result.id);
-        } else {
-          addGameToLibrary(result);
-        }
-      } else {
-        // In library mode, use library item
-        const item = itemsById.get(gameId);
-        if (item) openLibraryItemModal(item);
-      }
-    });
-  });
-}
-
-// bindCoverFallback swaps a broken remote cover image for the local
-// /covers/<id>.jpg route, which serves the cached file or the placeholder
-// SVG. Prevents dead remote URLs from rendering as broken images.
-function bindCoverFallback(card) {
-  const img = card.querySelector('img');
-  const gameId = card.dataset.gameId;
-  if (!img || !gameId) return;
-  img.addEventListener('error', () => {
-    if (img.dataset.coverFallback) return;
+function attachCardEvents(grid) {
+  if (grid.dataset.cardsBound) return;
+  grid.dataset.cardsBound = 'true';
+  grid.addEventListener('error', (e) => {
+    const img = e.target;
+    const card = img.closest?.('.game-card');
+    if (!card || img.tagName !== 'IMG' || img.dataset.coverFallback) return;
     img.dataset.coverFallback = '1';
-    img.src = `/covers/${gameId}.jpg`;
+    img.src = `/covers/${card.dataset.gameId}.jpg`;
+  }, true);
+  grid.addEventListener('click', (e) => {
+    if (e.target.closest('.tag-chip')) return;
+    const card = e.target.closest('.game-card');
+    if (!card) return;
+    const gameId = card.dataset.gameId;
+    if (paginationState.mode === 'search') {
+      const result = searchResultsById.get(gameId);
+      if (!result) return;
+      if (ownedStatuses.has(Number(gameId))) openLibraryItemById(result.id);
+      else addGameToLibrary(result);
+    } else {
+      const item = itemsById.get(gameId);
+      if (item) openLibraryItemModal(item);
+    }
   });
 }
 
@@ -2701,7 +2725,7 @@ async function openLibraryItemById(gameID) {
 // openGameModal opens the routable game popup for a #game/<id> deep link. If
 // the game is in the library (rendered or not) it opens the edit form;
 // otherwise it fetches metadata and opens the add-to-library form.
-export async function openGameModal(gameID) {
+export async function openGameModal(gameID, isCurrent = () => true) {
   const item = itemsById.get(String(gameID));
   if (item) {
     openLibraryItemModal(item);
@@ -2710,6 +2734,7 @@ export async function openGameModal(gameID) {
   // The game may be owned but not on the currently loaded page.
   try {
     const existing = await library.get(gameID);
+    if (!isCurrent()) return;
     openLibraryItemModal(existing);
     return;
   } catch {
@@ -2717,7 +2742,8 @@ export async function openGameModal(gameID) {
   }
   try {
     const game = await getGame(gameID);
-    await addGameToLibrary(game);
+    if (!isCurrent()) return;
+    await addGameToLibrary(game, isCurrent);
   } catch (err) {
     console.error('Failed to fetch game:', err.message);
   }
@@ -2726,16 +2752,17 @@ export async function openGameModal(gameID) {
 // addGameToLibrary opens the Add form for a game. If the game turns out to be
 // already in the library, the EDIT form opens instead — saving from the Add
 // form upserts and would have silently reset status/rating/tags/notes.
-export async function addGameToLibrary(game) {
+export async function addGameToLibrary(game, isCurrent = () => true) {
   if (!game || !game.id) return;
   try {
     const item = await library.get(game.id);
+    if (!isCurrent()) return;
     openLibraryItemModal(item);
     return;
   } catch {
     // Not in library — proceed with the add form.
   }
-  openAddForm(game);
+  if (isCurrent()) openAddForm(game);
 }
 
 function openAddForm(game) {
@@ -2778,14 +2805,14 @@ export function openLibraryItemModal(item) {
 // shows a blank form with an "Add to Library" action; in "edit" mode
 // (inLibrary=true) it is pre-filled and offers Save and Remove. Both actions
 // POST to library.add, which upserts.
-function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status = '',
+async function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status = '',
                         rating = 0, playtime = 0, tags = [], notes = '',
                         startedAt = null, completedAt = null,
                         platformsOwned = [], medium = '', platforms = [],
                         inLibrary = false }) {
   // Replace any existing modal (e.g. user clicks a second result).
   const existing = document.getElementById('addGameModal');
-  if (existing) existing.remove();
+  if (existing && !await closeGameModal()) return;
 
   const title = inLibrary ? 'Edit Library Entry' : 'Add to Library';
   // Release date display — prefer the unix timestamp; fall back to the legacy
@@ -2929,7 +2956,7 @@ function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status
       </div>
       <div class="modal-footer">
         <span class="autosave-status" aria-live="polite"></span>
-        <button class="btn btn-secondary modal-cancel" type="button">Close</button>
+        <button class="btn btn-secondary modal-cancel" type="button">${inLibrary ? 'Close' : 'Cancel'}</button>
         ${inLibrary ? '<button class="btn modal-remove" type="button">Remove</button>' : ''}
       </div>
     </div>`;
@@ -3025,7 +3052,13 @@ function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status
     if (!sticky) flashTimer = setTimeout(() => el.classList.remove('visible'), 1600);
   };
 
-  const runSave = async () => {
+  let pendingSave = null;
+  const runSave = () => {
+    const operation = (pendingSave || Promise.resolve()).then(saveCurrent);
+    pendingSave = operation;
+    return operation.finally(() => { if (pendingSave === operation) pendingSave = null; });
+  };
+  const saveCurrent = async () => {
     clearTimeout(saveTimer);
     saveTimer = null;
     if (removed) return;
@@ -3034,7 +3067,7 @@ function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status
       const el = modal.querySelector('.autosave-status');
       if (el) el.classList.remove('visible');
       flashSaveState('Choose a status');
-      unsavedChanges = false;
+      unsavedChanges = true;
       return;
     }
     const snapshot = JSON.stringify(payload);
@@ -3046,7 +3079,7 @@ function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status
     try {
       await library.add(id, payload);
       lastSnapshot = snapshot;
-      unsavedChanges = false;
+      unsavedChanges = JSON.stringify(collectPayload()) !== snapshot;
       savedAtLeastOnce = true;
       if (!createdYet) {
         createdYet = true;
@@ -3334,10 +3367,9 @@ function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status
       `<button type="button" class="tag-chip-menu-item" role="menuitem">${escapeHTML(a.label)}</button>`
     ).join('');
     tagMenu.querySelectorAll('.tag-chip-menu-item').forEach((btn, i) => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         dismissTagMenu();
-        close();
-        applyTagFilter(actions[i].filter);
+        if (await close()) applyTagFilter(actions[i].filter);
       });
     });
     document.body.appendChild(tagMenu);
@@ -3361,34 +3393,50 @@ function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status
     if (chip && chipsContainer.contains(chip)) showTagMenu(chip);
   });
 
-  const close = async () => {
+  let closing = null;
+  let preserveRoute = false;
+  const close = (navigating = false) => {
+    if (navigating === true) preserveRoute = true;
+    if (!closing) closing = finishClose().finally(() => { closing = null; });
+    return closing;
+  };
+  const finishClose = async () => {
     dismissTagMenu();
     // Flush any debounced edit before tearing down — closing must never
     // lose a change. (After removal, runSave no-ops via the removed flag.)
+    if (pendingSave) await pendingSave;
+    // A draft with no status has never been added; closing cancels that draft.
+    // Wait for an earlier save first, since it may have created the entry.
+    if (!createdYet && !collectPayload().status) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      unsavedChanges = false;
+    }
     if (unsavedChanges || saveTimer) await runSave();
+    if (unsavedChanges) {
+      preserveRoute = false;
+      history.replaceState(null, '', window.location.pathname + window.location.search + '#game/' + id);
+      return false;
+    }
+    clearTimeout(flashTimer);
+    if (activeModalClose === close) activeModalClose = null;
     const viewMode = paginationState.mode;
     const viewSearchQuery = paginationState.searchQuery;
     const shouldRefresh = savedAtLeastOnce;
     modal.remove();
     document.body.classList.remove('modal-open');
     document.removeEventListener('keydown', escHandler);
-    if (window.location.hash.startsWith('#game/')) {
-      if (prevHashWasGame || !prevHash) {
-        history.replaceState(null, '', window.location.pathname + window.location.search);
+    if (!preserveRoute && window.location.hash.startsWith('#game/')) {
+      if (prevHashWasGame) {
+        history.replaceState(null, '', window.location.pathname + window.location.search + '#library');
       } else {
         history.replaceState(null, '', window.location.pathname + window.location.search + prevHash);
       }
     }
-    // Reflect auto-saved edits in the view once, on the way out. Search-mode
-    // refreshes are important when the active filter is Wishlist or Backlog.
-    if (shouldRefresh) {
-      if (viewMode === 'search' && viewSearchQuery) {
-        loadSearchResults(viewSearchQuery);
-      } else if (viewMode === 'library') {
-        loadLibrary(currentStatuses(), paginationState.tagFilter, paginationState.platformFilter);
-      }
-    }
+    if (shouldRefresh) await refreshVisibleLibrary();
+    return true;
   };
+  activeModalClose = close;
   modal.querySelector('.modal-close').addEventListener('click', close);
   modal.querySelector('.modal-cancel').addEventListener('click', close);
   modal.addEventListener('click', (e) => {
@@ -3426,16 +3474,14 @@ function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status
       removeBtn.disabled = true;
       removeBtn.textContent = 'Removing...';
       try {
+        if (pendingSave) await pendingSave;
         await library.remove(id);
+        unsavedChanges = false;
         // The handler below refreshes the grid itself; stop close() from
         // double-reloading.
         savedAtLeastOnce = false;
-        close();
-        if (viewMode === 'search' && viewSearchQuery) {
-          await loadSearchResults(viewSearchQuery);
-        } else {
-          await loadLibrary(currentStatuses(), paginationState.tagFilter, paginationState.platformFilter);
-        }
+        await close();
+        await refreshVisibleLibrary();
         showToast(`Removed ${name}`, {
           action: {
             label: 'Undo',
@@ -3446,20 +3492,16 @@ function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, status
               } catch (err) {
                 showToast(`Couldn't restore ${name}: ${err.message}`, { type: 'error' });
               }
-              if (viewMode === 'search' && viewSearchQuery) {
-                await loadSearchResults(viewSearchQuery);
-              } else {
-                await loadLibrary(currentStatuses(), paginationState.tagFilter, paginationState.platformFilter);
-              }
+              await refreshVisibleLibrary();
             },
           },
         });
       } catch (err) {
+        removed = false;
+        unsavedChanges = JSON.stringify(collectPayload()) !== lastSnapshot;
         removeBtn.disabled = false;
         removeBtn.textContent = 'Remove';
         showToast(`Failed to remove game: ${err.message}`, { type: 'error' });
-      } finally {
-        document.removeEventListener('keydown', escHandler);
       }
     });
   }

@@ -1,4 +1,4 @@
-import { checkAuth, updateMe, changePassword, deleteAccount, library } from './api.js';
+import { api, getLibraryRevision, updateMe, changePassword, deleteAccount, library } from './api.js';
 
 function escapeHTML(str) {
   return String(str ?? '').replace(/[&<>"']/g, c => ({
@@ -199,40 +199,51 @@ function wireSettings(container, auth) {
     });
   }
 
-  // Library summary
-  const summaryEl = container.querySelector('#librarySummary');
-  if (summaryEl) {
-    library.counts().then(counts => {
-      if (counts && counts.all >= 0) {
-        const hours = counts.total_minutes > 0 ? Math.round(counts.total_minutes / 60) : 0;
-        summaryEl.textContent =
-          `${counts.all} game${counts.all === 1 ? '' : 's'} · ${counts.completed_count || 0} finished` +
-          (hours > 0 ? ` · ~${hours}h logged` : '');
-      } else {
-        summaryEl.textContent = '—';
-      }
-    }).catch(() => {
-      summaryEl.textContent = '—';
-    });
-  }
 }
 
-export async function renderSettingsView(container) {
-  if (!container) return;
-  // Loading placeholder
-  container.innerHTML = '<div class="settings-page"><div class="loading">Loading settings…</div></div>';
-  let auth;
-  try {
-    auth = await checkAuth();
-  } catch {
-    auth = { authenticated: false };
+const settingsViews = new WeakMap();
+
+export function renderSettingsView(container) {
+  if (!container) return Promise.resolve();
+  let state = settingsViews.get(container);
+  if (!state) { state = { loaded: false, revision: -1, pending: null }; settingsViews.set(container, state); }
+  if (state.pending) return state.pending;
+  if (state.loaded && state.revision === getLibraryRevision()) return Promise.resolve();
+  state.pending = loadSettingsView(container, state).finally(() => { state.pending = null; });
+  return state.pending;
+}
+
+async function loadSettingsView(container, state) {
+  if (!state.loaded) {
+    container.innerHTML = '<div class="settings-page"><div class="loading">Loading settings…</div></div>';
+    try {
+      const auth = await api.get('/api/me');
+      if (!auth.authenticated) { window.location.href = '/login'; return; }
+      container.innerHTML = buildSettingsHTML(auth);
+      wireSettings(container, auth);
+      state.loaded = true;
+    } catch {
+      container.innerHTML = '<div class="settings-page"><div class="empty-state"><p>Failed to load settings.</p><button type="button" class="btn btn-secondary" data-settings-retry>Retry</button></div></div>';
+      container.querySelector('[data-settings-retry]')?.addEventListener('click', () => renderSettingsView(container));
+      return;
+    }
   }
-  if (!auth.authenticated) {
-    window.location.href = '/login';
-    return;
+  // Keep editable fields intact on tab revisits; only refresh the summary.
+  const summaryEl = container.querySelector('#librarySummary');
+  if (!summaryEl) return;
+  let counts, revision;
+  do {
+    revision = getLibraryRevision();
+    counts = await library.counts();
+  } while (revision !== getLibraryRevision());
+  if (counts && counts.all >= 0) {
+    const hours = counts.total_minutes > 0 ? Math.round(counts.total_minutes / 60) : 0;
+    summaryEl.textContent = `${counts.all} game${counts.all === 1 ? '' : 's'} · ${counts.completed_count || 0} finished` +
+      (hours > 0 ? ` · ~${hours}h logged` : '');
+    state.revision = revision;
+  } else {
+    summaryEl.textContent = 'Unable to count games. Reopen Settings to retry.';
   }
-  container.innerHTML = buildSettingsHTML(auth);
-  wireSettings(container, auth);
 }
 
 // For compatibility with plan naming: initSettings is alias

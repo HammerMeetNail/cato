@@ -1,5 +1,13 @@
 const BASE = '';
 
+let libraryRevision = 0;
+export function getLibraryRevision() { return libraryRevision; }
+async function libraryMutation(promise) {
+  const result = await promise;
+  libraryRevision++;
+  return result;
+}
+
 async function request(method, path, body = null, opts = {}) {
   const { data } = await requestFull(method, path, body, opts);
   return data;
@@ -375,7 +383,7 @@ export const library = {
   },
 
   add(gameID, data) {
-    return api.post(`/api/library/${gameID}`, data);
+    return libraryMutation(api.post(`/api/library/${gameID}`, data));
   },
 
   // patch partially updates a library item — absent fields keep their stored
@@ -383,10 +391,10 @@ export const library = {
   // playtime_delta_minutes to add time without read-modify-write races.
   // Resolves with the updated item JSON.
   patch(gameID, data) {
-    return api.patch(`/api/library/${gameID}`, data);
+    return libraryMutation(api.patch(`/api/library/${gameID}`, data));
   },
 
   remove(gameID) {
-    return api.del(`/api/library/${gameID}`);
+    return libraryMutation(api.del(`/api/library/${gameID}`));
   },
 };

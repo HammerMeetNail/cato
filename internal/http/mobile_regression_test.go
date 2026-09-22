@@ -70,10 +70,6 @@ func TestInfiniteScrollListensToAppShell(t *testing.T) {
 	if !strings.Contains(content, "window.addEventListener('scroll'") && !strings.Contains(content, `window.addEventListener("scroll"`) {
 		t.Fatalf("library.js must still keep window scroll listener as fallback for desktop")
 	}
-	// The fix checks appShell.scrollHeight > clientHeight before using window
-	if !strings.Contains(content, "appShell.scrollHeight > appShell.clientHeight") {
-		t.Fatalf("library.js must check appShell scrollHeight vs clientHeight to detect mobile scroll container")
-	}
 	if !strings.Contains(content, "appShell.scrollTop + appShell.clientHeight") {
 		t.Fatalf("library.js must use appShell.scrollTop + clientHeight for threshold")
 	}
@@ -83,23 +79,10 @@ func TestInfiniteScrollListensToAppShell(t *testing.T) {
 // search dropdown does not extend behind the bottom tab bar.
 func TestSearchDropdownMaxHeightAccountsForBottomTabs(t *testing.T) {
 	content := readStaticFile(t, "web/static/css/app.css")
-	// The mobile media query must subtract both the 66px tab bar and safe area
-	if !strings.Contains(content, "max-height: calc(100dvh - 118px - 66px - var(--safe-bottom))") {
-		t.Fatalf("app.css mobile .search-results max-height must account for bottom tabs: expected 'calc(100dvh - 118px - 66px - var(--safe-bottom))'")
-	}
-	// Ensure the old buggy value is not present as the sole definition
-	if strings.Contains(content, "@media (max-width: 600px)") {
-		// Find the block and ensure it contains the fixed value
-		idx := strings.Index(content, "@media (max-width: 600px)")
-		snippet := content[idx:]
-		// Cut to next closing brace of that media query's first rule
-		end := strings.Index(snippet, "}")
-		if end != -1 {
-			snippet = snippet[:end+200] // a bit more
-		}
-		if strings.Contains(snippet, "max-height: calc(100dvh - 118px);") && !strings.Contains(snippet, "66px") {
-			t.Fatalf("app.css still contains old buggy max-height without bottom-tab accounting")
-		}
+	// Shared shell dimensions include top and bottom safe areas. Behavioral
+	// pagination checks also live in scripts/rendering-regression.cjs.
+	if !strings.Contains(content, "max-height: calc(var(--app-h, 100dvh) - var(--topbar-height) - var(--nav-height) - 84px)") {
+		t.Fatal("search dropdown must leave room for the header, search field and bottom navigation")
 	}
 }
 
@@ -129,8 +112,8 @@ func TestTagChipEllipsis(t *testing.T) {
 // service worker cache version so clients don't serve stale JS/CSS.
 func TestServiceWorkerCacheBumped(t *testing.T) {
 	content := readStaticFile(t, "web/static/service-worker.js")
-	if !strings.Contains(content, `CACHE_NAME = "cato-static-v22"`) {
-		t.Fatalf("service-worker.js must have CACHE_NAME v22 after filter-unification fix; got: %s", snippet(content, "CACHE_NAME", 60))
+	if !strings.Contains(content, `CACHE_NAME = "cato-static-v23"`) {
+		t.Fatalf("service-worker.js must have CACHE_NAME v23; got: %s", snippet(content, "CACHE_NAME", 60))
 	}
 }
 
