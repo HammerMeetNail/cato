@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -402,38 +404,102 @@ func TestStaticCacheHeaders(t *testing.T) {
 	}
 }
 
+type shutdownListener struct {
+	net.Listener
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (l *shutdownListener) Close() error {
+	err := l.Listener.Close()
+	l.once.Do(func() { close(l.closed) })
+	return err
+}
+
 func TestServerStartShutdown(t *testing.T) {
 	database := setupGamesTestDB(t)
 	defer database.Close()
-	cfg := &config.Config{ListenAddr: "127.0.0.1:0", StaticDir: "web/static", CoverDir: t.TempDir()}
-	srv := NewServer(cfg, database)
-
-	// Shutdown before Start is a no-op.
-	if err := srv.Shutdown(context.Background()); err != nil {
-		t.Errorf("Shutdown before Start: %v", err)
+	srv := NewServer(&config.Config{ListenAddr: "127.0.0.1:0", StaticDir: t.TempDir(), CoverDir: t.TempDir()}, database)
+	raw, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	errCh := make(chan error, 1)
-	go func() { errCh <- srv.Start() }()
-
-	// Wait for the listener to come up, then drain it.
-	var up bool
-	for i := 0; i < 100; i++ {
-		if srv.httpServer != nil {
-			up = true
-			break
+	listener := &shutdownListener{Listener: raw, closed: make(chan struct{})}
+	entered, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	srv.mux.HandleFunc("/drain", func(w http.ResponseWriter, r *http.Request) {
+		close(entered)
+		<-release
+		w.WriteHeader(http.StatusNoContent)
+	})
+	served := make(chan struct{})
+	go func() { defer close(served); _ = srv.httpServer.Serve(listener) }()
+	defer func() {
+		unblock()
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			t.Errorf("cleanup: %v", err)
 		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if !up {
-		t.Fatal("server did not start")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = srv.httpServer.Close()
+		<-served
+	}()
+	client := &http.Client{Timeout: 3 * time.Second}
+	response := make(chan error, 1)
+	go func() {
+		res, err := client.Get("http://" + raw.Addr().String() + "/drain")
+		if err == nil {
+			res.Body.Close()
+			if res.StatusCode != http.StatusNoContent {
+				err = fmt.Errorf("status %d", res.StatusCode)
+			}
+		}
+		response <- err
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
-		t.Errorf("Shutdown: %v", err)
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal("request not admitted")
 	}
-	if err := <-errCh; err != nil {
-		t.Logf("Start returned: %v", err)
+	stopped := make(chan error, 1)
+	go func() { stopped <- srv.Shutdown(ctx) }()
+	select {
+	case <-listener.closed:
+	case <-ctx.Done():
+		t.Fatal("listener not closed")
+	}
+	select {
+	case err := <-stopped:
+		t.Fatalf("shutdown returned before admitted handler: %v", err)
+	default:
+	}
+	unblock()
+	if err := <-response; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-stopped; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestServerConcurrentStartShutdown(t *testing.T) {
+	database := setupGamesTestDB(t)
+	defer database.Close()
+	srv := NewServer(&config.Config{ListenAddr: "127.0.0.1:0", StaticDir: t.TempDir(), CoverDir: t.TempDir()}, database)
+	gate := make(chan struct{})
+	started, stopped := make(chan error, 1), make(chan error, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	go func() { <-gate; started <- srv.Start() }()
+	go func() { <-gate; stopped <- srv.Shutdown(ctx) }()
+	close(gate)
+	if err := <-stopped; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-started; err != http.ErrServerClosed {
+		t.Fatalf("Start returned %v", err)
 	}
 }

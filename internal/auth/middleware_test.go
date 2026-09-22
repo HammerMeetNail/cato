@@ -381,7 +381,7 @@ func TestFetchGoogleUserDecode(t *testing.T) {
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"sub":"sub-1","email":"g@example.com","name":"Gamer","picture":"http://pic"}`))
+			w.Write([]byte(`{"email_verified":true,"sub":"sub-1","email":"g@example.com","name":"Gamer","picture":"http://pic"}`))
 		default:
 			http.NotFound(w, r)
 		}

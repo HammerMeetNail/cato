@@ -2,6 +2,7 @@ package auth
 
 import (
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -12,7 +13,7 @@ import (
 func setupSessionDB(t *testing.T) *sql.DB {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "test.db")
-	db, err := sql.Open("sqlite", "file:"+path+"?_journal_mode=WAL&_foreign_keys=on")
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)")
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
@@ -180,5 +181,149 @@ func TestExpiredSession(t *testing.T) {
 	}
 	if retrieved != nil {
 		t.Error("expected nil for expired session")
+	}
+}
+
+func TestDisabledSessionOwner(t *testing.T) {
+	db := setupSessionDB(t)
+	defer db.Close()
+	session, err := CreateSession(db, "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("UPDATE users SET disabled = 1 WHERE id = 'user-1'"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := GetSession(db, session.ID); err != nil || got != nil {
+		t.Fatalf("disabled lookup = %v, %v", got, err)
+	}
+	if _, err := CreateSession(db, "user-1"); !errors.Is(err, ErrSessionRejected) {
+		t.Fatalf("disabled issuance = %v", err)
+	}
+}
+
+func TestPasswordChangeConcurrentLoginBoundary(t *testing.T) {
+	for _, issueBeforeChange := range []bool{true, false} {
+		name := "insert_after_change"
+		if issueBeforeChange {
+			name = "insert_before_change"
+		}
+		t.Run(name, func(t *testing.T) {
+			db := setupSessionDB(t)
+			defer db.Close()
+			oldHash, err := HashPassword("oldpassword")
+			if err != nil {
+				t.Fatal(err)
+			}
+			newHash, err := HashPassword("newpassword")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec("UPDATE users SET password_hash = ? WHERE id = 'user-1'", oldHash); err != nil {
+				t.Fatal(err)
+			}
+			current, err := CreateSession(db, "user-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			other, err := CreateSession(db, "user-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			verified := make(chan error, 1)
+			release := make(chan struct{})
+			type result struct {
+				session *Session
+				err     error
+			}
+			issued := make(chan result, 1)
+			// Model the production read/check/insert path with an explicit barrier
+			// after bcrypt verification. No sleep or scheduler assumption orders it.
+			go func() {
+				var hash string
+				err := db.QueryRow("SELECT password_hash FROM users WHERE id = 'user-1'").Scan(&hash)
+				if err == nil && !CheckPassword("oldpassword", hash) {
+					err = errors.New("password check failed")
+				}
+				verified <- err
+				<-release
+				if err != nil {
+					issued <- result{err: err}
+					return
+				}
+				session, err := CreatePasswordSession(db, "user-1", hash)
+				issued <- result{session, err}
+			}()
+			verificationErr := <-verified
+			if verificationErr != nil {
+				close(release)
+				<-issued
+				t.Fatal(verificationErr)
+			}
+			var login result
+			if issueBeforeChange {
+				close(release)
+				login = <-issued
+			}
+			changeErr := ChangePassword(db, "user-1", current.ID, oldHash, newHash)
+			if !issueBeforeChange {
+				close(release)
+				login = <-issued
+			}
+			if changeErr != nil {
+				t.Fatal(changeErr)
+			}
+			if issueBeforeChange {
+				if login.err != nil {
+					t.Fatal(login.err)
+				}
+				if got, err := GetSession(db, login.session.ID); err != nil || got != nil {
+					t.Fatalf("old login survived: %v, %v", got, err)
+				}
+			} else if !errors.Is(login.err, ErrSessionRejected) {
+				t.Fatalf("stale login issuance: %v", login.err)
+			}
+			if got, err := GetSession(db, current.ID); err != nil || got == nil {
+				t.Fatalf("current session lost: %v", err)
+			}
+			if got, err := GetSession(db, other.ID); err != nil || got != nil {
+				t.Fatalf("other session survived: %v", err)
+			}
+			if _, err := CreatePasswordSession(db, "user-1", newHash); err != nil {
+				t.Fatalf("new login rejected: %v", err)
+			}
+		})
+	}
+}
+
+func TestPasswordChangeRollsBackWhenRevocationFails(t *testing.T) {
+	db := setupSessionDB(t)
+	defer db.Close()
+	if _, err := db.Exec("UPDATE users SET password_hash = 'old-hash' WHERE id = 'user-1'"); err != nil {
+		t.Fatal(err)
+	}
+	current, err := CreateSession(db, "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := CreateSession(db, "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER reject_revocation BEFORE DELETE ON sessions BEGIN SELECT RAISE(ABORT, 'injected failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := ChangePassword(db, "user-1", current.ID, "old-hash", "new-hash"); err == nil {
+		t.Fatal("expected revocation failure")
+	}
+	var hash string
+	if err := db.QueryRow("SELECT password_hash FROM users WHERE id = 'user-1'").Scan(&hash); err != nil {
+		t.Fatal(err)
+	}
+	if hash != "old-hash" {
+		t.Fatal("password update escaped rollback")
+	}
+	if session, err := GetSession(db, other.ID); err != nil || session == nil {
+		t.Fatalf("session lost on rollback: %v", err)
 	}
 }

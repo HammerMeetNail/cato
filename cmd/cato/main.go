@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"log"
@@ -17,8 +18,8 @@ import (
 	"cato/internal/db"
 	"cato/internal/games"
 	"cato/internal/http"
-	"cato/internal/importer"
 	"cato/internal/igdb"
+	"cato/internal/importer"
 )
 
 func main() {
@@ -281,7 +282,7 @@ func main() {
 		log.Fatalf("migrate: %v", err)
 	}
 
-		coverWorker := covers.NewWorker(database, cfg.CoverDir)
+	coverWorker := covers.NewWorker(database, cfg.CoverDir)
 	coverWorker.Start()
 
 	// One-time cleanup of cover URLs pointing at the defunct
@@ -322,41 +323,87 @@ func main() {
 	// Periodic maintenance: expired sessions and expired IGDB cache entries
 	// are otherwise only removed lazily (or never). Run one sweep at startup,
 	// then daily.
-	maintenance := func() {
-		if n, err := auth.CleanupExpiredSessions(database); err != nil {
+	maintenance := func(ctx context.Context) {
+		if n, err := auth.CleanupExpiredSessions(maintenanceDB{DB: database, ctx: ctx}); err != nil {
 			log.Printf("maintenance: session cleanup failed: %v", err)
 		} else if n > 0 {
 			log.Printf("maintenance: deleted %d expired sessions", n)
 		}
-		if n, err := games.PurgeExpiredQueryCache(database); err != nil {
+		if n, err := games.PurgeExpiredQueryCacheContext(ctx, database); err != nil {
 			log.Printf("maintenance: query cache purge failed: %v", err)
 		} else if n > 0 {
 			log.Printf("maintenance: purged %d expired cache entries", n)
 		}
 	}
-	maintenance()
-	go func() {
-		ticker := time.NewTicker(24 * time.Hour)
-		defer ticker.Stop()
-		for range ticker.C {
-			maintenance()
-		}
-	}()
+	maintenanceCtx, cancelMaintenance := context.WithCancel(context.Background())
+	maintenanceDone := runMaintenance(maintenanceCtx, 24*time.Hour, maintenance)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sig)
 
+	serverFailed := false
 	select {
 	case err := <-serverErr:
 		if err != nil && err != nethttp.ErrServerClosed {
-			log.Fatalf("server: %v", err)
+			log.Printf("server: %v", err)
+			serverFailed = true
 		}
 	case s := <-sig:
 		log.Printf("received %v, shutting down", s)
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := srv.Shutdown(ctx); err != nil {
-			log.Printf("shutdown: %v", err)
-		}
 	}
+	// Drain admitted HTTP requests first, then cancel/join all background owners.
+	// Leave five seconds of the overall budget for background work to stop.
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancelShutdown()
+	drainCtx, cancelDrain := context.WithTimeout(shutdownCtx, 15*time.Second)
+	shutdownErr := srv.Shutdown(drainCtx)
+	cancelDrain()
+	cancelMaintenance()
+	coverErr := coverWorker.Shutdown(shutdownCtx)
+	select {
+	case <-maintenanceDone:
+	case <-shutdownCtx.Done():
+		log.Printf("maintenance shutdown: %v", shutdownCtx.Err())
+		os.Exit(1) // Do not close the DB while any owner may still be using it.
+	}
+	if shutdownErr != nil || coverErr != nil {
+		log.Printf("shutdown failed: HTTP/catalog=%v covers=%v", shutdownErr, coverErr)
+		os.Exit(1)
+	}
+	if serverFailed {
+		_ = database.Close()
+		os.Exit(1)
+	}
+}
+
+// Bind the legacy auth maintenance interface to the owned cancellation context.
+type maintenanceDB struct {
+	*db.DB
+	ctx context.Context
+}
+
+func (d maintenanceDB) Exec(query string, args ...any) (sql.Result, error) {
+	return d.DB.ExecContext(d.ctx, query, args...)
+}
+
+func runMaintenance(ctx context.Context, interval time.Duration, sweep func(context.Context)) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			if ctx.Err() != nil {
+				return
+			}
+			sweep(ctx)
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	return done
 }

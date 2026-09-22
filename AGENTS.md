@@ -7,10 +7,14 @@ make test    # go test ./...
 make build   # go build -o cato ./cmd/cato
 make run     # build + start locally (background, writes .pid)
 make stop    # kill background process
-go vet ./...  # vet (no Makefile target, but clean and worth running)
+make vet     # go vet ./...
+make release-check # unit/race, vet, builds, JS, backups, security, desktop/mobile E2E
 ```
 
-There is no lint or formatter command defined. `go vet ./...` is expected to be clean.
+There is no formatter target. `make vet` runs `go vet ./...` and is expected to
+be clean. Go 1.26.8 is selected by go.mod. Release checks also need Node 24+,
+Python 3.10+, sqlite3 and Playwright Chromium dependencies; see
+`docs/production-runbook.md`. Keep generated logs/traces outside the repository.
 
 ## Architecture
 
@@ -129,7 +133,7 @@ Production runs in **Docker on a Synology NAS** (host alias `nas2`,
 
 ```bash
 make deploy        # cross-compile (linux/amd64, CGO disabled) + push binary/static + compose up --build
-make deploy-full   # deploy, and also push the local data/cato.db (rarely wanted — clobbers prod data)
+make deploy-full   # disabled: use the stopped-service restore runbook for data replacement
 make deploy-logs   # tail container logs
 ```
 
@@ -139,5 +143,7 @@ When changing any shipped asset under `web/static`, increment the versioned
 `cato-static-v8` to `cato-static-v9`). The new service worker purges the old
 cache on activation; an already-open client may need one reload to activate it.
 WAL conversion of an existing DB happens automatically on first open. Back up the prod DB
-(`cp cato.db cato.db.bak-...`) before any manual DB surgery; `docker` and `sqlite3` are
+with SQLite `.backup` (never copy a live WAL database) before any manual DB surgery;
+see `docs/production-runbook.md` for verified backup and stopped-service restore.
+`docker` and `sqlite3` are
 available on `nas2` (docker at `/usr/local/bin/docker`, no sudo needed).

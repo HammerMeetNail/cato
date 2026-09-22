@@ -1,0 +1,43 @@
+name: Release checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: release-checks-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CATO_E2E_RESULTS: /tmp/cato-e2e-results
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.26.8'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+      - name: Install browser system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sqlite3
+          npm --prefix e2e ci
+          cd e2e && npx playwright install --with-deps chromium
+      - name: Validate release
+        run: make release-check
+      - name: Browser failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: browser-failures
+          path: /tmp/cato-e2e-results
+          if-no-files-found: ignore
+          retention-days: 7

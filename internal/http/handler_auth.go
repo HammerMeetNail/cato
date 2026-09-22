@@ -3,7 +3,7 @@ package http
 import (
 	"database/sql"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
@@ -256,8 +256,11 @@ func (h *AuthHandler) handleChangePassword(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if _, err := h.db.Exec(`UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		newHash, userID); err != nil {
+	if err := auth.ChangePassword(h.db, userID, auth.GetSessionID(r), passwordHash, newHash); err != nil {
+		if errors.Is(err, auth.ErrSessionRejected) {
+			writeJSON(w, http.StatusUnauthorized, errResp("invalid_credentials", "Credentials changed; sign in again"))
+			return
+		}
 		log.Printf("change password for %s: %v", userID, err)
 		writeJSON(w, http.StatusInternalServerError, errResp("internal_error", "Failed to change password"))
 		return
@@ -340,6 +343,10 @@ func (h *AuthHandler) handleSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(req.Password) > 72 {
+		writeJSON(w, http.StatusBadRequest, errResp("weak_password", "Password must be at most 72 bytes"))
+		return
+	}
 	passwordHash, err := auth.HashPassword(req.Password)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errResp("internal_error", "Failed to process password"))
@@ -368,10 +375,10 @@ func (h *AuthHandler) handleSignup(w http.ResponseWriter, r *http.Request) {
 
 	auth.SetSessionCookie(w, session.ID, h.cfg.CookieSecure)
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"user_id":      userID,
-		"email":        req.Email,
+		"user_id":       userID,
+		"email":         req.Email,
 		"authenticated": true,
-		"csrf_token":   session.CSRFToken,
+		"csrf_token":    session.CSRFToken,
 	})
 }
 
@@ -399,7 +406,7 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var userID, passwordHash, displayName string
 	var disabled int
 	err := h.db.QueryRow(
-		"SELECT id, password_hash, COALESCE(display_name, ''), disabled FROM users WHERE email = ?",
+		"SELECT id, COALESCE(password_hash, ''), COALESCE(display_name, ''), disabled FROM users WHERE email = ?",
 		req.Email,
 	).Scan(&userID, &passwordHash, &displayName, &disabled)
 	if err == sql.ErrNoRows {
@@ -421,8 +428,12 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, err := auth.CreateSession(h.db, userID)
+	session, err := auth.CreatePasswordSession(h.db, userID, passwordHash)
 	if err != nil {
+		if errors.Is(err, auth.ErrSessionRejected) {
+			writeJSON(w, http.StatusUnauthorized, errResp("invalid_credentials", "Invalid email or password"))
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, errResp("internal_error", "Failed to create session"))
 		return
 	}
@@ -518,6 +529,15 @@ func (h *AuthHandler) handleGoogleCallback(w http.ResponseWriter, r *http.Reques
 
 	userID, err := h.findOrCreateGoogleUser(googleUser)
 	if err != nil {
+		if errors.Is(err, errGoogleEmailConflict) {
+			writeJSON(w, http.StatusConflict, errResp("email_taken", "An account already uses this email. Sign in using its existing method; automatic Google linking is not supported"))
+			return
+		}
+		if errors.Is(err, errGoogleDisabled) {
+			writeJSON(w, http.StatusForbidden, errResp("account_disabled", "Account is disabled"))
+			return
+		}
+
 		writeJSON(w, http.StatusInternalServerError, errResp("internal_error", "Failed to process account"))
 		return
 	}
@@ -532,43 +552,48 @@ func (h *AuthHandler) handleGoogleCallback(w http.ResponseWriter, r *http.Reques
 	http.Redirect(w, r, "/library", http.StatusFound)
 }
 
+var errGoogleEmailConflict = errors.New("email belongs to another account")
+var errGoogleDisabled = errors.New("account disabled")
+
 func (h *AuthHandler) findOrCreateGoogleUser(gu *auth.GoogleUser) (string, error) {
+	if err := auth.ValidateGoogleUser(gu); err != nil {
+		return "", err
+	}
 	var userID string
-	err := h.db.QueryRow(
-		"SELECT id FROM users WHERE google_subject = ?",
-		gu.Sub,
-	).Scan(&userID)
+	var disabled int
+	err := h.db.QueryRow("SELECT id, disabled FROM users WHERE google_subject = ?", gu.Sub).Scan(&userID, &disabled)
 	if err == nil {
+		if disabled != 0 {
+			return "", errGoogleDisabled
+		}
 		return userID, nil
 	}
 	if err != sql.ErrNoRows {
 		return "", err
 	}
-
-	// Try by email
-	err = h.db.QueryRow(
-		"SELECT id FROM users WHERE email = ?",
-		gu.Email,
-	).Scan(&userID)
+	email := strings.ToLower(strings.TrimSpace(gu.Email))
+	err = h.db.QueryRow("SELECT id FROM users WHERE email = ?", email).Scan(&userID)
 	if err == nil {
-		// Link Google account to existing user
-		h.db.Exec("UPDATE users SET google_subject = ?, avatar_url = ? WHERE id = ?", gu.Sub, gu.Picture, userID)
-		return userID, nil
+		return "", errGoogleEmailConflict
 	}
 	if err != sql.ErrNoRows {
 		return "", err
 	}
-
-	if gu.Email == "" {
-		return "", fmt.Errorf("google user has no email")
-	}
-	// Create new user
 	userID = uuid.New().String()
-	_, err = h.db.Exec(
-		"INSERT INTO users (id, email, display_name, avatar_url, google_subject) VALUES (?, ?, ?, ?, ?)",
-		userID, gu.Email, gu.Name, gu.Picture, gu.Sub,
-	)
+	_, err = h.db.Exec("INSERT INTO users (id, email, display_name, avatar_url, google_subject) VALUES (?, ?, ?, ?, ?)", userID, email, gu.Name, gu.Picture, gu.Sub)
 	if err != nil {
+		// A concurrent callback/signup may have won the unique-key race.
+		if strings.Contains(err.Error(), "UNIQUE") {
+			var existing string
+			var disabled int
+			if lookupErr := h.db.QueryRow("SELECT id, disabled FROM users WHERE google_subject = ?", gu.Sub).Scan(&existing, &disabled); lookupErr == nil {
+				if disabled != 0 {
+					return "", errGoogleDisabled
+				}
+				return existing, nil
+			}
+			return "", errGoogleEmailConflict
+		}
 		return "", err
 	}
 	return userID, nil

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -24,19 +25,41 @@ type Session struct {
 	ExpiresAt time.Time
 }
 
+var ErrSessionRejected = errors.New("account or credentials no longer valid")
+
 func CreateSession(db Querier, userID string) (*Session, error) {
+	return createSession(db, userID, nil)
+}
+
+// CreatePasswordSession binds issuance to the hash that was actually verified.
+// SQLite serializes this insert with password changes on the writer.
+func CreatePasswordSession(db Querier, userID, verifiedHash string) (*Session, error) {
+	return createSession(db, userID, &verifiedHash)
+}
+
+func createSession(db Querier, userID string, verifiedHash *string) (*Session, error) {
 	id := RandomToken(32)
 	csrf := RandomToken(32)
 	hashedID := hashToken(id)
 
 	expiresAt := time.Now().Add(30 * 24 * time.Hour)
 
-	_, err := db.Exec(
-		"INSERT INTO sessions (id, user_id, csrf_token, expires_at) VALUES (?, ?, ?, ?)",
-		hashedID, userID, csrf, expiresAt.Format(time.RFC3339),
-	)
+	query := "INSERT INTO sessions (id, user_id, csrf_token, expires_at) SELECT ?, id, ?, ? FROM users WHERE id = ? AND disabled = 0"
+	args := []any{hashedID, csrf, expiresAt.Format(time.RFC3339), userID}
+	if verifiedHash != nil {
+		query += " AND password_hash = ?"
+		args = append(args, *verifiedHash)
+	}
+	result, err := db.Exec(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("create session: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if n != 1 {
+		return nil, ErrSessionRejected
 	}
 
 	return &Session{
@@ -53,7 +76,7 @@ func GetSession(db Querier, sessionID string) (*Session, error) {
 	var s Session
 	var expiresAtStr string
 	err := db.QueryRow(
-		"SELECT id, user_id, csrf_token, expires_at FROM sessions WHERE id = ?",
+		"SELECT s.id, s.user_id, s.csrf_token, s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = ? AND u.disabled = 0",
 		hashedID,
 	).Scan(&s.ID, &s.UserID, &s.CSRFToken, &expiresAtStr)
 	if err == sql.ErrNoRows {
@@ -116,4 +139,32 @@ func RandomToken(length int) string {
 func hashToken(token string) string {
 	h := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(h[:])
+}
+
+// ChangePassword atomically replaces verified credentials and revokes every
+// other session. The retained session must still belong to an enabled user.
+func ChangePassword(db interface{ Begin() (*sql.Tx, error) }, userID, currentSession, verifiedHash, newHash string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(`UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP
+ WHERE id = ? AND password_hash = ? AND disabled = 0
+ AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND user_id = users.id AND julianday(expires_at) > julianday('now'))`,
+		newHash, userID, verifiedHash, hashToken(currentSession))
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return ErrSessionRejected
+	}
+	if _, err := tx.Exec("DELETE FROM sessions WHERE user_id = ? AND id != ?", userID, hashToken(currentSession)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

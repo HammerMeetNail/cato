@@ -17,8 +17,13 @@ Open `http://localhost:7080`.
 ## Docker
 
 ```bash
+make deploy-build  # Dockerfile packages the Linux/amd64 binary
 docker compose up -d --build
 ```
+
+Copy `.env.example` to `.env` and set the externally visible URL first. See the
+[production runbook](docs/production-runbook.md) for HTTPS, release validation,
+backups, restore and rollback. This release targets a trusted private network.
 
 ## Configuration
 
@@ -90,12 +95,17 @@ Google OAuth needs `CATO_BASE_URL` set to the address users type into their brow
 ## Backup
 
 ```bash
-# Binary backup (fast, identical restore)
-sqlite3 data/cato.db ".backup 'backup/cato-$(date +%F).db'"
+# Verified online snapshot (Python 3.10+)
+make db-backup
 
-# Restore
-cp backup/cato-YYYY-MM-DD.db data/cato.db
+# Stop every process using the database before restoring
+make stop
+make db-restore FILE=backup/CHOSEN-SNAPSHOT.db SERVICE_STOPPED=1
 ```
+
+Restore preserves a pre-restore snapshot. Follow the
+[NAS restore procedure](docs/production-runbook.md#restore-and-rollback) for Docker;
+never copy over a running SQLite database.
 
 ## Architecture
 
@@ -119,4 +129,8 @@ make test    # run all tests
 make build   # compile
 make run     # start locally (foreground in background)
 make stop    # stop locally
+make release-check # build, vet, race, frontend, backup, dependency and browser checks
 ```
+
+Go 1.26.8 is selected by `go.mod`. Release checks also require Node 24+, Python
+3.10+, sqlite3, and Playwright's Chromium system dependencies (see the runbook).

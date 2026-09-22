@@ -9,6 +9,8 @@ services:
       - ./data:/app/data
     environment:
       - CATO_LISTEN_ADDR=:7080
+      - CATO_BASE_URL=${CATO_BASE_URL:-}
+      - CATO_SECURE_COOKIES=${CATO_SECURE_COOKIES:-false}
       - IGDB_CLIENT_ID=${TWITCH_OAUTH_ID:-}
       - IGDB_CLIENT_SECRET=${TWITCH_OAUTH_SECRET:-}
       - TWITCH_OAUTH_ID=${TWITCH_OAUTH_ID:-}
@@ -16,3 +18,9 @@ services:
       - GOOGLE_KEY=${GOOGLE_KEY:-}
       - GOOGLE_SECRET=${GOOGLE_SECRET:-}
     restart: unless-stopped
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

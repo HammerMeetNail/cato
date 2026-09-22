@@ -32,10 +32,18 @@ type Service struct {
 	refreshing     map[string]chan struct{}
 	refreshSlots   chan struct{}
 	refreshTimeout time.Duration
+	lifecycleMu    sync.Mutex
+	stopping       bool
+	workers        sync.WaitGroup
+	ctx            context.Context
+	cancel         context.CancelFunc
+	stopped        chan struct{}
 }
 
 func NewService(store *Store, igdb IGDBClient, db *db.DB) *Service {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Service{
+		ctx: ctx, cancel: cancel, stopped: make(chan struct{}),
 		store:          store,
 		igdb:           igdb,
 		db:             db,
@@ -156,6 +164,11 @@ func (s *Service) SearchPagedFullWithFilters(ctx context.Context, query string, 
 // slot is held so concurrent requests cannot duplicate an IGDB query. A full
 // slot drops the refresh; a later request can retry it without being blocked.
 func (s *Service) startAsyncRefresh(query string, includeEditions bool) {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.stopping {
+		return
+	}
 	key := cacheKey(query, includeEditions)
 	s.refreshMu.Lock()
 	if _, ok := s.refreshing[key]; ok {
@@ -169,23 +182,25 @@ func (s *Service) startAsyncRefresh(query string, includeEditions bool) {
 	select {
 	case s.refreshSlots <- struct{}{}:
 	default:
-		close(done)
 		s.refreshMu.Lock()
 		delete(s.refreshing, key)
+		close(done)
 		s.refreshMu.Unlock()
 		return
 	}
 
+	s.workers.Add(1)
 	go func() {
+		defer s.workers.Done()
 		defer func() {
 			<-s.refreshSlots
-			close(done)
 			s.refreshMu.Lock()
 			delete(s.refreshing, key)
+			close(done)
 			s.refreshMu.Unlock()
 		}()
 
-		ctx, cancel := context.WithTimeout(context.Background(), s.refreshTimeout)
+		ctx, cancel := context.WithTimeout(s.ctx, s.refreshTimeout)
 		defer cancel()
 		s.refreshFromIGDB(ctx, query, includeEditions)
 	}()
@@ -258,31 +273,34 @@ func (s *Service) SyncPlatforms(ctx context.Context) error {
 // retries, so a transient network failure at container start doesn't leave
 // platforms missing until the next deploy.
 func (s *Service) StartPlatformSync() {
-	go func() {
-		ctx := context.Background()
+	s.startWorker(func(ctx context.Context) {
 		var err error
 		for attempt := 0; attempt < 3; attempt++ {
 			if attempt > 0 {
-				time.Sleep(15 * time.Second)
+				if !waitContext(ctx, 15*time.Second) {
+					return
+				}
 			}
 			if err = s.SyncPlatforms(ctx); err == nil {
 				return
 			}
 		}
 		log.Printf("platform sync: giving up after retries: %v", err)
-	}()
+	})
 }
 
 func (s *Service) StartStaleRefresh() {
 	const maxPerDay = 100
 	const interval = 6 * time.Hour
 
-	go func() {
-		for {
-			s.refreshStaleGames(maxPerDay)
-			time.Sleep(interval)
+	s.startWorker(func(ctx context.Context) {
+		for ctx.Err() == nil {
+			s.refreshStaleGamesContext(ctx, maxPerDay)
+			if !waitContext(ctx, interval) {
+				return
+			}
 		}
-	}()
+	})
 }
 
 // StartQueryCacheRefresh proactively refreshes stale igdb_query_cache entries
@@ -292,19 +310,23 @@ func (s *Service) StartStaleRefresh() {
 // after the 24h window still hits a fresh cache. Only call it when a real
 // IGDB client is configured.
 func (s *Service) StartQueryCacheRefresh() {
-	go func() {
+	s.startWorker(func(ctx context.Context) {
 		// Run once shortly after startup so a restart doesn't wait a full day
 		// to refresh queries that expired while the container was down.
-		time.Sleep(30 * time.Second)
-		for {
-			s.refreshStaleQueries(50)
-			time.Sleep(24 * time.Hour)
+		if !waitContext(ctx, 30*time.Second) {
+			return
 		}
-	}()
+		for {
+			s.refreshStaleQueriesContext(ctx, 50)
+			if !waitContext(ctx, 24*time.Hour) {
+				return
+			}
+		}
+	})
 }
 
-func (s *Service) refreshStaleQueries(limit int) {
-	ctx := context.Background()
+func (s *Service) refreshStaleQueries(limit int) { s.refreshStaleQueriesContext(s.ctx, limit) }
+func (s *Service) refreshStaleQueriesContext(ctx context.Context, limit int) {
 	keys, err := s.store.GetStaleQueries(ctx, limit)
 	if err != nil {
 		log.Printf("query cache refresh: list failed: %v", err)
@@ -341,7 +363,7 @@ func parseCacheKey(key string) (string, bool) {
 // Only call it when a real IGDB client is configured — without one there is
 // nothing to re-fetch metadata from.
 func (s *Service) StartCoverRepair() {
-	go s.RepairCovers(context.Background())
+	s.startWorker(func(ctx context.Context) { s.RepairCovers(ctx) })
 }
 
 // RepairCovers fixes cover data poisoned by earlier bugs:
@@ -594,16 +616,12 @@ func PurgeDeadCoverSources(database *db.DB) (int64, error) {
 // FTS/LIKE. The new NormalizeName strips diacritics, so we update any
 // mismatched rows. Safe to run repeatedly; idempotent.
 func (s *Service) StartNormalizationRepair() {
-	// Quick synchronous check: if the games table doesn't exist (e.g. a
-	// fresh DB in tests that hasn't been migrated) skip the background
-	// work entirely to avoid noisy logs and file-handle races during
-	// TempDir cleanup.
-	var cnt int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='games'`).Scan(&cnt); err != nil || cnt == 0 {
-		return
-	}
-	go func() {
-		ctx := context.Background()
+	s.startWorker(func(ctx context.Context) {
+		var cnt int
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='games'`).Scan(&cnt); err != nil || cnt == 0 {
+			return
+		}
+
 		if n, err := s.store.RepairNormalizedNames(ctx); err != nil {
 			log.Printf("normalization repair: games failed: %v", err)
 		} else if n > 0 {
@@ -614,7 +632,7 @@ func (s *Service) StartNormalizationRepair() {
 		} else if n > 0 {
 			log.Printf("normalization repair: fixed %d aliases", n)
 		}
-	}()
+	})
 }
 
 // RepairNormalization is the synchronous variant used by tests and the
@@ -912,8 +930,8 @@ func (s *Service) BackfillCategories(ctx context.Context, batchSize int, progres
 	return done, nil
 }
 
-func (s *Service) refreshStaleGames(maxPerDay int) {
-	ctx := context.Background()
+func (s *Service) refreshStaleGames(maxPerDay int) { s.refreshStaleGamesContext(s.ctx, maxPerDay) }
+func (s *Service) refreshStaleGamesContext(ctx context.Context, maxPerDay int) {
 
 	ids, err := s.store.GetStaleGames(ctx, maxPerDay)
 	if err != nil {
@@ -929,6 +947,9 @@ func (s *Service) refreshStaleGames(maxPerDay int) {
 
 	refreshed := 0
 	for _, id := range ids {
+		if ctx.Err() != nil {
+			return
+		}
 		game, err := s.igdb.GetGame(ctx, id)
 		if err != nil {
 			log.Printf("stale refresh: game %d failed: %v", id, err)
@@ -980,7 +1001,11 @@ func (s *Service) shouldAskIGDB(ctx context.Context, query string, includeEditio
 // awaiting their daily refresh. Only rows expired for more than 30 days are
 // removed — rare queries that haven't been searched in a month.
 func PurgeExpiredQueryCache(database *db.DB) (int64, error) {
-	res, err := database.Exec("DELETE FROM igdb_query_cache WHERE expires_at < ?",
+	return PurgeExpiredQueryCacheContext(context.Background(), database)
+}
+
+func PurgeExpiredQueryCacheContext(ctx context.Context, database *db.DB) (int64, error) {
+	res, err := database.ExecContext(ctx, "DELETE FROM igdb_query_cache WHERE expires_at < ?",
 		time.Now().Add(-30*24*time.Hour).Format(time.RFC3339))
 	if err != nil {
 		return 0, err
@@ -1044,4 +1069,42 @@ func cacheKey(query string, includeEditions bool) string {
 		return "search:" + query + ":editions"
 	}
 	return "search:" + query
+}
+
+// startWorker serializes admission with Shutdown; no Add may race a Wait.
+func (s *Service) startWorker(run func(context.Context)) {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.stopping {
+		return
+	}
+	s.workers.Add(1)
+	go func() { defer s.workers.Done(); run(s.ctx) }()
+}
+
+func (s *Service) Shutdown(ctx context.Context) error {
+	s.lifecycleMu.Lock()
+	if !s.stopping {
+		s.stopping = true
+		s.cancel()
+		go func() { s.workers.Wait(); close(s.stopped) }()
+	}
+	s.lifecycleMu.Unlock()
+	select {
+	case <-s.stopped:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func waitContext(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }

@@ -1,12 +1,16 @@
 package http
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"cato/internal/config"
 	"cato/internal/covers"
@@ -14,10 +18,11 @@ import (
 )
 
 type Server struct {
-	cfg        *config.Config
-	db         *db.DB
-	mux        *http.ServeMux
-	httpServer *http.Server
+	cfg         *config.Config
+	db          *db.DB
+	mux         *http.ServeMux
+	httpServer  *http.Server
+	gameHandler *GameHandler
 }
 
 func NewServer(cfg *config.Config, db *db.DB) *Server {
@@ -27,6 +32,7 @@ func NewServer(cfg *config.Config, db *db.DB) *Server {
 		mux: http.NewServeMux(),
 	}
 	s.routes()
+	s.httpServer = &http.Server{Addr: cfg.ListenAddr, Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	return s
 }
 
@@ -38,6 +44,7 @@ func (s *Server) routes() {
 
 	gameHandler := NewGameHandler(s.db, s.cfg)
 	gameHandler.Register(s.mux)
+	s.gameHandler = gameHandler
 
 	libraryHandler := NewLibraryHandler(s.db)
 	libraryHandler.Register(s.mux)
@@ -180,7 +187,11 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	status := "ok"
 	dbStatus := "ok"
 
-	if err := s.db.Ping(); err != nil {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	readErr := s.db.Read.PingContext(ctx)
+	writeErr := s.db.Write.PingContext(ctx)
+	if readErr != nil || writeErr != nil {
 		status = "degraded"
 		dbStatus = "unreachable"
 	}
@@ -198,22 +209,58 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) Handler() http.Handler {
-	return gzipMiddleware(s.mux)
+	return securityMiddleware(gzipMiddleware(apiBodyLimitMiddleware(s.mux)))
 }
 
 func (s *Server) Start() error {
-	s.httpServer = &http.Server{
-		Addr:    s.cfg.ListenAddr,
-		Handler: s.Handler(),
-	}
+	s.gameHandler.startBackground(s.cfg)
 	return s.httpServer.ListenAndServe()
 }
 
 // Shutdown gracefully drains in-flight requests. Previously SIGTERM just
 // killed the process, dropping any request mid-flight (including DB writes).
 func (s *Server) Shutdown(ctx context.Context) error {
-	if s.httpServer == nil {
-		return nil
+	drainErr := s.httpServer.Shutdown(ctx)
+	if drainErr != nil {
+		_ = s.httpServer.Close()
 	}
-	return s.httpServer.Shutdown(ctx)
+	workerErr := s.gameHandler.service.Shutdown(ctx)
+	return errors.Join(drainErr, workerErr)
+}
+
+const maxAPIBodyBytes = 1 << 20
+
+// Read before dispatch so even chunked bodies and trailing bytes are checked
+// before a handler can mutate state or commit a different error response.
+func apiBodyLimitMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") && r.Body != nil {
+			body := http.MaxBytesReader(w, r.Body, maxAPIBodyBytes)
+			data, err := io.ReadAll(body)
+			body.Close()
+			if err != nil {
+				var oversized *http.MaxBytesError
+				if errors.As(err, &oversized) {
+					writeJSON(w, http.StatusRequestEntityTooLarge, errResp("request_too_large", "Request body exceeds 1 MiB"))
+				} else {
+					writeJSON(w, http.StatusBadRequest, errResp("invalid_body", "Could not read request body"))
+				}
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(data))
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func securityMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Cache-Control", "no-store")
+		}
+		next.ServeHTTP(w, r)
+	})
 }

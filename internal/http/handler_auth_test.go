@@ -411,7 +411,11 @@ func TestChangePassword(t *testing.T) {
 	handler := newTestAuthHandler(database)
 	mux := createTestMux(handler)
 
-	cookie, csrfToken, _ := signupTestUser(t, mux, "chpw@example.com")
+	cookie, csrfToken, userID := signupTestUser(t, mux, "chpw@example.com")
+	other, err := auth.CreateSession(database, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	body := `{"current_password":"password123","new_password":"newpassword456"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/password", strings.NewReader(body))
@@ -422,6 +426,13 @@ func TestChangePassword(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if session, err := auth.GetSession(database, cookie); err != nil || session == nil {
+		t.Fatalf("current session lost: %v", err)
+	}
+	if session, err := auth.GetSession(database, other.ID); err != nil || session != nil {
+		t.Fatalf("other session survived: %v", err)
 	}
 
 	// Old password must no longer work.
@@ -654,5 +665,30 @@ func TestDeleteAccountUnauthenticated(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 without session, got %d", rec.Code)
+	}
+}
+
+func TestSignupOverlongPassword(t *testing.T) {
+	database := setupAuthTestDB(t)
+	defer database.Close()
+	mux := createTestMux(newTestAuthHandler(database))
+	for _, password := range []string{strings.Repeat("x", 73), strings.Repeat("é", 37)} {
+		body, err := json.Marshal(map[string]string{"email": "long@example.com", "password": password})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/signup", bytes.NewReader(body))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("overlong signup: %d %s", rec.Code, rec.Body.String())
+		}
+	}
+	var count int
+	if err := database.QueryRow("SELECT COUNT(*) FROM users").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatal("overlong password created account")
 	}
 }

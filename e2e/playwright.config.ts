@@ -8,20 +8,24 @@ export default defineConfig({
   timeout: 30_000,
   expect: { timeout: 7_000 },
   fullyParallel: false, // shared server state (users/library) — keep order deterministic
-  retries: process.env.CI ? 2 : 0,
+  workers: 1,
+  retries: 0, // A flaky release gate should fail visibly.
   reporter: 'list',
+  outputDir: process.env.CATO_E2E_RESULTS || '/tmp/cato-e2e-results',
   use: {
     baseURL: 'http://127.0.0.1:7180',
     trace: 'retain-on-failure',
   },
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'mobile-chromium', testMatch: /release\.spec\.ts/, use: { ...devices['Pixel 7'] } },
   ],
   webServer: {
     command: 'bash scripts/e2e-server.sh',
     cwd: path.join(__dirname, '..'),
-    url: 'http://127.0.0.1:7180/healthz',
-    reuseExistingServer: !process.env.CI,
+    wait: { stdout: /CATO_E2E_READY/ },
+    reuseExistingServer: false,
+    gracefulShutdown: { signal: 'SIGTERM', timeout: 30_000 },
     timeout: 60_000,
   },
 });

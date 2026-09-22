@@ -24,11 +24,16 @@ backup/
 
 # Logs
 *.log
+.env
+.env.*
+!.env.example
+__pycache__/
 
 # Test artifacts
 .playwright-mcp/
 e2e/node_modules/
 e2e/test-results/
+e2e/playwright-report/
 
 # Local review output (do not track)
 CODE_REVIEW_REPORT.md

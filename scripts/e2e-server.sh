@@ -13,8 +13,19 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-E2E_TMP="${TMPDIR:-/tmp}/cato-e2e-run"
-rm -rf "$E2E_TMP"
+E2E_TMP=$(mktemp -d "${TMPDIR:-/tmp}/cato-e2e.XXXXXXXX")
+SRV_PID=
+cleanup() {
+  trap - EXIT INT TERM
+  if [ -n "$SRV_PID" ]; then
+    kill "$SRV_PID" 2>/dev/null || true
+    wait "$SRV_PID" 2>/dev/null || true
+  fi
+  rm -rf "$E2E_TMP"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 mkdir -p "$E2E_TMP/covers"
 
 go build -o "$E2E_TMP/cato-bin" ./cmd/cato
@@ -22,6 +33,8 @@ go build -o "$E2E_TMP/cato-bin" ./cmd/cato
 E2E_ADDR="${E2E_ADDR:-:7180}"
 E2E_PORT="${E2E_ADDR##*:}"
 
+IGDB_CLIENT_ID= IGDB_CLIENT_SECRET= TWITCH_OAUTH_ID= TWITCH_OAUTH_SECRET= \
+GOOGLE_KEY= GOOGLE_SECRET= CATO_BASE_URL= CATO_SECURE_COOKIES=false \
 CATO_AUTH_RATE_LIMIT=1000 \
 CATO_DB_PATH="$E2E_TMP/cato.db" \
 CATO_COVER_DIR="$E2E_TMP/covers" \
@@ -29,18 +42,26 @@ CATO_STATIC_DIR=web/static \
 CATO_LISTEN_ADDR="$E2E_ADDR" \
 "$E2E_TMP/cato-bin" &
 SRV_PID=$!
-trap 'kill $SRV_PID 2>/dev/null' EXIT
 
 # Wait for the server to finish migrating, then seed the catalog.
+READY=0
 for _ in $(seq 1 100); do
+  if ! kill -0 "$SRV_PID" 2>/dev/null; then
+    wait "$SRV_PID"
+    exit 1
+  fi
   if curl -sf "http://127.0.0.1:${E2E_PORT}/healthz" >/dev/null 2>&1; then
+    READY=1
     break
   fi
   sleep 0.2
 done
+[ "$READY" = 1 ] || { echo "E2E server failed to become healthy" >&2; exit 1; }
 sqlite3 "$E2E_TMP/cato.db" \
   "INSERT OR IGNORE INTO games (id, name, slug, safe_name, normalized_name, summary) VALUES
    (1, 'Test Game', 'test-game', 'Test Game', 'test game', 'A test game for E2E'),
    (2, 'Game Two', 'game-two', 'Game Two', 'game two', 'Second E2E seed game');"
 
+# Readiness includes seeding, which /healthz alone cannot guarantee.
+echo CATO_E2E_READY
 wait $SRV_PID

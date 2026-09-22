@@ -28,21 +28,24 @@ func NewGameHandler(db *db.DB, cfg *config.Config) *GameHandler {
 		igdbClient = &noopIGDBClient{}
 	}
 	svc := games.NewService(store, igdbClient, db)
+	return &GameHandler{service: svc, db: db}
+}
+
+func (h *GameHandler) startBackground(cfg *config.Config) {
 	// Fix legacy accent-bearing normalized_name values (e.g. "pokémon go"
 	// stored with é) so searching "pokemon go" without the accent finds
 	// the game. Idempotent and cheap; runs even without IGDB.
-	svc.StartNormalizationRepair()
+	h.service.StartNormalizationRepair()
 	if cfg.IGDBClientID != "" {
 		// Populates the platform ID→name lookup table once (single IGDB
 		// request) so game platforms render as names, not bare IDs.
-		svc.StartPlatformSync()
-		svc.StartStaleRefresh()
-		svc.StartQueryCacheRefresh()
+		h.service.StartPlatformSync()
+		h.service.StartStaleRefresh()
+		h.service.StartQueryCacheRefresh()
 		// One-shot startup repair of covers broken by the old URL guessing
 		// and the dead cato host (needs a real IGDB client).
-		svc.StartCoverRepair()
+		h.service.StartCoverRepair()
 	}
-	return &GameHandler{service: svc, db: db}
 }
 
 func (h *GameHandler) Register(mux *http.ServeMux) {

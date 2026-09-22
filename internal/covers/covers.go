@@ -1,6 +1,7 @@
 package covers
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"cato/internal/db"
@@ -25,14 +27,20 @@ const maxConcurrentDownloads = 5
 const maxCoverBytes = 8 << 20 // 8 MiB
 
 type Worker struct {
-	db       *db.DB
-	coverDir string
-	client   *http.Client
-	sem      chan struct{}
+	db                *db.DB
+	coverDir          string
+	client            *http.Client
+	sem               chan struct{}
+	ctx               context.Context
+	cancel            context.CancelFunc
+	mu                sync.Mutex
+	started, stopping bool
+	done              chan struct{}
 }
 
 func NewWorker(db *db.DB, coverDir string) *Worker {
-	return &Worker{
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Worker{ctx: ctx, cancel: cancel, done: make(chan struct{}),
 		db:       db,
 		coverDir: coverDir,
 		client:   &http.Client{Timeout: 30 * time.Second},
@@ -45,26 +53,71 @@ func NewWorker(db *db.DB, coverDir string) *Worker {
 // Up to maxConcurrentDownloads downloads run in parallel; when there are no
 // pending jobs the coordinator sleeps briefly before polling again.
 func (w *Worker) Start() {
-	w.CleanStaleLocalPaths()
-		go func() {
-		for {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.started || w.stopping {
+		return
+	}
+	w.started = true
+	go func() {
+		var downloads sync.WaitGroup
+		defer close(w.done)
+		defer downloads.Wait()
+		w.CleanStaleLocalPaths()
+		for w.ctx.Err() == nil {
+			select {
+			case w.sem <- struct{}{}:
+			case <-w.ctx.Done():
+				return
+			}
 			gameID, sourceURL, attempts, err := w.nextJob()
 			if err != nil || gameID == 0 {
-				time.Sleep(500 * time.Millisecond)
+				<-w.sem
+				if !w.wait(500 * time.Millisecond) {
+					return
+				}
 				continue
 			}
-			// Acquire a slot; blocks when all maxConcurrentDownloads are busy.
-			w.sem <- struct{}{}
+			downloads.Add(1)
 			go func(id int64, url string, atts int) {
+				defer downloads.Done()
 				defer func() { <-w.sem }()
 				w.downloadAndSave(id, url, atts)
 			}(gameID, sourceURL, attempts)
-			// Yield the DB connection between job claims so HTTP request
-			// handlers (session lookups, library queries) are not starved
-			// by rapid back-to-back cover_jobs writes.
-			time.Sleep(100 * time.Millisecond)
+			if !w.wait(100 * time.Millisecond) {
+				return
+			}
 		}
 	}()
+}
+
+func (w *Worker) wait(delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-w.ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func (w *Worker) Shutdown(ctx context.Context) error {
+	w.mu.Lock()
+	if !w.stopping {
+		w.stopping = true
+		w.cancel()
+		if !w.started {
+			close(w.done)
+		}
+	}
+	w.mu.Unlock()
+	select {
+	case <-w.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // CleanStaleLocalPaths removes local_cover_path values from the DB for any
@@ -72,7 +125,7 @@ func (w *Worker) Start() {
 // from the DB rather than reconstructing it, so it handles both .jpg and
 // .webp files correctly.
 func (w *Worker) CleanStaleLocalPaths() {
-	rows, err := w.db.Query("SELECT id, local_cover_path FROM games WHERE local_cover_path != ''")
+	rows, err := w.db.QueryContext(w.ctx, "SELECT id, local_cover_path FROM games WHERE local_cover_path != ''")
 	if err != nil {
 		return
 	}
@@ -88,7 +141,7 @@ func (w *Worker) CleanStaleLocalPaths() {
 		// localPath is a URL path like "/covers/123.webp"; derive the disk path.
 		diskPath := filepath.Join(w.coverDir, filepath.Base(localPath))
 		if _, err := os.Stat(diskPath); err != nil {
-			w.db.Exec("UPDATE games SET local_cover_path = '' WHERE id = ?", id)
+			w.db.ExecContext(w.ctx, "UPDATE games SET local_cover_path = '' WHERE id = ?", id)
 			cleaned++
 		}
 	}
@@ -118,7 +171,7 @@ func (w *Worker) nextJob() (int64, string, int, error) {
 	// space separator sorts before RFC3339's 'T', so same-instant values
 	// compare correctly, but a local-time RFC3339 string is offset from UTC
 	// and shifts every comparison by the host's UTC offset. Use utcNow().
-	err := w.db.QueryRow(`
+	err := w.db.QueryRowContext(w.ctx, `
 		SELECT cj.game_id, cj.source_url, cj.attempts
 		FROM cover_jobs cj
 		INNER JOIN library_items li ON li.game_id = cj.game_id
@@ -132,8 +185,10 @@ func (w *Worker) nextJob() (int64, string, int, error) {
 	}
 
 	// Reserve the job for 30 minutes so the coordinator loop skips it.
-	w.db.Exec("UPDATE cover_jobs SET next_attempt_at = ? WHERE game_id = ?",
-		time.Now().UTC().Add(30*time.Minute).Format(time.RFC3339), gameID)
+	if _, err := w.db.ExecContext(w.ctx, "UPDATE cover_jobs SET next_attempt_at = ? WHERE game_id = ?",
+		time.Now().UTC().Add(30*time.Minute).Format(time.RFC3339), gameID); err != nil {
+		return 0, "", 0, err
+	}
 	return gameID, sourceURL, attempts, nil
 }
 
@@ -147,27 +202,64 @@ func utcNow() string {
 // the DB. On failure it records the attempt and schedules a retry with real
 // exponential backoff (1m, 2m, 4m, 8m, 16m).
 func (w *Worker) downloadAndSave(gameID int64, sourceURL string, attempts int) {
-	destPath := CoverPath(w.coverDir, gameID)
-	if _, err := os.Stat(destPath); err == nil {
-		// File already on disk — just mark the job complete.
-		w.db.Exec("DELETE FROM cover_jobs WHERE game_id = ?", gameID)
-		w.db.Exec("UPDATE games SET local_cover_path = ? WHERE id = ?", publicCoverPath(gameID), gameID)
+	defer func() {
+		if w.ctx.Err() != nil {
+			// A canceled download did not fail; release its reservation for restart.
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			_, _ = w.db.ExecContext(ctx, "UPDATE cover_jobs SET next_attempt_at = ? WHERE game_id = ?", utcNow(), gameID)
+		}
+	}()
+	if w.ctx.Err() != nil {
 		return
 	}
 
-	data, err := fetchCover(w.client, sourceURL)
+	destPath := CoverPath(w.coverDir, gameID)
+	if _, err := os.Stat(destPath); err == nil {
+		// File already on disk — just mark the job complete.
+		if err := w.completeJob(w.ctx, gameID); err != nil && w.ctx.Err() == nil {
+			w.recordFailure(gameID, attempts+1, err)
+		}
+		return
+	}
+
+	data, err := fetchCoverContext(w.ctx, w.client, sourceURL)
 	if err != nil {
+		if w.ctx.Err() != nil {
+			return
+		}
 		w.recordFailure(gameID, attempts+1, err)
 		return
 	}
 
+	if w.ctx.Err() != nil {
+		return
+	}
 	if err := w.saveAtomically(destPath, data); err != nil {
 		w.recordFailure(gameID, attempts+1, fmt.Errorf("save: %w", err))
 		return
 	}
 
-	w.db.Exec("DELETE FROM cover_jobs WHERE game_id = ?", gameID)
-	w.db.Exec("UPDATE games SET local_cover_path = ? WHERE id = ?", publicCoverPath(gameID), gameID)
+	if err := w.completeJob(w.ctx, gameID); err != nil && w.ctx.Err() == nil {
+		w.recordFailure(gameID, attempts+1, err)
+	}
+}
+
+// completeJob commits metadata and removal together. Cancellation or any SQL
+// failure rolls back both, leaving the saved file and job available for retry.
+func (w *Worker) completeJob(ctx context.Context, gameID int64) error {
+	tx, err := w.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, "UPDATE games SET local_cover_path = ? WHERE id = ?", publicCoverPath(gameID), gameID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM cover_jobs WHERE game_id = ?", gameID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // recordFailure bumps the attempt counter and schedules the next try with
@@ -175,7 +267,7 @@ func (w *Worker) downloadAndSave(gameID int64, sourceURL string, attempts int) {
 // always passed attempt=0 here, collapsing the "backoff" to a flat 1 minute.)
 func (w *Worker) recordFailure(gameID int64, attempt int, err error) {
 	log.Printf("covers: game %d failed (attempt %d): %v", gameID, attempt, err)
-	w.db.Exec(`UPDATE cover_jobs SET attempts = ?, last_error = ?,
+	w.db.ExecContext(w.ctx, `UPDATE cover_jobs SET attempts = ?, last_error = ?,
 		next_attempt_at = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE game_id = ?`, attempt, truncateErr(err), backoffNext(time.Now(), attempt), gameID)
 }
@@ -209,7 +301,15 @@ func (w *Worker) saveAtomically(destPath string, data []byte) error {
 // cap, and image magic bytes. Validating before anything touches disk stops
 // truncated responses or HTML error pages from being cached as {id}.jpg.
 func fetchCover(client *http.Client, url string) ([]byte, error) {
-	resp, err := client.Get(url)
+	return fetchCoverContext(context.Background(), client, url)
+}
+
+func fetchCoverContext(ctx context.Context, client *http.Client, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("http get: %w", err)
 	}
