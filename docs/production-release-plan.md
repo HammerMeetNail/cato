@@ -112,7 +112,7 @@ These are intentionally outside this private-network release implementation:
   linking, and operator-managed signup/invitation policy before public signup.
 - A trusted reverse-proxy policy for per-client rate limiting, search abuse
   controls, and stronger browser CSP after removing current inline scripts.
-- User library export/import, accessible onboarding/help, and a privacy/support
+- Library import and richer exports beyond the existing CSV download, accessible onboarding/help, and a privacy/support
   policy for a hosted offering.
 - Metrics dashboards, alert delivery, and automated off-host encrypted backups
   once their hosting/storage destinations are chosen.
@@ -120,6 +120,66 @@ These are intentionally outside this private-network release implementation:
   IGDB integration checks require configured accounts and devices.
 
 ## Release evidence
+
+### Follow-up: Nabu release workflow and comprehensive browser coverage
+
+User steering: match `../nabu`'s release/deployment tooling and provide
+comprehensive Playwright coverage. **Do not perform an actual deployment.**
+Preparation and validation use only local disposable state and ordinary branch
+pushes; no production SSH, registry publication, release tag, or deploy workflow
+dispatch is authorized in this task.
+
+- [x] Match Nabu's main-only annotated version tags, dry-run preview, and explicit
+  release confirmation; bootstrap Cato at `v0.1.0` when a release is authorized.
+- [x] Prepare source-built amd64/arm64 images, tag-only Quay publication,
+  vulnerability scanning, digest signing, release notes, and an environment-gated
+  SSH/optional Cloudflare rollout. Keep application secrets host-managed and
+  preserve SQLite/covers; require a verified backup before replacement.
+- [x] Preserve the existing NAS transport as explicitly named `deploy-nas`.
+  Make `deploy` use the Nabu-style tag helper. Ordinary main/PR pushes validate
+  and build without publishing or deploying.
+- [x] Expand Playwright journeys for metadata CRUD/reload, pagination, Playing
+  completion/Stats, profile/password/account deletion, auth/isolation, and actual
+  service-worker offline behavior. Exercise desktop Chromium/WebKit and mobile
+  Chromium/WebKit; document provider/device coverage boundaries.
+- [x] Review privileged release automation and asynchronous browser tests and
+  validate locally. Push the implementation on main and report the exact commit's
+  non-deploying CI result in the release handoff.
+
+The sibling's Postgres schema, production domain, credentials and filesystem
+paths are not copied into Cato. Cato's host/image settings remain explicit
+configuration. The initial hardening CI passed for `574f954`:
+[run 35719197659](https://github.com/HammerMeetNail/cato/actions/runs/35719197659).
+
+Follow-up validation completed on 2026-09-22:
+
+| Check | Result |
+| --- | --- |
+| Full `make release-check` | Passed, exit 0 |
+| Playwright | 90 passed in 1.7 minutes; no retries or skips |
+| Browser matrix | Desktop Chromium 33, desktop WebKit 32, mobile Chromium 13, mobile WebKit 12 |
+| Backup and release regressions | 8 backup, 5 tag-helper, 7 remote-deployer, 1 occupied-port harness test passed |
+| Go tests/race/vet, native/Linux builds, JavaScript regressions | Passed |
+| Dependency scans | 0 reachable Go vulnerabilities; npm audit 0 vulnerabilities |
+| Secret history scan | 140 commits scanned with Gitleaks; no leaks found |
+| Workflow validation | actionlint v1.7.7 passed |
+| Source image | Isolated Linux/amd64 image built; runtime UID/GID 10001 verified; temporary image removed |
+| Independent review | No remaining deployment/security or asynchronous browser-test blockers |
+
+Logs: `/tmp/cato-release-validation/final-release-check.log`, `source-image.log`,
+`actionlint.log`, and `gitleaks.log`. The local source build used host networking
+with the Podman Docker shim; the GitHub job exercises Docker Buildx. Remote
+deployment tests use fake SSH/Docker and disposable SQLite databases. No release
+tag, registry publication, production SSH, or actual deployment was performed.
+
+See the [browser coverage map](../e2e/README.md) for all workflows and limits.
+Service-worker activation/cache behavior runs in all four projects; offline
+navigation runs in Chromium. Physical Safari offline/standalone behavior and
+configured Google/IGDB checks remain operator checks. Registry credentials,
+production environment approvals, host provisioning and off-host backup
+scheduling must be configured before an authorized release.
+
+### Initial hardening validation
 
 Implementation completed on 2026-09-22; no schema migrations or shipped web
 assets changed. Independent security and lifecycle reviews found no remaining

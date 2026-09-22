@@ -1,0 +1,16 @@
+.git
+.env
+.env.*
+.pid
+data
+backup
+backups
+**/node_modules
+**/test-results
+**/playwright-report
+**/__pycache__
+*.log
+*.out
+.playwright-mcp
+.agents
+.codex

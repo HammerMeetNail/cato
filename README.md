@@ -25,6 +25,12 @@ Copy `.env.example` to `.env` and set the externally visible URL first. See the
 [production runbook](docs/production-runbook.md) for HTTPS, release validation,
 backups, restore and rollback. This release targets a trusted private network.
 
+Release automation follows Nabu's version-tag workflow: `DRY_RUN=1 make deploy`
+previews the next tag; confirming `make deploy` pushes it and triggers image
+scanning/signing and the configured deployment. Main/PR pushes only validate and
+build. The original NAS transport is now `make deploy-nas`. Configure the registry
+and production environment using the runbook before cutting a release tag.
+
 ## Configuration
 
 | Variable | Default | Description |
@@ -133,4 +139,5 @@ make release-check # build, vet, race, frontend, backup, dependency and browser 
 ```
 
 Go 1.26.8 is selected by `go.mod`. Release checks also require Node 24+, Python
-3.10+, sqlite3, and Playwright's Chromium system dependencies (see the runbook).
+3.10+, sqlite3, and Playwright's Chromium/WebKit system dependencies (see the runbook).
+The [browser coverage map](e2e/README.md) lists tested journeys and device limits.

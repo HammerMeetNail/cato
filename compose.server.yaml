@@ -1,0 +1,22 @@
+# Host .env holds application settings; release.env holds only the immutable image.
+name: cato
+services:
+  cato:
+    image: ${CATO_IMAGE:?Set CATO_IMAGE to a repository@sha256 digest}
+    env_file: .env
+    environment:
+      CATO_LISTEN_ADDR: ':7080'
+      CATO_DB_PATH: /app/data/cato.db
+      CATO_COVER_DIR: /app/data/covers
+      CATO_STATIC_DIR: /app/web/static
+    ports:
+      - '127.0.0.1:7080:7080'
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'

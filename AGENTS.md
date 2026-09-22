@@ -13,7 +13,7 @@ make release-check # unit/race, vet, builds, JS, backups, security, desktop/mobi
 
 There is no formatter target. `make vet` runs `go vet ./...` and is expected to
 be clean. Go 1.26.8 is selected by go.mod. Release checks also need Node 24+,
-Python 3.10+, sqlite3 and Playwright Chromium dependencies; see
+Python 3.10+, sqlite3 and Playwright Chromium/WebKit dependencies; see
 `docs/production-runbook.md`. Keep generated logs/traces outside the repository.
 
 ## Architecture
@@ -132,12 +132,19 @@ Production runs in **Docker on a Synology NAS** (host alias `nas2`,
 `/volume1/Shared/Cato/data` → `/app/data` (DB + covers persist on the host).
 
 ```bash
-make deploy        # cross-compile (linux/amd64, CGO disabled) + push binary/static + compose up --build
+DRY_RUN=1 make deploy # preview next main-only release tag; no tag push or deployment
+make deploy        # confirm annotated v* tag push; triggers image release/deploy CI
+make deploy-nas    # explicit legacy NAS binary/static transport and container recreation
 make deploy-full   # disabled: use the stopped-service restore runbook for data replacement
 make deploy-logs   # tail container logs
 ```
 
-`make deploy` runs the cross-compiled binary into a fresh image and recreates the container.
+`make deploy` follows the Nabu-style tagged release workflow. A release tag must
+be reachable from main; normal main/PR pushes never publish or deploy. See the
+production runbook for image/SSH configuration. Never create/push a release tag
+when the user has excluded deployment.
+
+`make deploy-nas` runs the cross-compiled binary into a fresh image and recreates the container.
 When changing any shipped asset under `web/static`, increment the versioned
 `CACHE_NAME` in `web/static/service-worker.js` before deploying (for example,
 `cato-static-v8` to `cato-static-v9`). The new service worker purges the old

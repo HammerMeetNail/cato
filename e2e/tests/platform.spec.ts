@@ -114,9 +114,12 @@ test.describe('security & platform behavior', () => {
     // Inject a script-looking tag into the search box; the dropdown must
     // render it escaped (no alert, no injected node).
     let alerted = false;
-    page.on('dialog', () => { alerted = true; });
+    page.on('dialog', dialog => { alerted = true; void dialog.dismiss(); });
+    const searched = page.waitForResponse(r => r.url().includes('/api/games/search'));
     await page.locator('#searchInput').fill('<img src=x onerror=alert(1)>');
-    await page.waitForTimeout(700);
+    await searched;
+    await expect(page.locator('#searchResults')).toBeVisible();
+    await expect(page.locator('#searchResults img[onerror*="alert"]')).toHaveCount(0);
     expect(alerted).toBe(false);
   });
 });

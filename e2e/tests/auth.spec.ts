@@ -18,7 +18,7 @@ test.describe('auth journeys', () => {
     await expect(page.locator('#loginForm')).toBeVisible();
   });
 
-  test('signup → lands in library → logout → login again', async ({ page }) => {
+  test('signup → authenticated shell → logout → login again', async ({ page }) => {
     const email = `${uniq()}@example.com`;
     const password = 'sup3r-secret-pw';
 
@@ -65,10 +65,6 @@ test.describe('auth journeys', () => {
       data: { email, password: 'correct-password-1' },
     });
     expect(res.status()).toBe(201);
-    // Propagate the session cookie from the API context to the browser.
-    const cookies = await (request as any).context?.().cookies?.();
-    void cookies;
-
     await page.request.post('/api/auth/login', {
       data: { email, password: 'correct-password-1' },
     });

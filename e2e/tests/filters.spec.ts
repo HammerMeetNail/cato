@@ -39,7 +39,7 @@ test.describe('transactional filters', () => {
     await loginViaUI(page, email, 'correct-password-1');
     await page.goto('/#library');
     await expect(page.locator('#gameGrid')).toBeVisible();
-    await page.waitForTimeout(500);
+    await expect(page.locator('#gameGrid .game-card')).toHaveCount(2);
 
     const libraryReqs: string[] = [];
     page.on('request', (r: any) => {
@@ -60,13 +60,11 @@ test.describe('transactional filters', () => {
     // Staging alone never reloads.
     await openPanel();
     await stageSortAndChip();
-    await page.waitForTimeout(600);
     expect(libraryReqs.length).toBe(0);
 
     // X discards: no request, grid still shows both items, no filter bar.
     await page.locator('#libFilterClose').click();
     await expect(page.locator('#libFilterPanel')).toBeHidden();
-    await page.waitForTimeout(400);
     expect(libraryReqs.length).toBe(0);
     expect(await page.locator('#tagFilterBar').count()).toBe(0);
     await expect(page.locator('#gameGrid')).toContainText('Test Game');
@@ -81,7 +79,6 @@ test.describe('transactional filters', () => {
     await stageSortAndChip();
     await page.keyboard.press('Escape');
     await expect(page.locator('#libFilterPanel')).toBeHidden();
-    await page.waitForTimeout(400);
     expect(libraryReqs.length).toBe(0);
 
     // Backdrop discards too.
@@ -89,7 +86,6 @@ test.describe('transactional filters', () => {
     await stageSortAndChip();
     await page.locator('#libFilterBackdrop').click({ position: { x: 10, y: 10 } });
     await expect(page.locator('#libFilterPanel')).toBeHidden();
-    await page.waitForTimeout(400);
     expect(libraryReqs.length).toBe(0);
 
     // Apply commits staged chips + sort in one request.
@@ -115,7 +111,7 @@ test.describe('transactional filters', () => {
     await loginViaUI(page, email, 'correct-password-1');
     await page.goto('/#search/' + encodeURIComponent('test game'));
     await expect(page.locator('#searchResultsHeader')).toBeVisible();
-    await page.waitForTimeout(800);
+    await expect(page.locator('#gameGrid .game-card')).toHaveCount(1);
 
     const searchReqs: string[] = [];
     page.on('request', (r: any) => {
@@ -128,13 +124,13 @@ test.describe('transactional filters', () => {
     await page.locator('#sfInLibrary').selectOption('owned');
     // Collection toggle only reveals the Status row — no reload.
     await expect(page.locator('#sfLibraryStatusWrap')).toBeVisible();
-    await page.waitForTimeout(600);
     expect(searchReqs.length).toBe(0);
     // Badge still shows the applied (empty) state while staging.
     await expect(page.locator('#sfBadge')).toBeHidden();
 
+    const applied = page.waitForResponse(r => r.url().includes('/api/games/search') && r.url().includes('in_library=1'));
     await page.locator('#sfApply').click();
-    await page.waitForTimeout(1000);
+    await applied;
     expect(searchReqs.length).toBeGreaterThan(0);
     const last = searchReqs[searchReqs.length - 1];
     expect(last).toContain('sort=name');
@@ -152,7 +148,7 @@ test.describe('transactional filters', () => {
     await loginViaUI(page, email, 'correct-password-1');
     await page.goto('/#library');
     await expect(page.locator('#gameGrid')).toBeVisible();
-    await page.waitForTimeout(500);
+    await expect(page.locator('#gameGrid .game-card')).toHaveCount(2);
 
     const libraryReqs: string[] = [];
     page.on('request', (r: any) => {
@@ -160,10 +156,11 @@ test.describe('transactional filters', () => {
     });
 
     await page.locator('#statusFilterBtn').click();
+    const filtered = page.waitForResponse(r => r.url().includes('/api/library?') && r.url().includes('status=backlog'));
     await page.locator('#statusFilterPanel .lib-filter-chip[data-status="backlog"]').click();
     // Instant: reloads without Apply, panel stays open for multi-select.
     await expect(page.locator('#statusFilterPanel')).toBeVisible();
-    await page.waitForTimeout(1000);
+    await filtered;
     expect(libraryReqs.length).toBeGreaterThan(0);
     expect(libraryReqs[libraryReqs.length - 1]).toContain('status=backlog');
     await expect(page.locator('#gameGrid')).toContainText('Game Two');

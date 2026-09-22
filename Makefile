@@ -1,4 +1,4 @@
-.PHONY: build run stop clean test test-race test-js test-backup test-e2e vet security release-check db-backup db-restore deploy deploy-build deploy-push deploy-db deploy-up deploy-down deploy-full deploy-logs
+.PHONY: build run stop clean test test-race test-js test-backup test-release test-e2e vet security release-check db-backup db-restore deploy deploy-nas deploy-build deploy-push deploy-db deploy-up deploy-down deploy-full deploy-logs
 
 DB_PATH ?= data/cato.db
 BACKUP_DIR ?= backup
@@ -36,9 +36,14 @@ test-js:
 test-backup:
 	python3 -B scripts/database_test.py
 
+test-release:
+	python3 -B scripts/deploy_test.py
+	python3 -B scripts/deploy_remote_test.py
+	python3 -B scripts/e2e_server_test.py
+
 test-e2e:
 	npm --prefix e2e ci
-	cd e2e && npx playwright install chromium && npm run test:e2e
+	cd e2e && npx playwright install chromium webkit && npm run test:e2e
 
 security:
 	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
@@ -53,6 +58,7 @@ release-check:
 	$(MAKE) deploy-build
 	$(MAKE) test-js
 	$(MAKE) test-backup
+	$(MAKE) test-release
 	$(MAKE) security
 	$(MAKE) test-e2e
 
@@ -89,7 +95,11 @@ deploy-up:
 deploy-down:
 	ssh $(NAS_HOST) 'cd $(NAS_PATH) && $(COMPOSE) -f docker-compose.yml down'
 
-deploy: deploy-push deploy-up
+deploy:
+	bash scripts/deploy.sh
+
+# Legacy NAS transport; explicit opt-in, separate from tagged CI releases.
+deploy-nas: deploy-push deploy-up
 	@echo "Cato deployed to http://10.0.0.42:7080"
 
 deploy-full:

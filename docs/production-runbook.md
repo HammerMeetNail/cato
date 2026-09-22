@@ -14,12 +14,12 @@ use that account's original sign-in method when an email collision is reported.
 
 Use Go 1.26.8 (selected by `go.mod`), Node 24+, Python 3.10+, and sqlite3.
 `make release-check` runs build, vet, Go tests and race tests, JavaScript
-regressions, backup tests, dependency scans, and Playwright. On a fresh Linux
+regressions, backup/release-script tests, dependency scans, and Playwright. On a fresh Linux
 host, first install browser system dependencies:
 
 ```sh
 npm --prefix e2e ci
-cd e2e && npx playwright install --with-deps chromium
+cd e2e && npx playwright install --with-deps chromium webkit
 ```
 
 CI executes the same gate on pushes and pull requests. E2E uses fresh disposable
@@ -39,11 +39,64 @@ and `true`, restrict direct access to port 7080, and register
 `CATO_AUTH_RATE_LIMIT` override in production. Forwarded IP headers are not
 trusted, so a reverse proxy shares one auth rate-limit bucket.
 
-For local Docker, run `make deploy-build` before `docker compose up -d --build`:
-the Dockerfile intentionally packages a precompiled Linux/amd64 binary. The
-Synology workflow is `make deploy`; it ships code/assets and preserves the data
+The default release workflow follows Nabu: `DRY_RUN=1 make deploy` previews the
+next annotated version tag; `make deploy` verifies clean, synchronized `main`,
+prompts, and pushes the tag. A tag starts the image release and configured
+deployment pipeline. **Do not invoke the confirming path or push a `v*` tag when
+only preparing a release.** No initial tag has been created as part of this work.
+
+The first authorized release is `v0.1.0`; later releases increment the latest
+reachable semver patch tag. CI independently rejects release tags not reachable
+from `main`. Main/PR pushes run validation and container builds without registry
+publication or production changes. The tag workflow scans and signs the exact
+built image digest and rolls out that immutable digest, not a mutable `latest`
+tag. See the release configuration section below before enabling a release.
+
+For local legacy Docker, run `make deploy-build` before
+`docker compose up -d --build`: the Dockerfile packages a precompiled Linux/amd64
+binary. Source-built release images use `Containerfile`. The explicit legacy
+Synology workflow is `make deploy-nas`; it ships code/assets and preserves the data
 bind mount. `deploy-full` and `deploy-db` now fail before changing anything:
 production data replacement must follow the restore procedure below.
+
+### Tagged release configuration
+
+Create the Quay repository and configure these GitHub settings before a future
+release. This task prepares the files; setting up hosting and pushing a release
+tag are separate operator actions. Configure required reviewers on the GitHub
+`production` environment to gate the deployment job.
+
+| Setting | Kind | Purpose |
+| --- | --- | --- |
+| `IMAGE_REPOSITORY` | Repository variable | Default `quay.io/nabu/cato`; choose Cato's actual Quay repository |
+| `QUAY_USERNAME`, `QUAY_PASSWORD` | Repository secrets | Robot credentials scoped to that image repository |
+| `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PATH` | Production environment variables | SSH target and pre-provisioned directory (for example `/opt/cato`) |
+| `DEPLOY_PORT` | Production environment variable | SSH port, default 22 |
+| `SSH_PRIVATE_KEY`, `SSH_KNOWN_HOSTS` | Production environment secrets | Deployment identity and independently verified host public key |
+| `DEPLOY_CLOUDFLARE_ACCESS` | Production environment variable | `true` enables the Cloudflare Access SSH proxy like Nabu |
+| `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` | Production environment secrets | Service-token credentials when Cloudflare is enabled |
+| `GITLEAKS_LICENSE` | Optional repository secret | If required by Gitleaks for the repository owner |
+
+`Containerfile` builds amd64/arm64 release images from source. Trivy scans both
+architectures at the returned digest; Cosign signs that digest using GitHub OIDC
+before release notes and deployment. Main/PR image builds do not log into Quay or
+publish. The old NAS `Dockerfile` remains a separate binary-packaging path.
+
+Prepare the target with Docker Compose v2 supporting `up --wait`, Bash,
+Python 3.10+, flock, curl and base64. Create `.env` with application settings and
+`data/covers` writable by UID/GID **10001**. The deployer checks access but never
+changes ownership. Existing NAS data needs a planned ownership transition before
+using this different image. Quay images must be public or the host must already
+have a registry login. CI never rewrites the host's application `.env`.
+
+`compose.server.yaml` binds port 7080 to host loopback. Configure its reverse
+proxy/tunnel, matching base URL and cookie policy. Deployment locks the target,
+verifies a SQLite snapshot, preserves the previous compose/image reference, and
+waits for health. `.release-state.json` records an attempted version before
+rollout, preventing a delayed older tag from downgrading a database even after a
+failed health check. Recovery/rollback is an explicit operator procedure.
+This workflow does not provision a server, DNS, tunnel, registry, off-host backup
+destination, or environment approvals.
 
 Before each deployment:
 
@@ -174,9 +227,9 @@ move fails, stop and reconcile the preserved files before restarting the app.
 - Watch database/cover filesystem free space and backup job age. Investigate
   `maintenance`, cover download, refresh, and shutdown errors in container logs.
 - Compose rotates logs at 10 MB with three files. Set filesystem permissions for
-  the deployment account and data mount; the existing image runs as root, so
-  restrict container/host access. Moving to non-root requires matching NAS volume
-  ownership and is a deployment change to test separately.
+  the deployment account and data mount; the legacy NAS image runs as root, while
+  the source-built image uses UID/GID 10001. Prepare and test volume ownership
+  before switching between these deployment paths.
 - Before public distribution, perform real-device iOS/Android install/offline/
-  upgrade checks and configured Google/IGDB smoke tests. Automated Chromium tests
+  upgrade checks and configured Google/IGDB smoke tests. Automated browser tests
   do not establish Safari, OAuth-provider or physical-device compatibility.
