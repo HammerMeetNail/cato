@@ -36,7 +36,10 @@ printf '%s' "$E2E_NONCE" > "$E2E_TMP/static/$E2E_MARKER"
 
 go build -o "$E2E_TMP/cato-bin" ./cmd/cato
 
-E2E_ADDR="${E2E_ADDR:-:7180}"
+# Bind loopback only: this disposable server has relaxed auth rate limits and
+# seeded data; it must not be reachable from the LAN. Playwright talks to
+# 127.0.0.1 only (e2e/playwright.config.ts).
+E2E_ADDR="${E2E_ADDR:-127.0.0.1:7180}"
 E2E_PORT="${E2E_ADDR##*:}"
 
 IGDB_CLIENT_ID= IGDB_CLIENT_SECRET= TWITCH_OAUTH_ID= TWITCH_OAUTH_SECRET= \
@@ -65,7 +68,11 @@ for _ in $(seq 1 100); do
   sleep 0.2
 done
 [ "$READY" = 1 ] || { echo "E2E server failed to establish owned readiness" >&2; exit 1; }
+# .timeout: the Go server holds the DB open (startup repairs + maintenance
+# sweep); the sqlite3 CLI's default busy timeout is 0 and would abort the
+# harness with "database is locked" under contention.
 sqlite3 "$E2E_TMP/cato.db" \
+  ".timeout 15000" \
   "INSERT OR IGNORE INTO games (id, name, slug, safe_name, normalized_name, summary) VALUES
    (1, 'Test Game', 'test-game', 'Test Game', 'test game', 'A test game for E2E'),
    (2, 'Game Two', 'game-two', 'Game Two', 'game two', 'Second E2E seed game');

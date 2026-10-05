@@ -51,6 +51,10 @@ elif name == 'curl':
     previous = [json.loads(line) for line in pathlib.Path(os.environ['TEST_EVENTS']).read_text().splitlines()]
     calls = sum(e['command'] == 'curl' for e in previous)
     sys.exit(int(os.environ.get('TEST_HEALTH_EXIT' if calls == 1 else 'TEST_FINAL_HEALTH_EXIT', '0')))
+elif name == 'flock':
+    # macOS has no flock(1); the deployment lock is a no-op in the stub.
+    record()
+    sys.exit(0)
 else:
     raise AssertionError('Unexpected stub: ' + name)
 '''
@@ -75,7 +79,7 @@ class RemoteDeployTests(unittest.TestCase):
         stub = self.bin / "stub"
         stub.write_text(STUB)
         stub.chmod(0o755)
-        for command in ("ssh", "docker", "curl"):
+        for command in ("ssh", "docker", "curl", "flock"):
             (self.bin / command).symlink_to(stub)
         self.key = "dummy-private-key-no-command-should-contain-this"
         self.env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}",

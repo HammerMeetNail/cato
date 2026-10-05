@@ -7,14 +7,20 @@ set -euo pipefail
 IMAGE_REPOSITORY=${IMAGE_REPOSITORY:-quay.io/nabu/cato}
 DEPLOY_PORT=${DEPLOY_PORT:-22}
 # These values enter SSH configuration / the remote shell; reject shell metacharacters.
-[[ "$DEPLOY_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]]
-[[ "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
-[[ "$DEPLOY_PORT" =~ ^[0-9]+$ ]] && (( DEPLOY_PORT > 0 && DEPLOY_PORT <= 65535 ))
-[[ "$DEPLOY_PATH" =~ ^/[A-Za-z0-9_/-]+$ && "$DEPLOY_PATH" != / ]]
-[[ "$IMAGE_REPOSITORY" =~ ^quay\.io/[a-z0-9_-]+/[a-z0-9_.-]+$ ]]
-[[ "$IMAGE_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
-[[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-[[ "$RELEASE_COMMIT" =~ ^[a-f0-9]{40}$ ]]
+# Each check must fail explicitly: bash 3.2 (macOS /bin/bash) does NOT abort on a
+# failed [[ ]] under set -e, so a bare [[ ]] gate would silently let invalid
+# values through to ssh on that platform.
+reject() { echo "error: $1 failed validation" >&2; exit 1; }
+[[ "$DEPLOY_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || reject DEPLOY_HOST
+[[ "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || reject DEPLOY_USER
+[[ "$DEPLOY_PORT" =~ ^[0-9]+$ ]] || reject DEPLOY_PORT
+(( DEPLOY_PORT > 0 && DEPLOY_PORT <= 65535 )) || reject DEPLOY_PORT
+[[ "$DEPLOY_PATH" =~ ^/[A-Za-z0-9_/-]+$ ]] || reject DEPLOY_PATH
+[[ "$DEPLOY_PATH" != / ]] || reject DEPLOY_PATH
+[[ "$IMAGE_REPOSITORY" =~ ^quay\.io/[a-z0-9_-]+/[a-z0-9_.-]+$ ]] || reject IMAGE_REPOSITORY
+[[ "$IMAGE_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]] || reject IMAGE_DIGEST
+[[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || reject RELEASE_TAG
+[[ "$RELEASE_COMMIT" =~ ^[a-f0-9]{40}$ ]] || reject RELEASE_COMMIT
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 umask 077
 ssh_dir=$(mktemp -d)

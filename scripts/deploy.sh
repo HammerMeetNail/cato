@@ -34,10 +34,19 @@ git show-ref --verify --quiet "refs/tags/$next" && fail "tag $next already exist
 echo "Release $next from $(git rev-parse --short HEAD):"
 git log --oneline "$range"
 echo "Pushing this tag starts CI image publication and the configured production deployment."
-if [[ "${DRY_RUN:-0}" == 1 ]]; then
-  echo "Dry run: would create annotated tag $next and push only that tag."
-  exit 0
-fi
+# Fail closed on unrecognized DRY_RUN values: DRY_RUN=true/yes/on used to
+# silently fall through and push a real release tag.
+case "${DRY_RUN:-0}" in
+  1|true|yes|on)
+    echo "Dry run: would create annotated tag $next and push only that tag."
+    exit 0
+    ;;
+  0|false|no|off|"")
+    ;;
+  *)
+    fail "unrecognized DRY_RUN value '${DRY_RUN}'; use DRY_RUN=1 to preview, DRY_RUN=0 to proceed"
+    ;;
+esac
 read -r -p "Create and push $next to trigger production deployment? [y/N] " answer || fail "release cancelled"
 [[ "$answer" == y || "$answer" == Y ]] || fail "release cancelled"
 git tag -a "$next" -m "Release $next"
