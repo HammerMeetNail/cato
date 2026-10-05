@@ -15,6 +15,11 @@
 .pid
 data/
 backup/
+backups/
+
+# Agent tool local settings (may contain credentials — never commit)
+.claude/settings.local.json
+.opencode/
 
 # IDE
 .idea/
@@ -34,6 +39,3 @@ __pycache__/
 e2e/node_modules/
 e2e/test-results/
 e2e/playwright-report/
-
-# Local review output (do not track)
-CODE_REVIEW_REPORT.md

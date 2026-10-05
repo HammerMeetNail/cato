@@ -79,7 +79,11 @@ web/static/      HTML, CSS, JS (vanilla, no bundler)
 - **HTTP middleware**: `gzipMiddleware` (skips `/covers/`) wraps the whole mux via
   `Server.Handler()`; `staticCacheMiddleware` adds cache headers for `/js/`, `/css/`,
   `/icons/`, `/favicon.svg`, `/manifest*` (`no-cache`), and `no-store` for
-  `/service-worker.js`.
+  `/service-worker.js`. `securityMiddleware` sets `nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy`, and a CSP with `script-src 'self'` — so shipped HTML must not use
+  inline `<script>`, inline event handlers (`onerror=`), or `javascript:` URLs; cover
+  images fall back via delegated `error` listeners + `data-cover-fallback`, and the
+  theme/login bootstrap scripts are external (`js/theme-init.js`, `js/login.js`).
 - **IGDB is optional**: when `IGDB_CLIENT_ID` is empty a `noopIGDBClient` is used; IGDB calls
   fall back to local results on error.
 - **Rate limiting**: in-memory only (not shared across processes). `auth.RateLimiter` for
@@ -108,7 +112,8 @@ web/static/      HTML, CSS, JS (vanilla, no bundler)
   Library`, `display: standalone`, `theme_color: #1a1a2e`, icons in
   `web/static/icons/*`, shortcuts to Library/Stats/Search), `web/static/offline.html`
   (dark, shows when `fetch` for a navigation fails), `web/static/service-worker.js`
-  (`CACHE_NAME=cato-static-v3`, pre-caches `css/app.css`, `js/*`, manifest,
+  (`CACHE_NAME=cato-static-*` — versioned, see the file for the current value;
+  pre-caches `css/app.css`, `js/*`, manifest,
   icons, offline; cache-first for `/css/ /js/ /icons/ /covers/`, navigate
   fallback to `offline.html`), and `web/static/js/head-init.js` (sets `--app-h`
   before first paint). `login.html` also links the manifest and registers the SW.
