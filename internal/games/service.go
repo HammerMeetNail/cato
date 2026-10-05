@@ -32,6 +32,8 @@ type Service struct {
 	refreshing     map[string]chan struct{}
 	refreshSlots   chan struct{}
 	refreshTimeout time.Duration
+	// Initial delay before the first query-cache sweep (test seam; see NewService).
+	queryCacheInitialDelay time.Duration
 	lifecycleMu    sync.Mutex
 	stopping       bool
 	workers        sync.WaitGroup
@@ -50,6 +52,9 @@ func NewService(store *Store, igdb IGDBClient, db *db.DB) *Service {
 		refreshing:     make(map[string]chan struct{}),
 		refreshSlots:   make(chan struct{}, 2),
 		refreshTimeout: 15 * time.Second,
+		// Initial delay before the first query-cache sweep; a seam so tests
+		// don't sleep 30s. Production keeps the default.
+		queryCacheInitialDelay: 30 * time.Second,
 	}
 }
 
@@ -313,7 +318,7 @@ func (s *Service) StartQueryCacheRefresh() {
 	s.startWorker(func(ctx context.Context) {
 		// Run once shortly after startup so a restart doesn't wait a full day
 		// to refresh queries that expired while the container was down.
-		if !waitContext(ctx, 30*time.Second) {
+		if !waitContext(ctx, s.queryCacheInitialDelay) {
 			return
 		}
 		for {

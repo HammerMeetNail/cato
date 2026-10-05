@@ -17,6 +17,8 @@ type fakeIGDB struct {
 	batchCalls    int
 	batchFunc     func(ctx context.Context, ids []int64) ([]Game, error)
 	platformCalls int
+	getCalls      int
+	getFunc       func(ctx context.Context, id int64) (*Game, error)
 }
 
 func (f *fakeIGDB) SearchGames(ctx context.Context, query string, limit int, includeEditions bool) ([]Game, error) {
@@ -28,6 +30,10 @@ func (f *fakeIGDB) SearchGames(ctx context.Context, query string, limit int, inc
 }
 
 func (f *fakeIGDB) GetGame(ctx context.Context, id int64) (*Game, error) {
+	f.getCalls++
+	if f.getFunc != nil {
+		return f.getFunc(ctx, id)
+	}
 	return nil, nil
 }
 
