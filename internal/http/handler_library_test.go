@@ -425,6 +425,20 @@ func TestLibraryInvalidStatus(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for invalid status, got %d", rec.Code)
 	}
+	// Regression: the handler once wrote 200 {"ok":true} on top of the error
+	// response, appending a second JSON document to the body. The client's
+	// res.json() then failed and the specific validation message was lost.
+	errBody := strings.TrimSpace(rec.Body.String())
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(errBody), &payload); err != nil {
+		t.Fatalf("error body must be a single JSON document, got %q: %v", errBody, err)
+	}
+	if payload["ok"] != nil {
+		t.Errorf("error response must not carry an ok field: %v", payload)
+	}
+	if payload["error"] != "invalid_status" {
+		t.Errorf("expected error=invalid_status, got %v", payload["error"])
+	}
 }
 
 func TestLibraryInvalidRating(t *testing.T) {

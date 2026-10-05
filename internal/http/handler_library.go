@@ -522,7 +522,13 @@ func (h *LibraryHandler) upsertLibraryItem(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	h.writeLibraryItem(w, userID, gameID, req)
+	// writeLibraryItem already wrote an error response when it returns false;
+	// writing 200 on top of it would append a second JSON document to the
+	// error body (malformed JSON the client then reports as a generic HTTP
+	// error instead of the specific validation message).
+	if !h.writeLibraryItem(w, userID, gameID, req) {
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
 
