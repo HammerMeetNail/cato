@@ -77,8 +77,13 @@ export async function checkAuth() {
       api.setCSRF(data.csrf_token);
     }
     return data;
-  } catch {
-    return { authenticated: false };
+  } catch (err) {
+    // A response status means the server answered and rejected us. A thrown
+    // fetch with no status is a transport failure (offline, DNS, timeout) —
+    // the session may be perfectly valid, so callers must not treat it as a
+    // logout and bounce to /login.
+    if (err.status) return { authenticated: false };
+    return { authenticated: false, network_error: true };
   }
 }
 
@@ -353,13 +358,15 @@ export const library = {
 
   // check returns {game_id, status} objects for the subset of the given game
   // IDs that are in the library — status lets callers show WHICH list
-  // ("Completed", "Wishlist", …) a game is in.
+  // ("Completed", "Wishlist", …) a game is in. Returns null when the check
+  // FAILED (unknown state): callers that act on the result (e.g. quick-add,
+  // which would destructively overwrite an existing item) must fail closed.
   async check(ids) {
     if (!ids || ids.length === 0) return [];
     try {
       return await api.get(`/api/library/check?ids=${ids.map(Number).join(',')}`);
     } catch {
-      return [];
+      return null;
     }
   },
 

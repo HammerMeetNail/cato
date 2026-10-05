@@ -258,6 +258,17 @@ func securityMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		// CSP: scripts are same-origin only (no inline handlers or eval — the
+		// theme/login bootstrap scripts are external files for this reason).
+		// style-src allows 'unsafe-inline' because cards set inline style
+		// attributes (--chip-color); style injection is a cosmetic risk, not
+		// a script-execution one. img-src covers same-origin covers plus the
+		// IGDB image CDN; covers from dead legacy hosts fail to load and the
+		// frontend's delegated error fallback swaps in the local placeholder.
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
+				"img-src 'self' https://images.igdb.com data:; connect-src 'self'; "+
+				"frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'")
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			w.Header().Set("Cache-Control", "no-store")
 		}

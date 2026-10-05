@@ -22,7 +22,7 @@ function playingCardHTML(item, index) {
   return `
     <div class="hero-card" data-game-id="${item.game_id}">
       <button type="button" class="hero-open" aria-label="Open ${escapeHTML(item.game_name)}">
-      <img width="264" height="374" src="${getCoverURL(item)}" alt="${escapeHTML(item.game_name)}" loading="${index < 2 ? 'eager' : 'lazy'}" ${index < 2 ? 'fetchpriority="high"' : ''} decoding="async" onerror="this.onerror=null;this.src='/covers/${item.game_id}.jpg'">
+      <img width="264" height="374" src="${escapeHTML(getCoverURL(item))}" alt="${escapeHTML(item.game_name)}" loading="${index < 2 ? 'eager' : 'lazy'}" ${index < 2 ? 'fetchpriority="high"' : ''} decoding="async" data-cover-fallback="/covers/${item.game_id}.jpg">
       <div class="hero-body">
         <div class="hero-name">${escapeHTML(item.game_name)}</div>
 
@@ -99,6 +99,15 @@ async function loadPlayingView(container) {
 
   const listEl = page.querySelector('.playing-list');
   if (!listEl) return;
+
+  // Cover fallback for hero images: delegated capture-phase listener (inline
+  // onerror handlers are not allowed under the site's CSP).
+  listEl.addEventListener('error', (e) => {
+    const img = e.target;
+    if (img.tagName !== 'IMG' || !img.dataset.coverFallback || img.dataset.coverFallbackApplied) return;
+    img.dataset.coverFallbackApplied = '1';
+    img.src = img.dataset.coverFallback;
+  }, true);
 
   listEl.addEventListener('click', async (e) => {
     const timeBtn = e.target.closest('[data-hero-time]');

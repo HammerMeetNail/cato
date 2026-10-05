@@ -401,7 +401,7 @@ export async function loadSearchResults(query) {
     const ids = results.map(r => r.id);
     const owned = await library.check(ids);
     if (loadVersion !== searchLoadVersion || paginationState.mode !== 'search' || paginationState.searchQuery !== query) return;
-    for (const it of owned) {
+    for (const it of owned || []) {
       ownedStatuses.set(Number(it.game_id), it.status);
     }
     renderPagedItems(grid, results, true);
@@ -411,7 +411,7 @@ export async function loadSearchResults(query) {
     if (loadVersion !== searchLoadVersion || paginationState.mode !== 'search' || paginationState.searchQuery !== query) return;
     renderedRevision = -1;
     paginationState.loading = false;
-    grid.innerHTML = `<div class="empty-state">Failed to load results: ${err.message}</div>`;
+    grid.innerHTML = `<div class="empty-state">Failed to load results: ${escapeHTML(err.message)}</div>`;
   }
 }
 
@@ -1952,7 +1952,7 @@ export async function loadLibrary(status, tag, platform, ownedPlatform, extraOpt
     if (loadVersion !== libraryLoadVersion || paginationState.mode !== 'library') return;
     renderedRevision = -1;
     paginationState.loading = false;
-    grid.innerHTML = `<div class="empty-state">Failed to load library: ${err.message}</div>`;
+    grid.innerHTML = `<div class="empty-state">Failed to load library: ${escapeHTML(err.message)}</div>`;
   }
 }
 
@@ -2272,9 +2272,21 @@ async function loadSuggestions() {
   wrap.style.display = '';
   grid.innerHTML = items.map(g => `
     <button type="button" class="suggest-card" data-suggest-id="${g.id}" data-suggest-name="${escapeHTML(g.name)}">
-      <img src="${getCoverURL(g)}" alt="${escapeHTML(g.name)}" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='/covers/${g.id}.jpg'">
+      <img src="${escapeHTML(getCoverURL(g))}" alt="${escapeHTML(g.name)}" loading="lazy" decoding="async" data-cover-fallback="/covers/${g.id}.jpg">
       <span class="suggest-name">${escapeHTML(g.name)}</span>
     </button>`).join('');
+
+  // Cover fallback for suggestion cards: delegated capture-phase listener
+  // (inline onerror handlers are not allowed under the site's CSP).
+  if (!grid.dataset.coverFallbackWired) {
+    grid.dataset.coverFallbackWired = '1';
+    grid.addEventListener('error', (e) => {
+      const img = e.target;
+      if (img.tagName !== 'IMG' || !img.dataset.coverFallback || img.dataset.coverFallbackApplied) return;
+      img.dataset.coverFallbackApplied = '1';
+      img.src = img.dataset.coverFallback;
+    }, true);
+  }
 
   grid.querySelectorAll('.suggest-card').forEach(card => {
     card.addEventListener('click', async () => {
@@ -2667,7 +2679,7 @@ function buildCardHTML(items) {
 
     return `
     <div class="game-card" data-game-id="${item.game_id}">
-      <img src="${getCoverURL(item)}" alt="${escapeHTML(item.game_name)}" width="264" height="374" loading="${eager ? 'eager' : 'lazy'}" decoding="async"${priority}>
+      <img src="${escapeHTML(getCoverURL(item))}" alt="${escapeHTML(item.game_name)}" width="264" height="374" loading="${eager ? 'eager' : 'lazy'}" decoding="async"${priority}>
       ${libraryOverlays}
       <div class="card-title">${escapeHTML(item.game_name)}</div>
       ${releaseHTML}
@@ -2832,8 +2844,12 @@ async function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, 
   // off-grid stored values (e.g. 4.13) are spliced in so they stay visible
   // and saveable.
   const fmtHours = (h) => h.toFixed(2).replace(/\.?0+$/, '');
+  // Cap the generated list at 1000h: playtime_minutes is only validated as
+  // non-negative server-side, and an absurd stored value must not build a
+  // 40 000-option dropdown. The exact stored value is spliced in below even
+  // when it exceeds the cap, so it stays visible and saveable.
   const hourVals = [];
-  for (let q = 0; q <= Math.max(200, hours) * 4; q++) hourVals.push(q / 4);
+  for (let q = 0; q <= Math.min(Math.max(200, hours), 1000) * 4; q++) hourVals.push(q / 4);
   if (!hourVals.includes(hours)) {
     hourVals.push(hours);
     hourVals.sort((a, b) => a - b);
@@ -2893,7 +2909,7 @@ async function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, 
       </div>
       <div class="modal-body">
         <div class="modal-game-info">
-          <img src="${cover}" alt="${escapeHTML(name)}" decoding="async">
+          <img src="${escapeHTML(cover)}" alt="${escapeHTML(name)}" decoding="async">
           <div class="modal-game-meta">
             <h3>${escapeHTML(name)}</h3>
             <div class="modal-release release-${releaseCls}">${escapeHTML(releaseText)}</div>

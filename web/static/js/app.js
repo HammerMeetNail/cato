@@ -1,5 +1,5 @@
-import { checkAuth, logout, library, getLibraryRevision } from '/js/api.js';
-import { initSearch, initVoiceSearch, recordRecentSearch } from '/js/search.js';
+import { api, checkAuth, logout, library, getLibraryRevision } from '/js/api.js';
+import { initSearch, initVoiceSearch, recordRecentSearch, clearRecentSearches } from '/js/search.js';
 import { closeGameModal, resumeLibraryRoute, dismissLibraryFilters, loadLibrary, loadSearchResults, addGameToLibrary, getHashStatus, getHashGameId, getHashSearch, openGameModal, openLibraryItemModal, filterByTag, filterByPlatform, refreshTabCounts } from '/js/library.js';
 import { renderStatsView } from '/js/stats.js';
 import { renderSettingsView } from '/js/settings.js';
@@ -163,6 +163,29 @@ if ('serviceWorker' in navigator) {
 const auth = await checkAuth();
 
 if (!auth.authenticated) {
+  if (auth.network_error) {
+    // The server was unreachable (offline, DNS, timeout). The session cookie
+    // may still be valid — bouncing to /login would look like a logout and
+    // invite a needless re-authentication. Offer a retry instead.
+    const main = document.getElementById('mainContainer');
+    if (main) {
+      const state = document.createElement('div');
+      state.className = 'empty-state';
+      const title = document.createElement('div');
+      title.className = 'empty-title';
+      title.textContent = "Can't reach the server";
+      const hint = document.createElement('p');
+      hint.textContent = 'Check your connection, then try again.';
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'btn btn-primary btn-inline';
+      retry.textContent = 'Retry';
+      retry.addEventListener('click', () => window.location.reload());
+      state.append(title, hint, retry);
+      main.replaceChildren(state);
+    }
+    throw new Error('Network error');
+  }
   window.location.href = '/login' + window.location.hash;
   throw new Error('Not authenticated');
 }
@@ -261,7 +284,15 @@ if (statsStrip) {
 
 logoutLink.addEventListener('click', async (e) => {
   e.preventDefault();
-  await logout();
+  try {
+    await logout();
+  } catch {
+    // Server unreachable: still drop the in-memory CSRF token and leave the
+    // authenticated shell — the session ends at expiry at worst.
+    api.setCSRF(null);
+  }
+  // Search history is personal: don't leave it on shared machines.
+  clearRecentSearches();
   window.location.href = '/login';
 });
 

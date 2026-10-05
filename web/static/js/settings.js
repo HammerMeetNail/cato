@@ -1,14 +1,6 @@
 import { api, getLibraryRevision, updateMe, changePassword, deleteAccount, library } from './api.js';
-
-function escapeHTML(str) {
-  return String(str ?? '').replace(/[&<>"']/g, c => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  }[c]));
-}
+import { escapeHTML } from './library.js';
+import { clearRecentSearches } from './search.js';
 
 function buildSettingsHTML(auth) {
   const email = escapeHTML(auth.email || '—');
@@ -192,6 +184,8 @@ function wireSettings(container, auth) {
       if (deleteFeedback) deleteFeedback.textContent = '';
       try {
         await deleteAccount();
+        // Personal search history must not outlive the account.
+        clearRecentSearches();
         window.location.href = '/login';
       } catch (err) {
         if (deleteFeedback) deleteFeedback.textContent = err.message || 'Failed to delete account';

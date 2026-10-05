@@ -110,10 +110,11 @@ func TestTagChipEllipsis(t *testing.T) {
 
 // TestServiceWorkerCacheBumped ensures shipped asset changes bump the
 // service worker cache version so clients don't serve stale JS/CSS.
+// Update the pinned version whenever CACHE_NAME is bumped for a release.
 func TestServiceWorkerCacheBumped(t *testing.T) {
 	content := readStaticFile(t, "web/static/service-worker.js")
-	if !strings.Contains(content, `CACHE_NAME = "cato-static-v23"`) {
-		t.Fatalf("service-worker.js must have CACHE_NAME v23; got: %s", snippet(content, "CACHE_NAME", 60))
+	if !strings.Contains(content, `CACHE_NAME = "cato-static-v24"`) {
+		t.Fatalf("service-worker.js must have CACHE_NAME v24; got: %s", snippet(content, "CACHE_NAME", 60))
 	}
 }
 

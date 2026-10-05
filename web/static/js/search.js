@@ -105,7 +105,7 @@ function removeRecentSearch(query) {
   saveRecentSearches(getRecentSearches().filter(x => x !== query));
 }
 
-function clearRecentSearches() {
+export function clearRecentSearches() {
   try { localStorage.removeItem(RECENTS_KEY); } catch {}
 }
 
@@ -209,7 +209,7 @@ async function checkOwnership(resultsEl, results) {
   if (ids.length === 0) return;
   try {
     const confirmed = await library.check(ids);
-    for (const it of confirmed) ownedStatuses.set(Number(it.game_id), it.status);
+    for (const it of confirmed || []) ownedStatuses.set(Number(it.game_id), it.status);
     // Patch whatever is currently rendered; a newer render may have replaced
     // the nodes already — detached patches are harmless no-ops.
     resultsEl.querySelectorAll('.qa-add').forEach(btn => {
@@ -233,6 +233,12 @@ async function quickAdd(btn) {
     let owned = ownedStatuses.has(id);
     if (!owned) {
       const checked = await library.check([id]);
+      if (checked === null) {
+        // Ownership unknown (the check request failed). A POST upsert would
+        // destructively overwrite any stored item, so fail closed instead of
+        // guessing.
+        throw new Error('could not confirm library membership');
+      }
       if (checked.length > 0) {
         ownedStatuses.set(id, checked[0].status);
         owned = true;
@@ -290,6 +296,17 @@ function lastTagSegment(raw) {
 export function initSearch(inputEl, resultsEl, onSelect, onSubmit, onTagLookup) {
   activeInputEl = inputEl;
   activeOnSubmit = onSubmit;
+  // Cover fallback for dropdown images: delegated capture-phase error listener
+  // (inline onerror handlers are not allowed under the site's CSP).
+  if (!resultsEl.dataset.coverFallbackWired) {
+    resultsEl.dataset.coverFallbackWired = '1';
+    resultsEl.addEventListener('error', (e) => {
+      const img = e.target;
+      if (img.tagName !== 'IMG' || !img.dataset.coverFallback || img.dataset.coverFallbackApplied) return;
+      img.dataset.coverFallbackApplied = '1';
+      img.src = img.dataset.coverFallback;
+    }, true);
+  }
   const searchRegion = inputEl.closest('.search-wrap') || inputEl;
   const dismissSearchFocus = () => {
     closeDropdown(inputEl, resultsEl);
@@ -694,12 +711,12 @@ function renderResults(results, resultsEl, onSelect, onSubmit) {
       return `
         <div class="search-result-item${i === selectedIndex ? ' selected' : ''}"
              ${optionAttrs(i)} data-index="${i}" data-id="${id}">
-          <img src="${getCoverThumbnailURL(g)}"
+          <img src="${escapeHTML(getCoverThumbnailURL(g))}"
                alt="${escapeHTML(g.name)}" loading="lazy" decoding="async"
-               onerror="this.onerror=null;this.src='/covers/${id}.jpg'">
+               data-cover-fallback="/covers/${id}.jpg">
           <div class="info">
             <div class="name">${highlightName(g.name, currentQuery)}</div>
-            <div class="year release-${relStatus}">${[release, plats].filter(Boolean).join(' · ')}</div>
+            <div class="year release-${relStatus}">${escapeHTML([release, plats].filter(Boolean).join(' · '))}</div>
           </div>
           ${action}
         </div>`;
@@ -792,9 +809,9 @@ function renderTagSuggestions(tagSuggestions, items, resultsEl, onSelect, prefix
       return `
         <div class="search-result-item tag-result${i === selectedIndex ? ' selected' : ''}"
              ${optionAttrs(i)} data-index="${i}" data-id="${item.game_id}">
-          <img src="${getCoverThumbnailURL(item)}"
+          <img src="${escapeHTML(getCoverThumbnailURL(item))}"
                alt="${escapeHTML(item.game_name)}" loading="lazy" decoding="async"
-               onerror="this.onerror=null;this.src='/covers/${item.game_id}.jpg'">
+               data-cover-fallback="/covers/${item.game_id}.jpg">
           <div class="info">
             <div class="name">${escapeHTML(item.game_name)}</div>
             <div class="year release-${relStatus}">${escapeHTML(release)} · ${escapeHTML(item.status)}</div>

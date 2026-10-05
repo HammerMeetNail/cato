@@ -13,7 +13,7 @@
       "name": "Search games",
       "short_name": "Search",
       "description": "Search and add games to your library",
-      "url": "/#search",
+      "url": "/#library",
       "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
     },
     {
