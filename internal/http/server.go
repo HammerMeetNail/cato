@@ -21,6 +21,7 @@ import (
 	"cato/internal/config"
 	"cato/internal/covers"
 	"cato/internal/db"
+	v1 "cato/internal/http/v1"
 	"cato/internal/jobs"
 	"cato/internal/metrics"
 )
@@ -79,6 +80,16 @@ func (s *Server) routes() {
 	libraryHandler := NewLibraryHandler(s.db, auth.Cookies{Secure: s.cfg.SecureCookies()})
 	libraryHandler.Register(s.mux)
 	s.libraryHandler = libraryHandler
+
+	v1.Register(s.mux, v1.Deps{
+		DB:            s.db,
+		Cfg:           s.cfg,
+		Cookies:       auth.Cookies{Secure: s.cfg.SecureCookies()},
+		Library:       libraryHandler.lib,
+		Catalog:       gameHandler.service,
+		Games:         libraryHandler.games,
+		SearchLimiter: gameHandler.searchLimiter,
+	})
 
 	s.mux.HandleFunc("/covers/", covers.ServeCover(s.cfg.CoverDir))
 

@@ -180,6 +180,8 @@ type Store struct {
 	now func() time.Time
 	// OnWrite runs after a committed write that may have queued a cover job.
 	OnWrite func()
+	// Scorer ranks backlog games for Up Next (set by the catalog layer).
+	Scorer func(ctx context.Context, userID string, n int) ([]UpNextPick, error)
 }
 
 func NewStore(database *db.DB, names PlatformNamer) *Store {

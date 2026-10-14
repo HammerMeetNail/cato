@@ -1,0 +1,159 @@
+package library
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"strings"
+)
+
+// Prefs are per-user settings kept in user_state.prefs_json. Unknown keys
+// are dropped on write, so the stored document only ever holds these.
+type Prefs struct {
+	// Theme is system (default), light or dark.
+	Theme string `json:"theme"`
+	// RatingDisplay is stars (5 stars with halves, default), ten or hundred.
+	RatingDisplay string `json:"rating_display"`
+	// DefaultPlatforms pre-fill ownership when adding a game.
+	DefaultPlatforms []string `json:"default_platforms"`
+	// LibraryLayout is grid (default) or list; Density comfortable or compact.
+	LibraryLayout string `json:"library_layout"`
+	Density       string `json:"density"`
+	// LibrarySort is the default library order.
+	LibrarySort string `json:"library_sort"`
+	// UpNext is the user's pinned queue of backlog games (at most 5).
+	UpNext []int64 `json:"up_next"`
+	// Streaks shows the gentle "played N days" line on Home.
+	Streaks bool `json:"streaks"`
+	// WeekStart is mon (default) or sun, for the diary calendar.
+	WeekStart string `json:"week_start"`
+	// OnboardingDone hides the first-run card.
+	OnboardingDone bool `json:"onboarding_done"`
+	// Haptics enables vibration feedback when logging (Android).
+	Haptics bool `json:"haptics"`
+	// Confetti celebrates finishing a game (reduced motion still wins).
+	Confetti bool `json:"confetti"`
+}
+
+// DefaultPrefs is what a new account starts with.
+func DefaultPrefs() Prefs {
+	return Prefs{Theme: "system", RatingDisplay: "stars", DefaultPlatforms: []string{}, LibraryLayout: "grid",
+		Density: "comfortable", LibrarySort: "updated", UpNext: []int64{}, Streaks: true, WeekStart: "mon",
+		Haptics: true, Confetti: true}
+}
+
+const maxUpNext = 5
+
+func oneOf(v string, allowed ...string) bool {
+	for _, a := range allowed {
+		if v == a {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *Prefs) validate() error {
+	if !oneOf(p.Theme, "system", "light", "dark") {
+		return invalid("invalid_pref", "theme", "Theme must be system, light or dark")
+	}
+	if !oneOf(p.RatingDisplay, "stars", "ten", "hundred") {
+		return invalid("invalid_pref", "rating_display", "Rating display must be stars, ten or hundred")
+	}
+	if !oneOf(p.LibraryLayout, "grid", "list") {
+		return invalid("invalid_pref", "library_layout", "Layout must be grid or list")
+	}
+	if !oneOf(p.Density, "comfortable", "compact") {
+		return invalid("invalid_pref", "density", "Density must be comfortable or compact")
+	}
+	if NormalizeSort(p.LibrarySort) != p.LibrarySort {
+		return invalid("invalid_pref", "library_sort", "Unknown sort")
+	}
+	if !oneOf(p.WeekStart, "mon", "sun") {
+		return invalid("invalid_pref", "week_start", "Week start must be mon or sun")
+	}
+	st := itemState{status: StatusBacklog, platforms: p.DefaultPlatforms}
+	if err := validateState(&st); err != nil {
+		return invalid("invalid_pref", "default_platforms", err.Error())
+	}
+	p.DefaultPlatforms = st.platforms
+	p.UpNext = dedupeIDs(p.UpNext)
+	if p.UpNext == nil {
+		p.UpNext = []int64{}
+	}
+	if len(p.UpNext) > maxUpNext {
+		return invalid("invalid_pref", "up_next", "Up Next holds at most 5 games")
+	}
+	return nil
+}
+
+// GetPrefs returns the user's settings over the defaults.
+func (s *Store) GetPrefs(ctx context.Context, userID string) (Prefs, error) {
+	return getPrefs(ctx, s.db, userID)
+}
+
+func getPrefs(ctx context.Context, q querier, userID string) (Prefs, error) {
+	p := DefaultPrefs()
+	var raw string
+	err := q.QueryRowContext(ctx, `SELECT prefs_json FROM user_state WHERE user_id = ?`, userID).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return p, nil
+	}
+	if err != nil {
+		return p, err
+	}
+	_ = json.Unmarshal([]byte(raw), &p)
+	if p.validate() != nil {
+		// A stored value from an older release: fall back field by field.
+		d := DefaultPrefs()
+		if !oneOf(p.Theme, "system", "light", "dark") {
+			p.Theme = d.Theme
+		}
+		if !oneOf(p.RatingDisplay, "stars", "ten", "hundred") {
+			p.RatingDisplay = d.RatingDisplay
+		}
+		if !oneOf(p.LibraryLayout, "grid", "list") {
+			p.LibraryLayout = d.LibraryLayout
+		}
+		if !oneOf(p.Density, "comfortable", "compact") {
+			p.Density = d.Density
+		}
+		p.LibrarySort = NormalizeSort(p.LibrarySort)
+		if !oneOf(p.WeekStart, "mon", "sun") {
+			p.WeekStart = d.WeekStart
+		}
+		if len(p.UpNext) > maxUpNext {
+			p.UpNext = p.UpNext[:maxUpNext]
+		}
+	}
+	return p, nil
+}
+
+// UpdatePrefs merges patch (a JSON object of Prefs fields) into the stored
+// settings and returns the result.
+func (s *Store) UpdatePrefs(ctx context.Context, userID string, patch json.RawMessage) (Prefs, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Prefs{}, err
+	}
+	defer tx.Rollback()
+	p, err := getPrefs(ctx, tx, userID)
+	if err != nil {
+		return p, err
+	}
+	dec := json.NewDecoder(strings.NewReader(string(patch)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&p); err != nil {
+		return p, invalid("invalid_pref", "", "Unknown or malformed setting")
+	}
+	if err := p.validate(); err != nil {
+		return p, err
+	}
+	b, _ := json.Marshal(p)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO user_state (user_id, prefs_json) VALUES (?, ?)
+		ON CONFLICT(user_id) DO UPDATE SET prefs_json = excluded.prefs_json`, userID, string(b)); err != nil {
+		return p, err
+	}
+	return p, tx.Commit()
+}

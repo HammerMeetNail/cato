@@ -169,6 +169,7 @@ var ValidLibraryStatuses = map[string]bool{
 	"wishlist":  true,
 	"backlog":   true,
 	"playing":   true,
+	"paused":    true,
 	"completed": true,
 	"abandoned": true,
 }
