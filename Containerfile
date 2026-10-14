@@ -1,5 +1,5 @@
 # The NAS Dockerfile accepts a local binary; this image builds only tracked source paths.
-FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.26.8-alpine AS builder
+FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.26.9-alpine AS builder
 WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
@@ -19,6 +19,8 @@ WORKDIR /app
 ENV CATO_STATIC_DIR=/app/web/static CATO_DB_PATH=/app/data/cato.db CATO_COVER_DIR=/app/data/covers CATO_LISTEN_ADDR=:7080
 USER 10001:10001
 EXPOSE 7080
+# Plain HTTP behind a TLS-terminating proxy, or native TLS (self-signed allowed:
+# this is a loopback liveness probe, not a trust decision).
 HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=6 \
-    CMD wget -q -O /dev/null http://127.0.0.1:7080/healthz || exit 1
+    CMD wget -q -O /dev/null http://127.0.0.1:7080/healthz || wget -q --no-check-certificate -O /dev/null https://127.0.0.1:7080/healthz || exit 1
 CMD ["cato"]

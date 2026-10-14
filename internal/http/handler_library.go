@@ -21,12 +21,13 @@ import (
 const maxLibraryPageSize = 200
 
 type LibraryHandler struct {
-	db    *db.DB
-	games *games.Store
+	db      *db.DB
+	games   *games.Store
+	cookies auth.Cookies
 }
 
-func NewLibraryHandler(db *db.DB) *LibraryHandler {
-	return &LibraryHandler{db: db, games: games.NewStore(db)}
+func NewLibraryHandler(db *db.DB, cookies auth.Cookies) *LibraryHandler {
+	return &LibraryHandler{db: db, games: games.NewStore(db), cookies: cookies}
 }
 
 // platformNames loads the IGDB ID→name lookup once per request; callers pass
@@ -41,8 +42,8 @@ func (h *LibraryHandler) platformNames(ctx context.Context) map[int64]string {
 }
 
 func (h *LibraryHandler) Register(mux *http.ServeMux) {
-	chain := auth.AuthRequired(h.db)
-	csrfChain := auth.CSRFRequired(h.db)
+	chain := auth.AuthRequired(h.db, h.cookies)
+	csrfChain := auth.CSRFRequired(h.db, h.cookies)
 
 	mux.Handle("/api/library", chain(csrfChain(http.HandlerFunc(h.handleLibrary))))
 	mux.Handle("/api/library/tags", chain(http.HandlerFunc(h.handleLibraryTags)))

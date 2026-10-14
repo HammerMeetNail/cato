@@ -20,6 +20,7 @@ import (
 type AuthHandler struct {
 	db              *db.DB
 	cfg             *config.Config
+	cookies         auth.Cookies
 	googleCfg       *oauth2.Config
 	loginLimiter    *auth.RateLimiter
 	signupLimiter   *auth.RateLimiter
@@ -37,6 +38,7 @@ func NewAuthHandler(db *db.DB, cfg *config.Config) *AuthHandler {
 	h := &AuthHandler{
 		db:              db,
 		cfg:             cfg,
+		cookies:         auth.Cookies{Secure: cfg.SecureCookies()},
 		loginLimiter:    auth.NewRateLimiter(loginLimit, time.Minute),
 		signupLimiter:   auth.NewRateLimiter(signupLimit, time.Minute),
 		passwordLimiter: auth.NewRateLimiter(passwordLimit, time.Minute),
@@ -51,10 +53,14 @@ func NewAuthHandler(db *db.DB, cfg *config.Config) *AuthHandler {
 		if cfg.BaseURL != "" {
 			redirectURL = strings.TrimSuffix(cfg.BaseURL, "/") + "/api/auth/google/callback"
 		} else {
-			redirectURL = "http://localhost" + cfg.ListenAddr + "/api/auth/google/callback"
-			log.Printf("WARNING: GOOGLE_KEY is set but CATO_BASE_URL is not; " +
-				"Google OAuth redirect will use http://localhost — set CATO_BASE_URL " +
-				"(e.g. http://10.0.0.42:7080) for sign-in to work from other devices")
+			scheme := "http"
+			if cfg.HTTPS() {
+				scheme = "https"
+			}
+			redirectURL = scheme + "://localhost" + cfg.ListenAddr + "/api/auth/google/callback"
+			log.Printf("WARNING: GOOGLE_KEY is set but CATO_BASE_URL is not; "+
+				"Google OAuth redirect will use %s://localhost — set CATO_BASE_URL "+
+				"(e.g. https://cato.example) for sign-in to work from other devices", scheme)
 		}
 		h.googleCfg = auth.NewGoogleConfig(cfg.GoogleKey, cfg.GoogleSecret, redirectURL)
 	}
@@ -76,7 +82,7 @@ func (h *AuthHandler) Register(mux *http.ServeMux) {
 	// Change password: auth + CSRF + rate limited (the current password is
 	// verified inside, so the limiter slows online guessing).
 	passwordChain := h.passwordLimiter.Middleware(
-		auth.AuthRequired(h.db)(auth.CSRFRequired(h.db)(http.HandlerFunc(h.handleChangePassword))))
+		auth.AuthRequired(h.db, h.cookies)(auth.CSRFRequired(h.db, h.cookies)(http.HandlerFunc(h.handleChangePassword))))
 	mux.Handle("/api/auth/password", passwordChain)
 
 	mux.HandleFunc("/api/auth/google/start", h.handleGoogleStart)
@@ -99,7 +105,7 @@ func (h *AuthHandler) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID := auth.GetSessionID(r)
+	sessionID := h.cookies.SessionID(r)
 	if sessionID == "" {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"authenticated": false,
@@ -146,7 +152,7 @@ func (h *AuthHandler) handleMe(w http.ResponseWriter, r *http.Request) {
 // false} for the login page), so session + CSRF are validated inline with
 // the same rules as auth.CSRFRequired.
 func (h *AuthHandler) updateMe(w http.ResponseWriter, r *http.Request) {
-	sessionID := auth.GetSessionID(r)
+	sessionID := h.cookies.SessionID(r)
 	if sessionID == "" {
 		writeJSON(w, http.StatusUnauthorized, errResp("unauthorized", "Authentication required"))
 		return
@@ -256,7 +262,7 @@ func (h *AuthHandler) handleChangePassword(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := auth.ChangePassword(h.db, userID, auth.GetSessionID(r), passwordHash, newHash); err != nil {
+	if err := auth.ChangePassword(h.db, userID, h.cookies.SessionID(r), passwordHash, newHash); err != nil {
 		if errors.Is(err, auth.ErrSessionRejected) {
 			writeJSON(w, http.StatusUnauthorized, errResp("invalid_credentials", "Credentials changed; sign in again"))
 			return
@@ -278,7 +284,7 @@ func (h *AuthHandler) handleChangePassword(w http.ResponseWriter, r *http.Reques
 // library_items reference users(id) ON DELETE CASCADE, so removing the user
 // row cleans up everything owned by the account.
 func (h *AuthHandler) deleteMe(w http.ResponseWriter, r *http.Request) {
-	sessionID := auth.GetSessionID(r)
+	sessionID := h.cookies.SessionID(r)
 	if sessionID == "" {
 		writeJSON(w, http.StatusUnauthorized, errResp("unauthorized", "Authentication required"))
 		return
@@ -312,7 +318,7 @@ func (h *AuthHandler) deleteMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	auth.ClearSessionCookie(w, h.cfg.CookieSecure)
+	h.cookies.ClearSession(w)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Account deleted",
 	})
@@ -373,7 +379,7 @@ func (h *AuthHandler) handleSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	auth.SetSessionCookie(w, session.ID, h.cfg.CookieSecure)
+	h.cookies.SetSession(w, session.ID)
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"user_id":       userID,
 		"email":         req.Email,
@@ -438,7 +444,7 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	auth.SetSessionCookie(w, session.ID, h.cfg.CookieSecure)
+	h.cookies.SetSession(w, session.ID)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"user_id":       userID,
 		"email":         req.Email,
@@ -454,12 +460,12 @@ func (h *AuthHandler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID := auth.GetSessionID(r)
+	sessionID := h.cookies.SessionID(r)
 	if sessionID != "" {
 		auth.DeleteSession(h.db, sessionID)
 	}
 
-	auth.ClearSessionCookie(w, h.cfg.CookieSecure)
+	h.cookies.ClearSession(w)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Logged out",
 	})
@@ -474,18 +480,9 @@ func (h *AuthHandler) handleGoogleStart(w http.ResponseWriter, r *http.Request) 
 	state := auth.RandomToken(16)
 
 	// Store state in a dedicated short-lived cookie for CSRF protection.
-	// (This must NOT touch the cato_session cookie — overwriting it here
-	// used to log out any already signed-in user who clicked the Google
-	// button.)
-	http.SetCookie(w, &http.Cookie{
-		Name:     "cato_oauth_state",
-		Value:    state,
-		Path:     "/api/auth/google",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   h.cfg.CookieSecure,
-		MaxAge:   600,
-	})
+	// (This must NOT touch the session cookie — overwriting it here used to
+	// log out any already signed-in user who clicked the Google button.)
+	h.cookies.SetOAuthState(w, state)
 
 	url := h.googleCfg.AuthCodeURL(state)
 	http.Redirect(w, r, url, http.StatusFound)
@@ -498,22 +495,12 @@ func (h *AuthHandler) handleGoogleCallback(w http.ResponseWriter, r *http.Reques
 	}
 
 	state := r.URL.Query().Get("state")
-	stateCookie, err := r.Cookie("cato_oauth_state")
-	if err != nil || state == "" || stateCookie.Value != state {
+	if stateCookie := h.cookies.OAuthState(r); state == "" || stateCookie != state {
 		writeJSON(w, http.StatusBadRequest, errResp("invalid_state", "Invalid OAuth state"))
 		return
 	}
 
-	// Clear state cookie
-	http.SetCookie(w, &http.Cookie{
-		Name:     "cato_oauth_state",
-		Value:    "",
-		Path:     "/api/auth/google",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   h.cfg.CookieSecure,
-		MaxAge:   -1,
-	})
+	h.cookies.ClearOAuthState(w)
 
 	code := r.URL.Query().Get("code")
 	if code == "" {
@@ -548,7 +535,7 @@ func (h *AuthHandler) handleGoogleCallback(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	auth.SetSessionCookie(w, session.ID, h.cfg.CookieSecure)
+	h.cookies.SetSession(w, session.ID)
 	http.Redirect(w, r, "/library", http.StatusFound)
 }
 

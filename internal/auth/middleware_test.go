@@ -55,7 +55,7 @@ func TestAuthRequiredMiddleware(t *testing.T) {
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}
-	mw := AuthRequired(q)(http.HandlerFunc(handler))
+	mw := AuthRequired(q, Cookies{})(http.HandlerFunc(handler))
 
 	// No cookie → 401.
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -83,7 +83,7 @@ func TestAuthRequiredMiddleware(t *testing.T) {
 	req3.AddCookie(&http.Cookie{Name: "cato_session", Value: sess.ID})
 	rec3 := httptest.NewRecorder()
 	var gotID string
-	mwWithCapture := AuthRequired(q)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mwWithCapture := AuthRequired(q, Cookies{})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotID = GetUserID(r.Context())
 	}))
 	mwWithCapture.ServeHTTP(rec3, req3)
@@ -102,7 +102,7 @@ func TestCSRFRequiredMiddleware(t *testing.T) {
 		t.Fatalf("CreateSession: %v", err)
 	}
 	var called bool
-	mw := CSRFRequired(q)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mw := CSRFRequired(q, Cookies{})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 	}))
 	reqWith := func(method, token string) *http.Request {
@@ -299,34 +299,34 @@ func TestPasswordHashRoundtrip(t *testing.T) {
 
 func TestSessionCookieHelpers(t *testing.T) {
 	rec := httptest.NewRecorder()
-	SetSessionCookie(rec, "tok123", true)
+	Cookies{Secure: true}.SetSession(rec, "tok123")
 	cookies := rec.Result().Cookies()
 	if len(cookies) == 0 {
 		t.Fatal("no cookie set")
 	}
 	c := cookies[0]
-	if c.Name != "cato_session" || c.Value != "tok123" || !c.HttpOnly || !c.Secure {
-		t.Errorf("SetSessionCookie: %+v", c)
+	if c.Name != "__Host-cato_session" || c.Value != "tok123" || !c.HttpOnly || !c.Secure {
+		t.Errorf("SetSession: %+v", c)
 	}
 	if c.MaxAge != int((30 * 24 * time.Hour).Seconds()) {
 		t.Errorf("MaxAge = %d", c.MaxAge)
 	}
 
 	rec2 := httptest.NewRecorder()
-	ClearSessionCookie(rec2, false)
+	Cookies{}.ClearSession(rec2)
 	c2 := rec2.Result().Cookies()[0]
 	if c2.Name != "cato_session" || c2.MaxAge != -1 {
-		t.Errorf("ClearSessionCookie: %+v", c2)
+		t.Errorf("ClearSession: %+v", c2)
 	}
 }
 
 func TestGetSessionIDAndCSRFContext(t *testing.T) {
-	if id := GetSessionID(httptest.NewRequest(http.MethodGet, "/", nil)); id != "" {
+	if id := (Cookies{}).SessionID(httptest.NewRequest(http.MethodGet, "/", nil)); id != "" {
 		t.Errorf("no cookie: %q", id)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(&http.Cookie{Name: "cato_session", Value: "abc"})
-	if id := GetSessionID(req); id != "abc" {
+	if id := (Cookies{}).SessionID(req); id != "abc" {
 		t.Errorf("with cookie: %q", id)
 	}
 

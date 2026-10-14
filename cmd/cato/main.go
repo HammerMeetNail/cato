@@ -48,6 +48,14 @@ func main() {
 	categoryBackfillDB := categoryBackfillCmd.String("db", "data/cato.db", "SQLite database path")
 	categoryBackfillBatch := categoryBackfillCmd.Int("batch", 500, "game IDs per IGDB request (max 500)")
 
+	if len(os.Args) >= 2 && os.Args[1] == "dev-cert" {
+		if err := devCertCommand(os.Args[2:], os.Stdout, os.Stderr); err != nil {
+			fmt.Fprintf(os.Stderr, "dev-cert: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if len(os.Args) >= 2 && os.Args[1] == "import-games" {
 		importCmd.Parse(os.Args[2:])
 		if *importInput == "" {
@@ -264,6 +272,9 @@ func main() {
 	}
 
 	cfg := config.Load()
+	if err := prepareTLS(cfg); err != nil {
+		log.Fatalf("config: %v", err)
+	}
 
 	if err := os.MkdirAll(cfg.CoverDir, 0755); err != nil {
 		log.Fatalf("create cover dir: %v", err)
@@ -280,6 +291,13 @@ func main() {
 
 	if err := db.Migrate(database); err != nil {
 		log.Fatalf("migrate: %v", err)
+	}
+
+	// Bind before starting background owners: a bad certificate or a busy
+	// port fails startup with nothing to unwind.
+	srv := http.NewServer(cfg, database)
+	if err := srv.Listen(); err != nil {
+		log.Fatalf("listen: %v", err)
 	}
 
 	coverWorker := covers.NewWorker(database, cfg.CoverDir)
@@ -312,8 +330,14 @@ func main() {
 		log.Printf("startup: deduplicated tags on %d items", n)
 	}
 
-	srv := http.NewServer(cfg, database)
-	log.Printf("cato listening on %s", cfg.ListenAddr)
+	scheme := "http"
+	if cfg.ServesTLS() {
+		scheme = "https"
+	}
+	log.Printf("cato listening on %s://%s", scheme, srv.Addr())
+	if a := srv.RedirectAddr(); a != nil {
+		log.Printf("cato redirecting http://%s to https", a)
+	}
 
 	serverErr := make(chan error, 1)
 	go func() {

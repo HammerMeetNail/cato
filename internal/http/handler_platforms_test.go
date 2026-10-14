@@ -147,20 +147,20 @@ func TestTryGetUserID(t *testing.T) {
 
 	// No cookie → empty.
 	req := httptest.NewRequest(http.MethodGet, "/api/games/search?q=zelda", nil)
-	if uid := tryGetUserID(req, database); uid != "" {
+	if uid := tryGetUserID(req, database, auth.Cookies{}); uid != "" {
 		t.Errorf("expected empty for missing cookie, got %q", uid)
 	}
 
 	// Valid cookie → user id.
 	req.AddCookie(&http.Cookie{Name: "cato_session", Value: session.ID})
-	if uid := tryGetUserID(req, database); uid != "u-1" {
+	if uid := tryGetUserID(req, database, auth.Cookies{}); uid != "u-1" {
 		t.Errorf("expected u-1, got %q", uid)
 	}
 
 	// Bogus cookie → empty (no panic, no error propagation).
 	req = httptest.NewRequest(http.MethodGet, "/api/games/search?q=zelda", nil)
 	req.AddCookie(&http.Cookie{Name: "cato_session", Value: "not-a-real-session"})
-	if uid := tryGetUserID(req, database); uid != "" {
+	if uid := tryGetUserID(req, database, auth.Cookies{}); uid != "" {
 		t.Errorf("expected empty for bogus session, got %q", uid)
 	}
 }

@@ -7,10 +7,12 @@ GOVULNCHECK_VERSION := v1.8.0
 build:
 	go build -o cato ./cmd/cato
 
+# HTTPS by default: a self-signed dev certificate in data/dev-tls (no tools or
+# trust-store changes). Set CATO_TLS_CERT_FILE/KEY_FILE to use your own.
 run: build
 	@mkdir -p data/covers
-	@{ ./cato & echo $$! > .pid; }
-	@echo "Cato running on http://localhost:7080 (PID: $$(cat .pid))"
+	@{ if [ -z "$$CATO_TLS_CERT_FILE" ]; then export CATO_DEV_TLS=$${CATO_DEV_TLS:-1}; fi; ./cato & echo $$! > .pid; }
+	@echo "Cato running on https://localhost:7080 (PID: $$(cat .pid)); accept the self-signed certificate once"
 
 stop:
 	@if [ -f .pid ]; then kill $$(cat .pid) 2>/dev/null && rm -f .pid && echo "Cato stopped"; else echo "Cato not running"; fi

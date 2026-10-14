@@ -7,12 +7,16 @@ Browse, search, rate, and organize your game collection. Keep your data on your 
 ## Quick Start
 
 ```bash
-go build -o cato ./cmd/cato
-mkdir -p data/covers
-./cato
+make run   # builds, then serves HTTPS with a self-signed dev certificate
 ```
 
-Open `http://localhost:7080`.
+Open `https://localhost:7080` and accept the certificate warning once. Cato is
+HTTPS-only: browsers enable the service worker (install/offline), passkeys and
+push only in a secure context. `make run` sets `CATO_DEV_TLS=1`, which creates a
+30-day ECDSA certificate in `data/dev-tls/` with Go's standard library (no
+openssl, mkcert or trust-store changes). `cato dev-cert --out DIR` writes one
+explicitly and prints its SPKI SHA-256 pin. To use the dev server from a phone,
+see [docs/dev-https.md](docs/dev-https.md) (optional).
 
 ## Docker
 
@@ -21,9 +25,9 @@ make deploy-build  # Dockerfile packages the Linux/amd64 binary
 docker compose up -d --build
 ```
 
-Copy `.env.example` to `.env` and set the externally visible URL first. See the
+Copy `.env.example` to `.env` and choose how HTTPS is provided first. See the
 [production runbook](docs/production-runbook.md) for HTTPS, release validation,
-backups, restore and rollback. This release targets a trusted private network.
+backups, restore and rollback.
 
 Release automation follows Nabu's version-tag workflow: `DRY_RUN=1 make deploy`
 previews the next tag; confirming `make deploy` pushes it and triggers image
@@ -39,8 +43,18 @@ and production environment using the runbook before cutting a release tag.
 | `CATO_DB_PATH` | `data/cato.db` | SQLite database path |
 | `CATO_STATIC_DIR` | `web/static` | Static files directory |
 | `CATO_COVER_DIR` | `data/covers` | Cover image cache directory |
-| `CATO_SECURE_COOKIES` | `false` | Enable for HTTPS |
-| `CATO_BASE_URL` | — | Externally visible base URL (e.g. `http://10.0.0.42:7080`). Required for Google OAuth when Cato is reached from other devices — the OAuth redirect is built from it. |
+| `CATO_BASE_URL` | — | Externally visible `https://` origin. Required behind a TLS-terminating proxy and for Google OAuth from other devices (the OAuth redirect is built from it). Non-https values refuse to start. |
+| `CATO_TLS_CERT_FILE` / `CATO_TLS_KEY_FILE` | — | Serve HTTPS natively (TLS 1.2+, HTTP/2). Renewed files are picked up without a restart. |
+| `CATO_DEV_TLS` | — (`1` under `make run`) | Generate/reuse a self-signed dev certificate in `CATO_DEV_TLS_DIR` (`data/dev-tls`). No HSTS is sent with it. |
+| `CATO_HTTP_REDIRECT_ADDR` | — | Optional plain-HTTP listener that answers every request with a 308 to HTTPS. Needs native TLS. |
+| `CATO_TRUSTED_PROXIES` | — | Comma-separated CIDRs/IPs whose `X-Forwarded-For`/`X-Forwarded-Proto` are believed (rate limiting, scheme). Ignored from anyone else. |
+| `CATO_ALLOW_INSECURE` | — | `1` permits plain HTTP. For tests only. |
+| `CATO_SECURE_COOKIES` | `false` | Legacy override; HTTPS already forces `Secure`. |
+
+Over HTTPS the session cookie is `__Host-cato_session` (`Secure`, `Path=/`, no
+`Domain`), and responses add HSTS (`max-age=31536000`, not with dev certificates)
+and `upgrade-insecure-requests`. Upgrading from an HTTP deployment signs everyone
+out once.
 | `GOOGLE_KEY` | — | Google OAuth client ID |
 | `GOOGLE_SECRET` | — | Google OAuth client secret |
 | `IGDB_CLIENT_ID` | — | Twitch client ID for IGDB API |
@@ -75,7 +89,7 @@ At startup Cato also repairs cover data poisoned by earlier bugs: URLs pointing 
 
 Email/password signup and login, plus Google OAuth. Sessions are stored as opaque hashed tokens. Unsafe methods require a CSRF token returned by `GET /api/me`. Expired sessions and cache entries are swept daily by a background job.
 
-Google OAuth needs `CATO_BASE_URL` set to the address users type into their browser (a warning is logged at startup otherwise).
+Google OAuth needs `CATO_BASE_URL` set to the `https://` address users type into their browser (a warning is logged at startup otherwise). Google also accepts `https://localhost` redirect URIs for development.
 
 ## API
 
@@ -138,6 +152,6 @@ make stop    # stop locally
 make release-check # build, vet, race, frontend, backup, dependency and browser checks
 ```
 
-Go 1.26.8 is selected by `go.mod`. Release checks also require Node 24+, Python
+Go 1.26.9 is selected by `go.mod`. Release checks also require Node 24+, Python
 3.10+, sqlite3, and Playwright's Chromium/WebKit system dependencies (see the runbook).
 The [browser coverage map](e2e/README.md) lists tested journeys and device limits.

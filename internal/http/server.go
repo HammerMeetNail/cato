@@ -4,35 +4,53 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
+	"net"
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
+	"cato/internal/auth"
 	"cato/internal/config"
 	"cato/internal/covers"
 	"cato/internal/db"
 )
 
 type Server struct {
-	cfg         *config.Config
-	db          *db.DB
-	mux         *http.ServeMux
-	httpServer  *http.Server
-	gameHandler *GameHandler
+	cfg            *config.Config
+	db             *db.DB
+	mux            *http.ServeMux
+	httpServer     *http.Server
+	redirectServer *http.Server
+	gameHandler    *GameHandler
+
+	// certReloadInterval bounds how often the TLS certificate files are
+	// re-checked for renewal.
+	certReloadInterval time.Duration
+
+	mu         sync.Mutex
+	ln         net.Listener
+	redirectLn net.Listener
 }
 
 func NewServer(cfg *config.Config, db *db.DB) *Server {
 	s := &Server{
-		cfg: cfg,
-		db:  db,
-		mux: http.NewServeMux(),
+		cfg:                cfg,
+		db:                 db,
+		mux:                http.NewServeMux(),
+		certReloadInterval: time.Minute,
 	}
 	s.routes()
 	s.httpServer = &http.Server{Addr: cfg.ListenAddr, Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	if cfg.HTTPRedirectAddr != "" {
+		s.redirectServer = &http.Server{Addr: cfg.HTTPRedirectAddr, Handler: s.redirectHandler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 5 * time.Second}
+	}
 	return s
 }
 
@@ -46,7 +64,7 @@ func (s *Server) routes() {
 	gameHandler.Register(s.mux)
 	s.gameHandler = gameHandler
 
-	libraryHandler := NewLibraryHandler(s.db)
+	libraryHandler := NewLibraryHandler(s.db, auth.Cookies{Secure: s.cfg.SecureCookies()})
 	libraryHandler.Register(s.mux)
 
 	s.mux.HandleFunc("/covers/", covers.ServeCover(s.cfg.CoverDir))
@@ -209,23 +227,112 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) Handler() http.Handler {
-	return securityMiddleware(gzipMiddleware(apiBodyLimitMiddleware(s.mux)))
+	return s.clientMiddleware(securityMiddleware(s.cfg, gzipMiddleware(apiBodyLimitMiddleware(s.mux))))
+}
+
+// clientMiddleware resolves the client IP and scheme once per request,
+// believing forwarded headers only from CATO_TRUSTED_PROXIES.
+func (s *Server) clientMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, auth.ResolveClient(r, s.cfg.TrustedProxies))
+	})
+}
+
+// Listen binds the application listener (TLS when configured) and the
+// optional HTTP→HTTPS redirect listener. Start calls it when needed;
+// calling it first lets callers learn ":0" addresses and fail fast on a bad
+// certificate before anything is served.
+func (s *Server) Listen() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ln != nil {
+		return nil
+	}
+	var tlsCfg *tls.Config
+	if s.cfg.ServesTLS() {
+		reloader, err := newCertReloader(s.cfg.TLSCertFile, s.cfg.TLSKeyFile, s.certReloadInterval)
+		if err != nil {
+			return err
+		}
+		tlsCfg = &tls.Config{
+			MinVersion:     tls.VersionTLS12,
+			GetCertificate: reloader.GetCertificate,
+			NextProtos:     []string{"h2", "http/1.1"},
+		}
+		s.httpServer.TLSConfig = tlsCfg
+	}
+	ln, err := net.Listen("tcp", s.cfg.ListenAddr)
+	if err != nil {
+		return err
+	}
+	if s.redirectServer != nil {
+		rln, err := net.Listen("tcp", s.cfg.HTTPRedirectAddr)
+		if err != nil {
+			ln.Close()
+			return err
+		}
+		s.redirectLn = rln
+	}
+	if tlsCfg != nil {
+		ln = tls.NewListener(ln, tlsCfg)
+	}
+	s.ln = ln
+	return nil
+}
+
+// Addr is the bound application address (nil before Listen).
+func (s *Server) Addr() net.Addr {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ln == nil {
+		return nil
+	}
+	return s.ln.Addr()
+}
+
+// RedirectAddr is the bound HTTP redirect address (nil when disabled).
+func (s *Server) RedirectAddr() net.Addr {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.redirectLn == nil {
+		return nil
+	}
+	return s.redirectLn.Addr()
 }
 
 func (s *Server) Start() error {
+	if err := s.Listen(); err != nil {
+		return err
+	}
 	s.gameHandler.startBackground(s.cfg)
-	return s.httpServer.ListenAndServe()
+	s.mu.Lock()
+	ln, rln := s.ln, s.redirectLn
+	s.mu.Unlock()
+	if rln != nil {
+		go func() {
+			if err := s.redirectServer.Serve(rln); err != nil && err != http.ErrServerClosed {
+				log.Printf("http redirect listener: %v", err)
+			}
+		}()
+	}
+	// The listener is already TLS-wrapped, so Serve (not ServeTLS) is right;
+	// HTTP/2 is negotiated through NextProtos.
+	return s.httpServer.Serve(ln)
 }
 
 // Shutdown gracefully drains in-flight requests. Previously SIGTERM just
 // killed the process, dropping any request mid-flight (including DB writes).
 func (s *Server) Shutdown(ctx context.Context) error {
+	var redirectErr error
+	if s.redirectServer != nil {
+		redirectErr = s.redirectServer.Shutdown(ctx)
+	}
 	drainErr := s.httpServer.Shutdown(ctx)
 	if drainErr != nil {
 		_ = s.httpServer.Close()
 	}
 	workerErr := s.gameHandler.service.Shutdown(ctx)
-	return errors.Join(drainErr, workerErr)
+	return errors.Join(drainErr, redirectErr, workerErr)
 }
 
 const maxAPIBodyBytes = 1 << 20
@@ -253,7 +360,22 @@ func apiBodyLimitMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func securityMiddleware(next http.Handler) http.Handler {
+// permissionsPolicy turns off powerful features Cato does not use; camera
+// stays available to Cato itself for barcode scanning.
+const permissionsPolicy = "accelerometer=(), camera=(self), display-capture=(), geolocation=(), " +
+	"gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), usb=()"
+
+func securityMiddleware(cfg *config.Config, next http.Handler) http.Handler {
+	csp := "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+		"img-src 'self' https://images.igdb.com data:; connect-src 'self'; " +
+		"frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+	https := cfg.HTTPS()
+	if https {
+		csp += "; upgrade-insecure-requests"
+	}
+	// HSTS is per host, not per port: on a self-signed dev certificate it
+	// would pin every other localhost project to https, so dev TLS skips it.
+	hsts := https && !cfg.DevTLS
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
@@ -265,10 +387,11 @@ func securityMiddleware(next http.Handler) http.Handler {
 		// a script-execution one. img-src covers same-origin covers plus the
 		// IGDB image CDN; covers from dead legacy hosts fail to load and the
 		// frontend's delegated error fallback swaps in the local placeholder.
-		w.Header().Set("Content-Security-Policy",
-			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
-				"img-src 'self' https://images.igdb.com data:; connect-src 'self'; "+
-				"frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'")
+		w.Header().Set("Content-Security-Policy", csp)
+		w.Header().Set("Permissions-Policy", permissionsPolicy)
+		if hsts {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000")
+		}
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			w.Header().Set("Cache-Control", "no-store")
 		}

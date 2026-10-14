@@ -295,8 +295,8 @@ func TestCSRFRequired(t *testing.T) {
 		writeJSON(w, http.StatusOK, map[string]string{"ok": "true"})
 	})
 
-	handler = auth.AuthRequired(database)(handler)
-	handler = auth.CSRFRequired(database)(handler)
+	handler = auth.AuthRequired(database, auth.Cookies{})(handler)
+	handler = auth.CSRFRequired(database, auth.Cookies{})(handler)
 
 	// Insert user first, then create session
 	database.Exec("INSERT INTO users (id, email) VALUES ('test-user', 'csrf@test.com')")
@@ -357,7 +357,7 @@ func TestAuthRequired(t *testing.T) {
 		writeJSON(w, http.StatusOK, map[string]string{"user_id": userID})
 	})
 
-	handler = auth.AuthRequired(database)(handler)
+	handler = auth.AuthRequired(database, auth.Cookies{})(handler)
 
 	t.Run("rejects without session", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)

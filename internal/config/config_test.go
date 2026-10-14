@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -93,5 +94,107 @@ func TestLoadAuthRateLimit(t *testing.T) {
 	os.Setenv(key, "bogus")
 	if got := Load().AuthRateLimit; got != 0 {
 		t.Errorf("bogus: got %d, want 0", got)
+	}
+}
+
+func TestLoadTLSSettings(t *testing.T) {
+	t.Setenv("CATO_TLS_CERT_FILE", "/certs/cert.pem")
+	t.Setenv("CATO_TLS_KEY_FILE", "/certs/key.pem")
+	t.Setenv("CATO_DEV_TLS", "1")
+	t.Setenv("CATO_DEV_TLS_DIR", "/tmp/dev-tls")
+	t.Setenv("CATO_HTTP_REDIRECT_ADDR", ":8080")
+	t.Setenv("CATO_TRUSTED_PROXIES", "10.0.0.0/8, 192.168.1.5 ::1")
+	t.Setenv("CATO_ALLOW_INSECURE", "1")
+	cfg := Load()
+	if cfg.TLSCertFile != "/certs/cert.pem" || cfg.TLSKeyFile != "/certs/key.pem" {
+		t.Fatalf("tls files: %q %q", cfg.TLSCertFile, cfg.TLSKeyFile)
+	}
+	if !cfg.DevTLS || cfg.DevTLSDir != "/tmp/dev-tls" || cfg.HTTPRedirectAddr != ":8080" || !cfg.AllowInsecure {
+		t.Fatalf("unexpected config: %+v", cfg)
+	}
+	want := []string{"10.0.0.0/8", "192.168.1.5/32", "::1/128"}
+	if len(cfg.TrustedProxies) != len(want) {
+		t.Fatalf("proxies: %v", cfg.TrustedProxies)
+	}
+	for i, p := range cfg.TrustedProxies {
+		if p.String() != want[i] {
+			t.Errorf("proxy %d = %s, want %s", i, p, want[i])
+		}
+	}
+}
+
+func TestLoadDevTLSDirDefault(t *testing.T) {
+	t.Setenv("CATO_DEV_TLS_DIR", "")
+	if got := Load().DevTLSDir; got != "data/dev-tls" {
+		t.Errorf("DevTLSDir = %q", got)
+	}
+}
+
+func TestHTTPSMode(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  Config
+		want bool
+	}{
+		{"plain", Config{}, false},
+		{"http base", Config{BaseURL: "http://cato.lan"}, false},
+		{"https base behind proxy", Config{BaseURL: "https://cato.example"}, true},
+		{"native tls", Config{TLSCertFile: "c", TLSKeyFile: "k"}, true},
+		{"dev tls", Config{DevTLS: true}, true},
+		{"half tls", Config{TLSCertFile: "c"}, false},
+	}
+	for _, tc := range cases {
+		if got := tc.cfg.HTTPS(); got != tc.want {
+			t.Errorf("%s: HTTPS() = %v, want %v", tc.name, got, tc.want)
+		}
+		if got := tc.cfg.SecureCookies(); got != tc.want {
+			t.Errorf("%s: SecureCookies() = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	legacy := Config{CookieSecure: true}
+	if !legacy.SecureCookies() || legacy.HTTPS() {
+		t.Error("CATO_SECURE_COOKIES must force Secure without implying HTTPS mode")
+	}
+}
+
+func TestValidateRequiresHTTPS(t *testing.T) {
+	cases := []struct {
+		name    string
+		cfg     Config
+		wantErr string
+	}{
+		{"plain http refused", Config{}, "HTTPS-only"},
+		{"plain http allowed for tests", Config{AllowInsecure: true}, ""},
+		{"http base refused", Config{BaseURL: "http://10.0.0.42:7080", DevTLS: true}, "not https"},
+		{"http base allowed for tests", Config{BaseURL: "http://10.0.0.42:7080", AllowInsecure: true}, ""},
+		{"https base behind proxy", Config{BaseURL: "https://cato.example"}, ""},
+		{"relative base", Config{BaseURL: "cato.example", DevTLS: true}, "absolute"},
+		{"dev tls", Config{DevTLS: true}, ""},
+		{"native tls", Config{TLSCertFile: "c", TLSKeyFile: "k"}, ""},
+		{"cert without key", Config{TLSCertFile: "c", AllowInsecure: true}, "set together"},
+		{"dev and native", Config{DevTLS: true, TLSCertFile: "c", TLSKeyFile: "k"}, "cannot be combined"},
+		{"redirect without tls", Config{HTTPRedirectAddr: ":80", BaseURL: "https://cato.example"}, "needs Cato to serve TLS"},
+		{"redirect with tls", Config{HTTPRedirectAddr: ":80", DevTLS: true}, ""},
+	}
+	for _, tc := range cases {
+		err := tc.cfg.Validate()
+		if tc.wantErr == "" {
+			if err != nil {
+				t.Errorf("%s: unexpected error %v", tc.name, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+			t.Errorf("%s: err = %v, want containing %q", tc.name, err, tc.wantErr)
+		}
+	}
+}
+
+func TestValidateRejectsBadTrustedProxies(t *testing.T) {
+	t.Setenv("CATO_TRUSTED_PROXIES", "10.0.0.0/8,not-an-ip")
+	t.Setenv("CATO_DEV_TLS", "1")
+	err := Load().Validate()
+	if err == nil || !strings.Contains(err.Error(), "not-an-ip") {
+		t.Fatalf("err = %v", err)
 	}
 }

@@ -5,14 +5,14 @@
 ```bash
 make test    # go test ./...
 make build   # go build -o cato ./cmd/cato
-make run     # build + start locally (background, writes .pid)
+make run     # build + start locally over HTTPS (CATO_DEV_TLS=1; background, writes .pid)
 make stop    # kill background process
 make vet     # go vet ./...
 make release-check # unit/race, vet, builds, JS, backups, security, desktop/mobile E2E
 ```
 
 There is no formatter target. `make vet` runs `go vet ./...` and is expected to
-be clean. Go 1.26.8 is selected by go.mod. Release checks also need Node 24+,
+be clean. Go 1.26.9 is selected by go.mod. Release checks also need Node 24+,
 Python 3.10+, sqlite3 and Playwright Chromium/WebKit dependencies; see
 `docs/production-runbook.md`. Keep generated logs/traces outside the repository.
 
@@ -25,6 +25,7 @@ cmd/cato/        Main entrypoint. Also has an `import-games` subcommand (Postgre
 internal/auth/   Passwords (bcrypt cost 12), sessions (SHA-256 hashed in DB), CSRF, rate limiting (in-memory)
 internal/config/ Env-based config (CATO_* prefix)
 internal/covers/ Background cover downloader (IGDB images → data/covers/{id}.jpg) + /covers/ handler
+internal/devtls/ Self-signed dev certificates (crypto/x509) + SPKI pins; `cato dev-cert --out DIR`
 internal/db/     SQLite open (two-pool), migration runner
 internal/games/  Search, types, store, service, IGDB rate limiter. Defines IGDBClient interface.
 internal/http/   HTTP server, handlers, middleware. All JSON responses via writeJSON/errResp.
@@ -56,7 +57,20 @@ web/static/      HTML, CSS, JS (vanilla, no bundler)
 
 ## Key Conventions
 
+- **HTTPS only** (docs/cato_smooth.md §2.4). `config.Validate()` refuses to start unless
+  Cato serves TLS (`CATO_TLS_CERT_FILE`/`CATO_TLS_KEY_FILE`, or `CATO_DEV_TLS=1` which
+  generates a cert in `data/dev-tls/`) or `CATO_BASE_URL` is `https://` behind a TLS proxy.
+  `CATO_ALLOW_INSECURE=1` is for tests only. `cfg.HTTPS()` switches on `__Host-` cookies,
+  HSTS (not for dev certs), and CSP `upgrade-insecure-requests`. `Server.Listen()` binds
+  (TLS 1.2+, HTTP/2, cert files reloaded on change) plus the optional
+  `CATO_HTTP_REDIRECT_ADDR` 308 listener. Forwarded headers count only from
+  `CATO_TRUSTED_PROXIES`: use `auth.ClientIP(r)` / `auth.RequestIsHTTPS(r)`, never
+  `RemoteAddr` or raw `X-Forwarded-*`. Go tests that build a `config.Config` directly
+  don't call `Validate`, so they can stay on plain HTTP.
 - **Session storage**: cookie holds the raw token; the DB stores its SHA-256 hash.
+  Always go through `auth.Cookies` (`SessionID`, `SetSession`, `ClearSession`,
+  OAuth state): the name is `__Host-cato_session` over HTTPS and `cato_session` only
+  in insecure test mode; the unprefixed name is ignored over HTTPS.
   `GetSession` restores the unhashed ID on the returned struct. (You can't forge a session
   from a DB row via curl — the row is the hash.)
 - **CSRF**: unsafe methods (POST/PUT/DELETE) require `X-CSRF-Token` (from `GET /api/me`).
@@ -80,7 +94,8 @@ web/static/      HTML, CSS, JS (vanilla, no bundler)
   `Server.Handler()`; `staticCacheMiddleware` adds cache headers for `/js/`, `/css/`,
   `/icons/`, `/favicon.svg`, `/manifest*` (`no-cache`), and `no-store` for
   `/service-worker.js`. `securityMiddleware` sets `nosniff`, `X-Frame-Options: DENY`,
-  `Referrer-Policy`, and a CSP with `script-src 'self'` — so shipped HTML must not use
+  `Referrer-Policy`, `Permissions-Policy` (camera self-only, other sensors off), HSTS in
+  HTTPS mode, and a CSP with `script-src 'self'` — so shipped HTML must not use
   inline `<script>`, inline event handlers (`onerror=`), or `javascript:` URLs; cover
   images fall back via delegated `error` listeners + `data-cover-fallback`, and the
   theme/login bootstrap scripts are external (`js/theme-init.js`, `js/login.js`).
@@ -133,7 +148,9 @@ web/static/      HTML, CSS, JS (vanilla, no bundler)
 ## Deployment
 
 Production runs in **Docker on a Synology NAS** (host alias `nas2`,
-`/volume1/Shared/Cato`, served at `http://10.0.0.42:7080`). The container bind-mounts
+`/volume1/Shared/Cato`, served at `http://10.0.0.42:7080` — a legacy plain-HTTP convenience,
+out of scope for current work; it needs `CATO_ALLOW_INSECURE=1` to keep starting). The
+container bind-mounts
 `/volume1/Shared/Cato/data` → `/app/data` (DB + covers persist on the host).
 
 ```bash

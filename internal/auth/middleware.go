@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
-	"time"
 )
 
 type contextKey string
@@ -15,42 +14,10 @@ const (
 	UserIDKey  contextKey = "user_id"
 )
 
-func GetSessionID(r *http.Request) string {
-	cookie, err := r.Cookie("cato_session")
-	if err != nil {
-		return ""
-	}
-	return cookie.Value
-}
-
-func SetSessionCookie(w http.ResponseWriter, sessionID string, secure bool) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     "cato_session",
-		Value:    sessionID,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   secure,
-		MaxAge:   int((30 * 24 * time.Hour).Seconds()),
-	})
-}
-
-func ClearSessionCookie(w http.ResponseWriter, secure bool) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     "cato_session",
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   secure,
-		MaxAge:   -1,
-	})
-}
-
-func AuthRequired(db Querier) func(http.Handler) http.Handler {
+func AuthRequired(db Querier, cookies Cookies) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			sessionID := GetSessionID(r)
+			sessionID := cookies.SessionID(r)
 			if sessionID == "" {
 				writeJSON(w, http.StatusUnauthorized, errResp("unauthorized", "Authentication required"))
 				return
@@ -69,7 +36,7 @@ func AuthRequired(db Querier) func(http.Handler) http.Handler {
 	}
 }
 
-func CSRFRequired(db Querier) func(http.Handler) http.Handler {
+func CSRFRequired(db Querier, cookies Cookies) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
@@ -83,7 +50,7 @@ func CSRFRequired(db Querier) func(http.Handler) http.Handler {
 				return
 			}
 
-			sessionID := GetSessionID(r)
+			sessionID := cookies.SessionID(r)
 			if sessionID == "" {
 				writeJSON(w, http.StatusForbidden, errResp("csrf_missing", "CSRF token required"))
 				return
@@ -127,4 +94,3 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 func errResp(code, message string) map[string]string {
 	return map[string]string{"error": code, "message": message}
 }
-

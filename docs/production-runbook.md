@@ -3,16 +3,16 @@
 ## Supported release
 
 One Cato process with a local SQLite database and persistent cover directory,
-on a trusted private network. Do not share the database across containers or
-place it on a network filesystem. Public signup, email recovery, trusted-proxy
-rate limiting, and hosted-service policy are future work (see the
+served over HTTPS. Do not share the database across containers or
+place it on a network filesystem. Public signup, email recovery and
+hosted-service policy are future work (see the
 [release plan](production-release-plan.md)). Password changes invalidate other
 sessions. Google sign-in cannot automatically link an existing password account;
 use that account's original sign-in method when an email collision is reported.
 
 ## Build and release gate
 
-Use Go 1.26.8 (selected by `go.mod`), Node 24+, Python 3.10+, and sqlite3.
+Use Go 1.26.9 (selected by `go.mod`), Node 24+, Python 3.10+, and sqlite3.
 `make release-check` runs build, vet, Go tests and race tests, JavaScript
 regressions, backup/release-script tests, dependency scans, and Playwright. On a fresh Linux
 host, first install browser system dependencies:
@@ -25,19 +25,44 @@ cd e2e && npx playwright install --with-deps chromium webkit
 CI executes the same gate on pushes and pull requests. E2E uses fresh disposable
 data and disables Google/IGDB credentials; it never uses `data/cato.db`.
 Failure traces default to `/tmp/cato-e2e-results` (override with
-`CATO_E2E_RESULTS`). The E2E port 7180 must be free. Treat retries/flaky results
+`CATO_E2E_RESULTS`). The E2E port 7180 must be free. Every Playwright project
+runs over HTTPS with a certificate from `cato dev-cert` (cached in
+`$TMPDIR/cato-e2e-tls`, override with `CATO_E2E_TLS_DIR`); nothing is installed
+in a trust store (see `e2e/README.md`). Treat retries/flaky results
 as failures, not permission to ship. Before deploying, check the workflow for
 the exact commit being released.
 
 ## Configuration and deployment
 
-Copy `.env.example` to `.env` on the deployment host; keep it private. Compose
-passes `CATO_BASE_URL` and `CATO_SECURE_COOKIES` into the container. On private
-HTTP use `false`. With an HTTPS reverse proxy use the external `https://` origin
-and `true`, restrict direct access to port 7080, and register
-`<CATO_BASE_URL>/api/auth/google/callback` with Google. Do not set the test-only
-`CATO_AUTH_RATE_LIMIT` override in production. Forwarded IP headers are not
-trusted, so a reverse proxy shares one auth rate-limit bucket.
+Copy `.env.example` to `.env` on the deployment host; keep it private. **Cato is
+HTTPS-only** and refuses to start otherwise. Choose one:
+
+- **Reverse proxy (recommended for a real domain).** Caddy, the Synology reverse
+  proxy or similar terminates TLS with a Let's Encrypt certificate and forwards to
+  Cato's plain listener. Set `CATO_BASE_URL=https://<domain>` and
+  `CATO_TRUSTED_PROXIES=<proxy address or CIDR>`; restrict direct access to port
+  7080 (`compose.server.yaml` binds it to loopback). The deploy health checks keep
+  using `http://127.0.0.1:7080/healthz` in this mode.
+- **Native TLS.** Set `CATO_TLS_CERT_FILE`/`CATO_TLS_KEY_FILE` to files inside the
+  container (for example under `/app/data/tls`). Renewed files are reloaded within
+  a minute. Optional `CATO_HTTP_REDIRECT_ADDR` answers plain HTTP with a 308. The
+  image health check probes HTTP then HTTPS; `scripts/deploy-remote.sh` probes
+  only HTTP, so use the proxy mode with the tagged release workflow.
+- **LAN testing.** `CATO_DEV_TLS=1` generates a self-signed certificate in
+  `/app/data/dev-tls` (no HSTS). Browsers warn until it is trusted.
+
+The legacy plain-HTTP instance (`http://10.0.0.42:7080`) needs
+`CATO_ALLOW_INSECURE=1` in its `.env` to keep starting; that flag exists for tests
+and is not a supported production mode. Over HTTPS the session cookie is
+`__Host-cato_session` (`Secure`, `Path=/`, no `Domain`); the switch signs every
+user out once. HSTS (`max-age=31536000`, no preload) and
+`upgrade-insecure-requests` are sent whenever `CATO_BASE_URL` is https or Cato
+serves a non-dev certificate.
+
+Register `<CATO_BASE_URL>/api/auth/google/callback` with Google. Do not set the
+test-only `CATO_AUTH_RATE_LIMIT` override in production. Forwarded IP headers are
+trusted only from `CATO_TRUSTED_PROXIES`; without it, every client behind a proxy
+shares one auth rate-limit bucket.
 
 The default release workflow follows Nabu: `DRY_RUN=1 make deploy` previews the
 next annotated version tag; `make deploy` verifies clean, synchronized `main`,

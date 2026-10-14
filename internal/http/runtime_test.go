@@ -17,7 +17,7 @@ func TestAPIBodyLimit(t *testing.T) {
 	for _, chunked := range []bool{false, true} {
 		for _, size := range []int{maxAPIBodyBytes, maxAPIBodyBytes + 1} {
 			called := false
-			h := securityMiddleware(apiBodyLimitMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			h := securityMiddleware(&config.Config{}, apiBodyLimitMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				called = true
 				data, _ := io.ReadAll(r.Body)
 				if len(data) != size {

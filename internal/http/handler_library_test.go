@@ -42,7 +42,7 @@ func createLibrarySession(t *testing.T, db *db.DB, userID string) string {
 
 func newTestLibraryMux(db *db.DB) *http.ServeMux {
 	mux := http.NewServeMux()
-	handler := NewLibraryHandler(db)
+	handler := NewLibraryHandler(db, auth.Cookies{})
 	handler.Register(mux)
 	return mux
 }

@@ -17,6 +17,7 @@ import (
 type GameHandler struct {
 	service *games.Service
 	db      *db.DB
+	cookies auth.Cookies
 }
 
 func NewGameHandler(db *db.DB, cfg *config.Config) *GameHandler {
@@ -28,7 +29,7 @@ func NewGameHandler(db *db.DB, cfg *config.Config) *GameHandler {
 		igdbClient = &noopIGDBClient{}
 	}
 	svc := games.NewService(store, igdbClient, db)
-	return &GameHandler{service: svc, db: db}
+	return &GameHandler{service: svc, db: db, cookies: auth.Cookies{Secure: cfg.SecureCookies()}}
 }
 
 func (h *GameHandler) startBackground(cfg *config.Config) {
@@ -296,7 +297,7 @@ func (h *GameHandler) handleSearchFull(w http.ResponseWriter, r *http.Request, q
 	// Resolve optional user for personal filters (tags / library).
 	libraryUserID := ""
 	if len(tags) > 0 || inLibrary != nil || libraryStatus != "" || ownedPlatform != "" {
-		if uid := tryGetUserID(r, h.db); uid != "" {
+		if uid := tryGetUserID(r, h.db, h.cookies); uid != "" {
 			libraryUserID = uid
 		} else {
 			writeJSON(w, http.StatusUnauthorized, errResp("auth_required", "Login required for tag/library filters"))
@@ -314,7 +315,7 @@ func (h *GameHandler) handleSearchFull(w http.ResponseWriter, r *http.Request, q
 		// Still try to populate libraryUserID if a session exists, so
 		// authenticated users can filter by owned status without extra hop,
 		// but don't require it.
-		libraryUserID = tryGetUserID(r, h.db)
+		libraryUserID = tryGetUserID(r, h.db, h.cookies)
 		// If they sent library filters but we stripped them (invalid), ignore.
 	}
 
@@ -424,12 +425,12 @@ func parseInLibraryParam(r *http.Request) *bool {
 	return nil
 }
 
-func tryGetUserID(r *http.Request, database *db.DB) string {
-	cookie, err := r.Cookie("cato_session")
-	if err != nil || cookie.Value == "" {
+func tryGetUserID(r *http.Request, database *db.DB, cookies auth.Cookies) string {
+	sessionID := cookies.SessionID(r)
+	if sessionID == "" {
 		return ""
 	}
-	sess, err := auth.GetSession(database, cookie.Value)
+	sess, err := auth.GetSession(database, sessionID)
 	if err != nil || sess == nil {
 		return ""
 	}
