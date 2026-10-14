@@ -1,8 +1,26 @@
 import { defineConfig, devices } from '@playwright/test';
 import path from 'node:path';
+import { E2E_HOST, E2E_PORT, spki, tlsDir } from './tls';
 
-// E2E for the cato PWA. webServer boots a disposable server (fresh SQLite DB)
-// on port 7180 via scripts/e2e-server.sh — zero manual steps.
+// Chromium runs against the non-loopback name cato.test (so loopback-only
+// secure-context exemptions can't hide HTTPS bugs) with the dev certificate
+// pinned by SPKI. WebKit has no equivalent switch; ignoreHTTPSErrors on
+// https://127.0.0.1 still yields a secure context and a working service
+// worker there. See e2e/tls.ts.
+const chromiumHTTPS = {
+  baseURL: `https://${E2E_HOST}:${E2E_PORT}`,
+  ignoreHTTPSErrors: true, // Node-side request contexts only; the browser trusts the pin.
+  launchOptions: {
+    args: [
+      `--host-resolver-rules=MAP ${E2E_HOST} 127.0.0.1`,
+      `--ignore-certificate-errors-spki-list=${spki}`,
+    ],
+  },
+};
+const webkitHTTPS = { baseURL: `https://127.0.0.1:${E2E_PORT}`, ignoreHTTPSErrors: true };
+
+// E2E for the cato PWA. webServer boots a disposable HTTPS server (fresh
+// SQLite DB) on port 7180 via scripts/e2e-server.sh — zero manual steps.
 export default defineConfig({
   testDir: './tests',
   timeout: 30_000,
@@ -13,19 +31,19 @@ export default defineConfig({
   reporter: 'list',
   outputDir: process.env.CATO_E2E_RESULTS || '/tmp/cato-e2e-results',
   use: {
-    baseURL: 'http://127.0.0.1:7180',
     trace: 'retain-on-failure',
   },
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'chromium', use: { ...devices['Desktop Chrome'], ...chromiumHTTPS } },
     // Offline SW emulation is verified in Chromium; see e2e/README.md.
-    { name: 'webkit', testIgnore: /offline\.spec\.ts/, use: { ...devices['Desktop Safari'] } },
-    { name: 'mobile-chromium', testMatch: /(release|journeys|pwa|resilience|offline)\.spec\.ts/, use: { ...devices['Pixel 7'] } },
-    { name: 'mobile-webkit', testMatch: /(release|journeys|pwa|resilience)\.spec\.ts/, use: { ...devices['iPhone 13'] } },
+    { name: 'webkit', testIgnore: /offline\.spec\.ts/, use: { ...devices['Desktop Safari'], ...webkitHTTPS } },
+    { name: 'mobile-chromium', testMatch: /(release|journeys|pwa|resilience|offline|https)\.spec\.ts/, use: { ...devices['Pixel 7'], ...chromiumHTTPS } },
+    { name: 'mobile-webkit', testMatch: /(release|journeys|pwa|resilience|https)\.spec\.ts/, use: { ...devices['iPhone 13'], ...webkitHTTPS } },
   ],
   webServer: {
     command: 'bash scripts/e2e-server.sh',
     cwd: path.join(__dirname, '..'),
+    env: { E2E_TLS_DIR: tlsDir, E2E_ADDR: `127.0.0.1:${E2E_PORT}` },
     wait: { stdout: /CATO_E2E_READY/ },
     reuseExistingServer: false,
     gracefulShutdown: { signal: 'SIGTERM', timeout: 30_000 },

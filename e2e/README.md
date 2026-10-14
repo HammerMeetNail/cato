@@ -2,7 +2,25 @@
 
 Run `cd e2e && npm ci && npx playwright install --with-deps chromium webkit`,
 then `npm run test:e2e`. Playwright starts a disposable real Go server with a fresh
-SQLite database; no production data or external IGDB account is used. Catalog
+SQLite database; no production data or external IGDB account is used.
+
+Every project runs over **HTTPS** with no machine setup (`tls.ts`). Loading the
+config runs `go run ./cmd/cato dev-cert --out $TMPDIR/cato-e2e-tls` (override
+with `CATO_E2E_TLS_DIR`, and the Go binary with `GO`), which creates or reuses a
+self-signed certificate and prints its SPKI SHA-256 pin; `scripts/e2e-server.sh`
+serves those files on `127.0.0.1:7180`.
+
+- Chromium projects open `https://cato.test:7180`, a non-loopback name, so
+  loopback secure-context exemptions can't hide HTTPS bugs. Chromium maps it with
+  `--host-resolver-rules=MAP cato.test 127.0.0.1` and trusts the certificate with
+  `--ignore-certificate-errors-spki-list=<pin>`. `ignoreHTTPSErrors` alone is not
+  enough: Chromium then refuses to register the service worker. The config also
+  maps `cato.test` in Node's resolver for `page.request`/`request` contexts.
+- WebKit projects open `https://127.0.0.1:7180` with `ignoreHTTPSErrors`, which
+  gives a secure context and a working service worker.
+
+Contexts a test creates itself (`browser.newContext`, `playwright.request.newContext`)
+must pass `ignoreHTTPSErrors: true`. Catalog
 IDs 1–2 support common workflows; 100–164 exercise pagination. Each test creates
 its own user, and separate browser contexts have independent cookies/storage.
 Artifacts default to `/tmp/cato-e2e-results` (override with `CATO_E2E_RESULTS`).
@@ -19,7 +37,8 @@ Artifacts default to `/tmp/cato-e2e-results` (override with `CATO_E2E_RESULTS`).
 | `journeys.spec.ts` | Native required/email/password length validation; separate real browser sessions, private library reads and writes, foreign/missing CSRF rejection |
 | `resilience.spec.ts` | Failed autosave retains the draft/route, close retries persistence; Stats error/retry and recent-item route; actual CSV download filename and contents |
 | `release.spec.ts` | Tab/history consistency after logged time; password change retains current session, revokes another session and rejects old credentials |
-| `platform.spec.ts` | Auth/CSRF API boundaries, cookie attributes, failed login semantics, health/database, missing covers/game, PWA headers, search injection |
+| `platform.spec.ts` | Auth/CSRF API boundaries, `__Host-`/`Secure` cookie attributes, failed login semantics, health/database, missing covers/game, PWA headers, search injection |
+| `https.spec.ts` | Secure context on `cato.test`/`127.0.0.1`, service worker registration, WebAuthn passkey creation (Chromium virtual authenticator), HSTS/CSP upgrade/Permissions-Policy headers, `__Host-` session cookie |
 | `pwa.spec.ts` | Real service worker install/control, precache, activation removes old static caches and retains covers/unrelated caches, online worker interception |
 | `offline.spec.ts` | Chromium offline asset and navigation fallback, online retry |
 

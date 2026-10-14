@@ -41,8 +41,8 @@ test('password change retains this session and revokes other sessions', async ({
   const newPassword = 'new-release-password';
   const signup = await page.request.post('/api/auth/signup', { data: { email, password: oldPassword } });
   expect(signup.status()).toBe(201);
-  const other = await playwright.request.newContext({ baseURL });
-  const fresh = await playwright.request.newContext({ baseURL });
+  const other = await playwright.request.newContext({ baseURL, ignoreHTTPSErrors: true });
+  const fresh = await playwright.request.newContext({ baseURL, ignoreHTTPSErrors: true });
   try {
     expect((await other.post('/api/auth/login', { data: { email, password: oldPassword } })).status()).toBe(200);
     await page.goto('/#settings');

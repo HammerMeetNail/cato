@@ -183,7 +183,7 @@ test('login form validates required fields, email and password length before sig
 test('separate browser sessions isolate libraries and reject another user’s CSRF token', async ({ page, browser, baseURL }) => {
   const a = await account(page);
   await seed(page, a.csrf_token, 1, { status: 'playing', notes: 'Private owner notes' });
-  const context = await browser.newContext({ baseURL });
+  const context = await browser.newContext({ baseURL, ignoreHTTPSErrors: true });
   try {
     const other = await context.newPage();
     const b = await account(other);

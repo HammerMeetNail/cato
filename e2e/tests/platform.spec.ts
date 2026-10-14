@@ -36,12 +36,14 @@ test.describe('security & platform behavior', () => {
     expect(body.error).toBe('unauthorized');
   });
 
-  test('session cookie is HttpOnly and SameSite=Lax', async ({ request }) => {
+  test('session cookie is __Host- prefixed, Secure, HttpOnly and SameSite=Lax', async ({ request }) => {
     const res = await request.post('/api/auth/signup', {
       data: { email: `cookie-${Date.now()}@example.com`, password: 'correct-password-1' },
     });
     const setCookie = res.headersArray().find((h: any) => h.name.toLowerCase() === 'set-cookie');
     expect(setCookie).toBeTruthy();
+    expect(setCookie.value).toMatch(/^__Host-cato_session=/);
+    expect(setCookie.value).toContain('Secure');
     expect(setCookie.value).toContain('HttpOnly');
     expect(setCookie.value).toContain('SameSite=Lax');
   });

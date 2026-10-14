@@ -4,12 +4,14 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import ssl
 import subprocess
 import tempfile
 import threading
 import unittest
 
 SCRIPT = Path(__file__).with_name("e2e-server.sh").resolve()
+REPO = SCRIPT.parent.parent
 
 
 class E2EServerTests(unittest.TestCase):
@@ -28,12 +30,20 @@ class E2EServerTests(unittest.TestCase):
             child_log = root / "child.log"
             seeded = root / "seeded"
 
+            # The harness is HTTPS-only, so the unrelated listener speaks TLS
+            # too (a real dev certificate, generated the way the harness does).
+            tls_dir = root / "tls"
+            subprocess.run(["go", "run", "./cmd/cato", "dev-cert", "--out", str(tls_dir)],
+                           cwd=REPO, check=True, capture_output=True)
+
             # A live child is deliberately insufficient: it does not own the
             # occupied listener. Signals provide the shutdown observation.
             app = root / "fake-app"
             app.write_text("""#!/usr/bin/env python3
-import os, signal, urllib.request
+import os, signal, ssl, sys, urllib.request
 from pathlib import Path
+if sys.argv[1:2] == ['dev-cert']:
+    raise SystemExit(0)
 log = Path(os.environ['E2E_TEST_CHILD_LOG'])
 def stop(signum, frame):
     with log.open('a') as out:
@@ -41,7 +51,9 @@ def stop(signum, frame):
     raise SystemExit(0)
 signal.signal(signal.SIGTERM, stop)
 log.write_text(str(os.getpid()) + '\\n' + os.environ['CATO_STATIC_DIR'] + '\\n')
-urllib.request.urlopen('http://127.0.0.1' + os.environ['E2E_ADDR'] + '/fixture-started').read()
+assert os.environ['CATO_TLS_CERT_FILE'].endswith('/cert.pem'), 'harness did not configure TLS'
+urllib.request.urlopen('https://127.0.0.1' + os.environ['E2E_ADDR'] + '/fixture-started',
+                       context=ssl._create_unverified_context()).read()
 while True:
     signal.pause()
 """)
@@ -77,10 +89,13 @@ shutil.copy2(os.environ['E2E_TEST_APP'], sys.argv[sys.argv.index('-o') + 1])
                     pass
 
             server = ThreadingHTTPServer(("127.0.0.1", 0), UnrelatedApp)
+            tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            tls.load_cert_chain(tls_dir / "cert.pem", tls_dir / "key.pem")
+            server.socket = tls.wrap_socket(server.socket, server_side=True)
             server_thread = threading.Thread(target=server.serve_forever, daemon=True)
             server_thread.start()
             env = dict(os.environ, PATH=str(binaries) + os.pathsep + os.environ["PATH"],
-                       TMPDIR=str(scratch), E2E_ADDR=f":{server.server_port}",
+                       TMPDIR=str(scratch), E2E_ADDR=f":{server.server_port}", E2E_TLS_DIR=str(tls_dir),
                        E2E_TEST_APP=str(app), E2E_TEST_CHILD_LOG=str(child_log), E2E_TEST_SEEDED=str(seeded))
             try:
                 process = subprocess.Popen(["bash", "scripts/e2e-server.sh"], cwd=repo,

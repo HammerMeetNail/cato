@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Starts a disposable cato server for Playwright E2E runs: fresh temp DB,
-# fresh covers dir, port 7180 (configurable via E2E_ADDR).
+# fresh covers dir, HTTPS on port 7180 (configurable via E2E_ADDR).
+#
+# TLS: Cato is HTTPS-only. The certificate comes from `cato dev-cert` in
+# E2E_TLS_DIR (e2e/playwright.config.ts generates it first and pins its SPKI
+# in Chromium); standalone runs get a throwaway one under the temp dir. No
+# trust store is touched.
 #
 # Two E2E-specific settings, and why:
 # - CATO_AUTH_RATE_LIMIT=1000: every Playwright client shares one IP
@@ -35,6 +40,8 @@ E2E_MARKER="e2e-ready-${E2E_NONCE}.txt"
 printf '%s' "$E2E_NONCE" > "$E2E_TMP/static/$E2E_MARKER"
 
 go build -o "$E2E_TMP/cato-bin" ./cmd/cato
+E2E_TLS_DIR="${E2E_TLS_DIR:-$E2E_TMP/tls}"
+"$E2E_TMP/cato-bin" dev-cert --out "$E2E_TLS_DIR" >/dev/null
 
 # Bind loopback only: this disposable server has relaxed auth rate limits and
 # seeded data; it must not be reachable from the LAN. Playwright talks to
@@ -44,6 +51,8 @@ E2E_PORT="${E2E_ADDR##*:}"
 
 IGDB_CLIENT_ID= IGDB_CLIENT_SECRET= TWITCH_OAUTH_ID= TWITCH_OAUTH_SECRET= \
 GOOGLE_KEY= GOOGLE_SECRET= CATO_BASE_URL= CATO_SECURE_COOKIES=false \
+CATO_DEV_TLS= CATO_ALLOW_INSECURE= CATO_HTTP_REDIRECT_ADDR= CATO_TRUSTED_PROXIES= \
+CATO_TLS_CERT_FILE="$E2E_TLS_DIR/cert.pem" CATO_TLS_KEY_FILE="$E2E_TLS_DIR/key.pem" \
 CATO_AUTH_RATE_LIMIT=1000 \
 CATO_DB_PATH="$E2E_TMP/cato.db" \
 CATO_COVER_DIR="$E2E_TMP/covers" \
@@ -59,8 +68,10 @@ for _ in $(seq 1 100); do
     wait "$SRV_PID"
     exit 1
   fi
-  if curl -sf --max-time 1 "http://127.0.0.1:${E2E_PORT}/healthz" >/dev/null 2>&1 &&
-     [ "$(curl -sf --max-time 1 "http://127.0.0.1:${E2E_PORT}/$E2E_MARKER" 2>/dev/null)" = "$E2E_NONCE" ] &&
+  # -k: the certificate is self-signed; the nonce marker (not the
+  # certificate) proves this listener is the server started above.
+  if curl -skf --max-time 1 "https://127.0.0.1:${E2E_PORT}/healthz" >/dev/null 2>&1 &&
+     [ "$(curl -skf --max-time 1 "https://127.0.0.1:${E2E_PORT}/$E2E_MARKER" 2>/dev/null)" = "$E2E_NONCE" ] &&
      kill -0 "$SRV_PID" 2>/dev/null; then
     READY=1
     break
