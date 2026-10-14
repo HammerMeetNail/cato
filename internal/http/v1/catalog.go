@@ -74,6 +74,9 @@ func (a *API) getGame(w http.ResponseWriter, r *http.Request) {
 			resp["estimate"] = est
 		}
 	}
+	if moods, err := a.Games.MoodsFor(ctx, []int64{id}); err == nil {
+		resp["moods"] = nonNilStrings(moods[id])
+	}
 	item, err := a.Library.Get(ctx, user(r), id)
 	switch {
 	case err == nil:
@@ -354,4 +357,11 @@ func (a *API) uploadCustomCover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func nonNilStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }

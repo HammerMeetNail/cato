@@ -791,6 +791,20 @@ Research as of 2026-10-13. Items marked *(unverified)* could not be confirmed fr
   - a confetti burst on Finish (respects reduced-motion);
   - empty states that suggest the next action.
 
+### 10.1 P6 implementation notes (2026-10-14)
+
+- **Year in Review** (`#you/year/YYYY`) has:
+  - hours, finishes, games and days played;
+  - the first finish, favourites, most played, longest session, biggest day, top genre and platform, and the oldest game played;
+  - a month-by-month chart and a playthrough timeline;
+  - a comparison with people on this server who share beyond themselves (private profiles never count).
+
+  The share image (1080×1350) is drawn in the browser and shared with `navigator.share`, or downloaded where sharing isn't available. From December 15 through January, Home links to it.
+- **Goals:** four kinds (finish, clear the backlog, play older games, hours), with progress computed when they are read. Rings appear on Home and in You → Goals. There are no reminders, in keeping with "never guilt-inducing".
+- **Moods:** cozy, co-op, short, story-rich, challenging and spooky are inferred from IGDB genres, themes, modes and time to beat. They appear as one-tap suggested tags on the game page and as an Up Next filter that also counts your own tags. IGDB keywords aren't synced, so the inference uses genres and themes only.
+- **Already in place from P2/P3:** streaks (with a setting), Surprise me with a reduced-motion-aware spin, confetti, haptics, skeletons and suggestive empty states.
+- **View Transitions** now cross-fade into game pages.
+
 ---
 
 ## 11. Quality, testing and operations

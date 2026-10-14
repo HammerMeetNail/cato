@@ -1402,3 +1402,181 @@ details > summary {
 .segmented-wrap > button {
   flex: 1 1 auto;
 }
+
+/* ---- Delight (P6): goals, Year in Review, view transitions ------------------ */
+
+.ring {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+}
+
+.ring svg {
+  position: absolute;
+  inset: 0;
+}
+
+.ring-text {
+  font-size: var(--fs-14);
+  font-weight: 800;
+}
+
+.goal {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+.goal .title {
+  font-weight: 700;
+}
+
+.goal .sub {
+  font-size: var(--fs-14);
+  color: var(--text-muted);
+}
+
+.goal-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--sp-3);
+}
+
+.goal-list {
+  display: grid;
+  gap: var(--sp-3);
+}
+
+.goal-list .card {
+  justify-content: space-between;
+}
+
+.yr-hero {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-4);
+  padding: var(--sp-6);
+  border-radius: var(--r-lg);
+  background: linear-gradient(135deg, #14121f, var(--accent));
+  color: #fff;
+}
+
+@media (min-width: 700px) {
+  .yr-hero {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.yr-stat .value {
+  font: 800 var(--fs-36) / 1.05 var(--font-num);
+}
+
+.yr-stat .label {
+  color: #fff;
+  opacity: 0.9;
+}
+
+.yr-line {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-18);
+}
+
+.yr-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: var(--sp-3);
+}
+
+.yr-facts .card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+}
+
+.yr-facts .label {
+  font-size: var(--fs-12);
+  color: var(--text-muted);
+}
+
+.yr-months,
+.yr-timeline li {
+  display: grid;
+  grid-template-columns: minmax(90px, 30%) 1fr;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.yr-months {
+  grid-template-columns: minmax(90px, 30%) repeat(12, 1fr);
+  font-size: var(--fs-12);
+  color: var(--text-muted);
+}
+
+.yr-months::before {
+  content: "";
+}
+
+.yr-timeline {
+  display: grid;
+  gap: var(--sp-1);
+  padding: 0;
+  list-style: none;
+}
+
+.yr-run-name {
+  overflow: hidden;
+  color: inherit;
+  font-size: var(--fs-14);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.yr-track {
+  position: relative;
+  height: 14px;
+  border-radius: var(--r-full);
+  background: var(--surface-2);
+}
+
+.yr-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: var(--r-full);
+  background: var(--accent);
+}
+
+.yr-bar.done {
+  background: var(--status-completed);
+}
+
+.yr-bar.dropped {
+  background: var(--status-abandoned);
+}
+
+.yr-bar.open {
+  background: linear-gradient(90deg, var(--status-playing), color-mix(in srgb, var(--status-playing) 20%, transparent));
+}
+
+a.chip[aria-current="page"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 160ms;
+}
+
+.yr-teaser {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  color: inherit;
+  text-decoration: none;
+}

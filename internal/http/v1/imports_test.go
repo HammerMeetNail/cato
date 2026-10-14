@@ -81,3 +81,31 @@ func TestPushAndPasskeyEndpoints(t *testing.T) {
 	c.json("POST", "/api/v1/passkeys", map[string]any{"response": map[string]any{"clientDataJSON": "e30", "attestationObject": "oA"}}, http.StatusBadRequest)
 	c.json("GET", "/api/v1/barcode/not-a-code", nil, http.StatusBadRequest)
 }
+
+func TestDelightEndpoints(t *testing.T) {
+	f := newFixture(t)
+	c := f.user(t, "yr")
+	c.json("PUT", "/api/v1/library/1", map[string]any{"status": "playing", "played_on": "2026-02-01"}, http.StatusCreated)
+	c.json("POST", "/api/v1/sessions", map[string]any{"game_id": 1, "minutes": 90, "played_on": "2026-02-02"}, http.StatusCreated)
+	c.json("PATCH", "/api/v1/library/1", map[string]any{"status": "completed", "rating": 80, "played_on": "2026-02-03"}, http.StatusOK)
+	rv := c.json("GET", "/api/v1/year/2026", nil, http.StatusOK)
+	if rv["minutes"] != float64(90) || len(rv["finished"].([]any)) != 1 {
+		t.Fatalf("year %v", rv)
+	}
+	c.json("GET", "/api/v1/year/abc", nil, http.StatusBadRequest)
+	g := c.json("POST", "/api/v1/goals", map[string]any{"year": 2026, "kind": "finish", "target": 12}, http.StatusCreated)["goal"].(map[string]any)
+	if g["progress"] != float64(1) || g["label"] != "Finish 12 games in 2026" {
+		t.Fatalf("goal %v", g)
+	}
+	c.json("POST", "/api/v1/goals", map[string]any{"kind": "finish", "target": 0}, http.StatusBadRequest)
+	home := c.json("GET", "/api/v1/home?today=2026-10-14", nil, http.StatusOK)
+	if len(home["goals"].([]any)) != 1 {
+		t.Fatalf("home goals %v", home["goals"])
+	}
+	c.json("DELETE", fmt.Sprintf("/api/v1/goals/%d", int(g["id"].(float64))), nil, http.StatusOK)
+	c.json("GET", "/api/v1/up-next?mood=grumpy", nil, http.StatusBadRequest)
+	c.json("GET", "/api/v1/up-next?mood=cozy", nil, http.StatusOK)
+	if moods, ok := c.json("GET", "/api/v1/games/1", nil, http.StatusOK)["moods"].([]any); !ok {
+		t.Fatalf("game moods missing: %v", moods)
+	}
+}

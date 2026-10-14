@@ -201,6 +201,13 @@ func (a *API) home(w http.ResponseWriter, r *http.Request) {
 			resp["coming_soon"] = soon
 		}
 	}
+	year := time.Now().Year()
+	if t, err := time.Parse("2006-01-02", r.URL.Query().Get("today")); err == nil {
+		year = t.Year()
+	}
+	if goals, err := a.Library.Goals(ctx, uid, year); err == nil {
+		resp["goals"] = goals
+	}
 	if prefs.Streaks {
 		cur, longest, err := a.Library.Streaks(ctx, uid, r.URL.Query().Get("today"))
 		if err == nil {

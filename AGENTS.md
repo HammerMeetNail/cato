@@ -203,6 +203,12 @@ tests/js/        node --test suites for the pure frontend modules
   extends `expires_at` to 90 days and refreshes the cookie. `/share` is the manifest
   `share_target`. API bodies are limited to 1 MiB except imports (24 MiB) and image uploads
   (12 MiB) (`bodyLimit`). Integrations are optional and hide themselves when their key is unset.
+- **Delight (P6)**: goals live in the `goals` table (migration v23) with progress computed
+  on read (`library.Goals`); Year in Review is one read (`library.YearInReview`), and the
+  share image is drawn on a canvas in the browser (`features/year.js` `drawCard`; IGDB covers
+  load with `crossOrigin` and fall back to text, so the canvas is never tainted). Mood tags
+  are suggestions computed from lookups (`catalog.MoodsFor`), never stored until the person
+  taps one. Game pages open with a View Transition (skipped for reduced motion).
 - **IGDB is optional**: when `IGDB_CLIENT_ID` is empty a `noopIGDBClient` is used; IGDB calls
   fall back to local results on error.
 - **Rate limiting**: in-memory only (not shared across processes). `auth.RateLimiter`
@@ -241,7 +247,8 @@ tests/js/        node --test suites for the pure frontend modules
   grid row, not `position: fixed` (avoids the iOS PWA cold-open gap). Routes (`js/core/router.js`):
   `#home` (also the empty hash), `#library?shelf=&q=&sort=&view=&dense=`, `#game/<id>`, `#log`
   (opens the Log sheet), `#discover`, `#discover/search?q=…`, `#you`, `#you/stats`, `#you/diary`,
-  `#you/settings`, `#you/help`, `#you/lists`, `#you/people`, `#you/inbox`, `#u/<username>`
+  `#you/settings`, `#you/help`, `#you/lists`, `#you/people`, `#you/inbox`, `#you/import`,
+  `#you/year/<YYYY>` (Year in Review), `#you/goals`, `#u/<username>`
   (profiles), `#list/<id>`, `#admin?tab=` (admins), `#dev/ui` (component gallery, only with
   `CATO_DEV=1`). Legacy
   hashes redirect (`#now`→`#home`, `#stats`→`#you/stats`, `#settings`→`#you/settings`, status

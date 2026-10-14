@@ -18,6 +18,7 @@ import { homeView, enterHome, beginHomeVisit } from './features/home.js';
 import { openLogSheet } from './features/log.js';
 import { timerPill, refreshTimer } from './features/timer.js';
 import { searchBox, focusSearch } from './features/search-box.js';
+import { viewTransition } from './features/delight.js';
 
 // Trusted Types (CSP require-trusted-types-for 'script'): registering the
 // service worker needs a TrustedScriptURL, from a policy that allows only it.
@@ -46,6 +47,8 @@ const SCREENS = {
   'you/inbox': () => import('./features/people.js').then(m => ({ view: m.inboxView, enter: m.enterInbox })),
   admin: () => import('./features/admin.js').then(m => ({ view: m.adminView, enter: m.enterAdmin })),
   'you/import': () => import('./features/import.js').then(m => ({ view: m.importView, enter: m.enterImport })),
+  'you/year': () => import('./features/year.js').then(m => ({ view: m.yearView, enter: m.enterYear })),
+  'you/goals': () => import('./features/goals.js').then(m => ({ view: m.goalsView, enter: m.enterGoals })),
   'dev/ui': () => import('./dev/gallery.js').then(m => ({ view: m.galleryView })),
 };
 
@@ -58,7 +61,7 @@ const loaded = new Map();
 const TITLES = {
   home: 'Home', library: 'Library', game: 'Game', discover: 'Discover', 'discover/search': 'Search', you: 'You',
   'you/stats': 'Stats', 'you/diary': 'Diary', 'you/settings': 'Settings', 'you/help': 'Help', 'dev/ui': 'Gallery',
-  profile: 'Profile', list: 'List', 'you/lists': 'Lists', 'you/people': 'People', 'you/inbox': 'Inbox', admin: 'Admin', 'you/import': 'Import',
+  profile: 'Profile', list: 'List', 'you/lists': 'Lists', 'you/people': 'People', 'you/inbox': 'Inbox', admin: 'Admin', 'you/import': 'Import', 'you/year': 'Year in review', 'you/goals': 'Goals',
 };
 
 let route = { name: 'home', query: {} };
@@ -169,7 +172,10 @@ async function onRoute(next) {
     }
     if (route !== next) return;
   }
-  draw();
+  // Opening a game page cross-fades (View Transitions, where supported and
+  // motion is welcome).
+  if (next.name === 'game' && !firstRoute) viewTransition(draw);
+  else draw();
   const key = next.name + JSON.stringify(next.query) + (next.id ?? '');
   const m = document.getElementById('main');
   if (m && navigated) {

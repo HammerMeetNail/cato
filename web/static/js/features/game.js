@@ -173,6 +173,16 @@ function sessionList(sessions) {
 
 // Draft fields bind .value without live(): a background redraw (a sync, a
 // write elsewhere) must not reset what's being typed to the saved value.
+// Suggested mood tags from the catalog (cozy, co-op, short…) that the
+// game doesn't have yet: one tap adds one.
+function moodSuggestions(e, item) {
+  const have = new Set((item.tags || []).map(t => t.toLowerCase()));
+  const sugs = (state.data?.moods || []).filter(m => !have.has(m));
+  if (!sugs.length) return nothing;
+  return html`<div class="chips" style="margin-top:var(--sp-2)" aria-label="Suggested tags"><span class="muted">Suggested:</span>
+    ${sugs.map(m => html`<button type="button" class="chip" @click=${() => editChange(e.id, { tags: [...(item.tags || []), m] }, `Tagged ${m}`)}>${icon('plus')}${m}</button>`)}</div>`;
+}
+
 function details(e, item, game) {
   const tagSugs = tagSuggestions(app.store.entries(), '', 30);
   const platformChoices = [...new Set([...(game.platforms || []), ...(item.platforms || []), ...(app.prefs.default_platforms || [])])];
@@ -197,7 +207,8 @@ function details(e, item, game) {
         ev.target.value = '';
         editChange(e.id, { tags: [...(item.tags || []), t] }, `Tagged ${t}`);
       }}>
-      <datalist id="tag-options">${tagSugs.map(t => html`<option value=${t}></option>`)}</datalist></div>
+      <datalist id="tag-options">${tagSugs.map(t => html`<option value=${t}></option>`)}</datalist>
+      ${moodSuggestions(e, item)}</div>
     <label class="field"><span>Notes (private)</span>
       <textarea class="textarea" maxlength="10000" .value=${item.notes || ''}
         @change=${ev => ev.target.value !== (item.notes || '') && editChange(e.id, { notes: ev.target.value }, 'Notes saved')}></textarea></label>

@@ -2,11 +2,12 @@ package v1
 
 import (
 	"errors"
-
-	"cato/internal/discover"
 	"net/http"
+	"strings"
 
 	"cato/internal/auth"
+	"cato/internal/catalog"
+	"cato/internal/discover"
 )
 
 func currentSession(r *http.Request) string {
@@ -72,10 +73,45 @@ func (a *API) upNext(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_fit", "fit is tonight, weekend or long", map[string]string{"fit": "invalid"})
 		return
 	}
-	picks, err := a.Discover.UpNext(r.Context(), user(r), min(max(queryInt(r, "n", 3), 1), 10), fit)
+	n := min(max(queryInt(r, "n", 3), 1), 10)
+	mood := r.URL.Query().Get("mood")
+	if mood != "" && !catalog.IsMood(mood) {
+		writeError(w, http.StatusBadRequest, "invalid_mood", "Unknown mood", map[string]string{"mood": "invalid"})
+		return
+	}
+	want := n
+	if mood != "" {
+		want = 60 // rank widely, then keep the games in the mood
+	}
+	picks, err := a.Discover.UpNext(r.Context(), user(r), want, fit)
 	if err != nil {
 		fail(w, r, err)
 		return
+	}
+	if mood != "" {
+		ids := make([]int64, len(picks))
+		for i, p := range picks {
+			ids[i] = p.Item.GameID
+		}
+		moods, err := a.Games.MoodsFor(r.Context(), ids)
+		if err != nil {
+			fail(w, r, err)
+			return
+		}
+		kept := picks[:0]
+		for _, p := range picks {
+			has := false
+			for _, m := range moods[p.Item.GameID] {
+				has = has || m == mood
+			}
+			for _, t := range p.Item.Tags {
+				has = has || strings.EqualFold(t, mood)
+			}
+			if has && len(kept) < n {
+				kept = append(kept, p)
+			}
+		}
+		picks = kept
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": picks})
 }

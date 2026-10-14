@@ -123,6 +123,7 @@ func Register(mux *http.ServeMux, d Deps) *API {
 	a.registerSocial(route)
 	a.registerImports(route)
 	a.registerReach(route)
+	a.registerDelight(route)
 
 	// Anything else under /api/v1 is a JSON 404, not the SPA shell.
 	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {

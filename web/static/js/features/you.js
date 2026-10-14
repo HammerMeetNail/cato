@@ -11,6 +11,8 @@ import { app } from './app-state.js';
 export const youSections = [
   { hash: '#you/stats', icon: 'chart-column', label: 'Stats', sub: 'Hours, finishes, ratings and your backlog' },
   { hash: '#you/diary', icon: 'calendar-days', label: 'Diary', sub: 'Every session, day by day' },
+  { hash: `#you/year/${new Date().getFullYear()}`, icon: 'sparkles', label: 'Year in review', sub: 'Your year in games, ready to share' },
+  { hash: '#you/goals', icon: 'target', label: 'Goals', sub: 'Targets for the year, with progress rings' },
   { hash: '#you/lists', icon: 'list', label: 'Lists', sub: 'Favourites, rankings and collections to share' },
   { hash: '#you/people', icon: 'users', label: 'People', sub: 'Follow friends, requests, invites and blocks' },
   { hash: '#you/inbox', icon: 'inbox', label: 'Inbox', sub: 'Follows, likes and alerts', badge: () => app.unread },

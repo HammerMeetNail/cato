@@ -13,8 +13,12 @@ import { longPress } from '../ui/menu.js';
 import { openLogSheet } from './log.js';
 import { startTimer } from './timer.js';
 import { feedSection, loadFeed } from './feed.js';
+import { goalCard } from './goals.js';
 
-const state = { data: null, error: null, loading: false, fit: '', picks: null, spinning: false };
+const state = { data: null, error: null, loading: false, fit: '', mood: '', picks: null, spinning: false };
+
+const MOODS = ['cozy', 'co-op', 'short', 'story-rich', 'challenging', 'spooky'];
+const upNextQuery = n => `/api/v1/up-next?n=${n}${state.fit ? `&fit=${state.fit}` : ''}${state.mood ? `&mood=${encodeURIComponent(state.mood)}` : ''}`;
 
 const FITS = [
   { value: '', label: 'Anything' },
@@ -23,11 +27,12 @@ const FITS = [
   { value: 'long', label: 'A long haul' },
 ];
 
-async function chooseFit(fit) {
+async function chooseFit(fit, mood = state.mood) {
   state.fit = fit;
+  state.mood = mood;
   app.redraw();
   try {
-    state.picks = fit ? (await api.get(`/api/v1/up-next?fit=${fit}&n=3`)).items : null;
+    state.picks = fit || mood ? (await api.get(upNextQuery(3))).items : null;
   } catch (err) {
     state.picks = null;
   }
@@ -38,7 +43,7 @@ async function chooseFit(fit) {
 async function surprise() {
   let list;
   try {
-    list = (await api.get(`/api/v1/up-next?n=10${state.fit ? `&fit=${state.fit}` : ''}`)).items;
+    list = (await api.get(upNextQuery(10))).items;
   } catch (err) {
     return;
   }
@@ -135,6 +140,14 @@ function onboarding() {
   </section>`;
 }
 
+// reviewSeason is the year to show a Year in Review card for (from
+// December 15 until the end of January), or 0.
+function reviewSeason(now = new Date()) {
+  if (now.getMonth() === 11 && now.getDate() >= 15) return now.getFullYear();
+  if (now.getMonth() === 0) return now.getFullYear() - 1;
+  return 0;
+}
+
 export function homeView() {
   const fresh = app.store.entries()
     .filter(e => e.status === 'playing' || e.status === 'paused')
@@ -172,6 +185,11 @@ export function homeView() {
         ${FITS.map(f => html`<button type="button" class="chip" role="radio" aria-checked=${String(state.fit === f.value)}
           @click=${() => chooseFit(f.value)}>${f.label}</button>`)}
       </div>
+      <div class="chips chips-scroll fit-chips" role="radiogroup" aria-label="In the mood for">
+        ${MOODS.map(m => html`<button type="button" class="chip" role="radio" aria-checked=${String(state.mood === m)}
+          @click=${() => chooseFit(state.fit, state.mood === m ? '' : m)}>${m}</button>`)}
+      </div>
+      ${state.mood && state.picks && !state.picks.length ? html`<p class="muted">Nothing in your backlog is tagged or known as ${state.mood}. Tag a few games “${state.mood}” and they'll show up here.</p>` : nothing}
       <div class="upnext-grid" aria-live="polite">${repeat(state.picks ?? d.up_next, p => p.item.game_id, upNextCard)}</div>
     </section>` : nothing}
 
@@ -179,6 +197,14 @@ export function homeView() {
       <div class="section-head"><h2 id="soon-title">Coming soon from your wishlist</h2></div>
       <div class="shelf-row">${d.coming_soon.map(g => html`<a class="upnext-card" href=${`#game/${g.id}`}>
         ${cover(g)}<span class="title">${g.name}</span><span class="reason">${formatRelease(g.release_date)}</span></a>`)}</div>
+    </section>` : nothing}
+
+    ${reviewSeason() ? html`<a class="card yr-teaser section" href=${`#you/year/${reviewSeason()}`}>${icon('sparkles')}
+      <span class="grow"><strong>Your ${reviewSeason()} in review</strong><span class="muted"> · hours, favourites and firsts, ready to share</span></span>${icon('chevron-right')}</a>` : nothing}
+
+    ${d?.goals?.length ? html`<section class="section" aria-labelledby="goals-title">
+      <div class="section-head"><h2 id="goals-title">Your ${new Date().getFullYear()} goals</h2><a href="#you/goals">Goals</a></div>
+      <div class="goal-row">${d.goals.map(g => goalCard(g))}</div>
     </section>` : nothing}
 
     ${feedSection()}

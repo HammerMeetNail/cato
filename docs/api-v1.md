@@ -176,3 +176,13 @@ Every source previews first and writes nothing; `POST /import/commit` writes the
 | `GET /barcode/{upc}` | `{code, title, confirmed?, candidate?}`: the product title (looked up once, ever) and the catalog match. `PUT /barcode/{upc}` `{game_id}` remembers the right game for everyone. |
 
 Notification delivery follows `prefs.notify[kind].push` (release, release_soon and price are on by default; social kinds are off). Alerts: `release_alerts` (day of release on your platforms), `release_week` (a week ahead), `price_alerts: {enabled, min_cut, low_only, country}`, `email_digest` (weekly, when the server has SMTP).
+
+## Delight
+
+| Method and path | Purpose |
+|---|---|
+| `GET /year/{year}` | Year in Review: `{minutes, sessions, days_played, games_played, finished, first_finish, top_rated, most_played, longest_session, busiest_day, top_genre, top_platform, oldest_game, months[12], timeline, instance?, years}`. `instance` compares you with people here who share beyond themselves (when at least two others played). |
+| `GET /goals?year=` | `{items: [{id, year, kind, target, param, progress, label}]}`. Kinds: `finish` (playthroughs finished), `backlog` (finished games that were in the library on January 1), `retro` (games played that came out before `param`), `hours`. Home includes the current year's `goals`. |
+| `POST /goals`, `DELETE /goals/{id}` | `{year, kind, target, param?}`; at most ten a year. |
+
+`GET /games/{id}` includes `moods`: suggested tags (`cozy`, `co-op`, `short`, `story-rich`, `challenging`, `spooky`) from IGDB genres, themes, modes and time to beat. `GET /up-next?mood=` keeps picks with that mood, whether suggested or tagged by you.

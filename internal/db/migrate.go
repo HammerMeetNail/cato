@@ -13,6 +13,21 @@ type Migration struct {
 
 var migrations = []Migration{
 	{
+		Version: 23,
+		// Goals (plan §10): "Finish 24 games in 2026", "Clear 10 from the
+		// backlog", "Play 5 games from before 2000", "Play 200 hours".
+		Up: `CREATE TABLE goals (
+		       id INTEGER PRIMARY KEY AUTOINCREMENT,
+		       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		       year INTEGER NOT NULL,
+		       kind TEXT NOT NULL CHECK (kind IN ('finish', 'backlog', 'retro', 'hours')),
+		       target INTEGER NOT NULL CHECK (target > 0 AND target <= 100000),
+		       param INTEGER NOT NULL DEFAULT 0,
+		       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+		     );
+		     CREATE INDEX idx_goals_user ON goals(user_id, year);`,
+	},
+	{
 		Version: 22,
 		// Reach (plan §8): import batches (undoable as a whole), Steam and
 		// RetroAchievements links, Web Push subscriptions, alert

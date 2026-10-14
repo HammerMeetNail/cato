@@ -554,3 +554,57 @@ func TestActivityEventsFollowWritesAndUndo(t *testing.T) {
 		t.Errorf("pause/resume is not news: %q", got)
 	}
 }
+
+func TestGoalsAndYearInReview(t *testing.T) {
+	f := newFixture(t)
+	f.exec(`UPDATE games SET first_release_date = 700000000, genres_json = '[12]' WHERE id = 4`) // 1992, RPG
+	f.exec(`INSERT INTO lookups (kind, id, name) VALUES ('genres', 12, 'Role-playing (RPG)')`)
+	// Hades: in the library since last year, finished this year.
+	f.exec(`INSERT INTO library_items (user_id, game_id, status, created_at) VALUES ('u1', 1, 'backlog', '2025-06-01 00:00:00')`)
+	f.patch(1, Change{Status: str("playing"), PlayedOn: "2026-03-01"})
+	f.store.LogSession(f.ctx, "u1", 1, 120, "2026-03-02", "")
+	f.patch(1, Change{Status: str("completed"), Rating: num(90), PlayedOn: "2026-03-10"})
+	// Outer Wilds (1992 in this fixture): played, not finished.
+	f.patch(4, Change{Status: str("playing"), PlayedOn: "2026-04-01"})
+	f.store.LogSession(f.ctx, "u1", 4, 300, "2026-04-02", "")
+	// Celeste: added and finished this year.
+	f.patch(2, Change{Status: str("completed"), Rating: num(70), PlayedOn: "2026-05-01"})
+
+	for _, g := range []Goal{{Kind: "finish", Target: 2}, {Kind: "backlog", Target: 5}, {Kind: "retro", Target: 1}, {Kind: "hours", Target: 10}} {
+		g.Year = 2026
+		if _, err := f.store.AddGoal(f.ctx, "u1", g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := f.store.AddGoal(f.ctx, "u1", Goal{Year: 2026, Kind: "nope", Target: 1}); err == nil {
+		t.Fatal("unknown goal kind accepted")
+	}
+	goals, _ := f.store.Goals(f.ctx, "u1", 2026)
+	got := map[string]int64{}
+	for _, g := range goals {
+		got[g.Kind] = g.Progress
+	}
+	if got["finish"] != 2 || got["backlog"] != 1 || got["retro"] != 1 || got["hours"] != 7 {
+		t.Fatalf("goal progress %v", got)
+	}
+	if goals[2].Label != "Play 1 games from before 2000" {
+		t.Errorf("label %q", goals[2].Label)
+	}
+
+	r, err := f.store.YearInReview(f.ctx, "u1", 2026)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Minutes != 420 || r.GamesPlayed != 2 || len(r.Finished) != 2 || r.FirstFinish.ID != 1 || r.TopRated[0].ID != 1 {
+		t.Fatalf("review %+v", r)
+	}
+	if r.MostPlayed[0].ID != 4 || r.Longest.Minutes != 300 || r.TopGenre != "Role-playing (RPG)" || r.OldestGame.ID != 4 || r.Months[3] != 300 {
+		t.Fatalf("review details: most %+v longest %+v genre %q oldest %+v months %v", r.MostPlayed, r.Longest, r.TopGenre, r.OldestGame, r.Months)
+	}
+	if len(r.Timeline) < 2 {
+		t.Fatalf("timeline %+v", r.Timeline)
+	}
+	if r.Instance != nil {
+		t.Fatal("no comparison without enough people sharing")
+	}
+}

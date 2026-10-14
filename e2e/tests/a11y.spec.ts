@@ -82,6 +82,8 @@ for (const scheme of ['light', 'dark'] as const) {
       const list = (await (await page.request.post('/api/v1/lists', { headers: h, data: { title: 'Favourites', ranked: true } })).json()).list;
       await page.request.put(`/api/v1/lists/${list.id}/items/${G.hades}`, { headers: h, data: { note: 'Best' } });
       await page.request.post('/api/v1/users/e2e_admin/follow', { headers: h });
+      await page.request.post('/api/v1/sessions', { headers: h, data: { game_id: G.hades, minutes: 60 } });
+      await page.request.post('/api/v1/goals', { headers: h, data: { kind: 'finish', target: 10 } });
 
       const screens: [string, string, (p: Page) => Promise<void>][] = [
         ['profile', `#u/${username}`, p => expect(p.getByRole('heading', { name: 'Favourites' }).first()).toBeVisible()],
@@ -91,6 +93,8 @@ for (const scheme of ['light', 'dark'] as const) {
         ['list', `#list/${list.id}`, p => expect(p.locator('.list-items li').first()).toBeVisible()],
         ['people', '#you/people', p => expect(p.getByRole('heading', { name: 'Following' })).toBeVisible()],
         ['inbox', '#you/inbox', p => expect(p.getByRole('heading', { name: 'Inbox' })).toBeVisible()],
+        ['year in review', `#you/year/${new Date().getFullYear()}`, p => expect(p.locator('.yr-hero')).toBeVisible()],
+        ['goals', '#you/goals', p => expect(p.getByRole('heading', { name: 'Goals' })).toBeVisible()],
       ];
       for (const [label, hash, ready] of screens) {
         await gotoApp(page, hash);
