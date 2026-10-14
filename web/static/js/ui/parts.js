@@ -4,13 +4,26 @@ import { html, nothing } from './lit.js';
 import { icon } from './icons.js';
 import { statusLabel, STATUSES, coverAlt } from '../core/format.js';
 
+// coverSources picks the right size: local covers have an @2x variant,
+// IGDB URLs are rewritten to the size the slot needs (thumbnails small).
+export function coverSources(src, thumb = false) {
+  if (!src) return { src: '', srcset: '' };
+  const local = /^\/covers\/(-?\d+)\.jpg(\?.*)?$/.exec(src);
+  if (local) return { src, srcset: local[2] ? '' : `${src} 1x, /covers/${local[1]}@2x.jpg 2x` };
+  if (src.startsWith('https://images.igdb.com/') && src.includes('/t_cover_big/')) {
+    if (thumb) return { src: src.replace('/t_cover_big/', '/t_cover_small/'), srcset: `${src.replace('/t_cover_big/', '/t_cover_small/')} 1x, ${src} 2x` };
+    return { src, srcset: `${src} 1x, ${src.replace('/t_cover_big/', '/t_cover_big_2x/')} 2x` };
+  }
+  return { src, srcset: '' };
+}
+
 // cover renders a game cover with a text fallback when the image is
 // missing or fails (no inline handlers: CSP).
 export function cover(entry, { cls = '', eager = false } = {}) {
-  const src = entry?.cover;
+  const { src, srcset } = coverSources(entry?.cover, cls.includes('thumb'));
   const fallback = html`<span class="cover-fallback">${entry?.name ?? ''}</span>`;
   return html`<div class=${`cover ${cls}`}>
-    ${src ? html`<img src=${src} alt=${coverAlt(entry.name)} loading=${eager ? 'eager' : 'lazy'} decoding="async"
+    ${src ? html`<img src=${src} srcset=${srcset || nothing} alt=${coverAlt(entry.name)} loading=${eager ? 'eager' : 'lazy'} decoding="async"
       @error=${e => { e.target.replaceWith(Object.assign(document.createElement('span'), { className: 'cover-fallback', textContent: entry.name })); }}>` : fallback}
   </div>`;
 }

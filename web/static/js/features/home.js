@@ -5,7 +5,7 @@ import { icon } from '../ui/icons.js';
 import { cover, statusPill, empty, skeletonRows } from '../ui/parts.js';
 import { stars } from '../ui/stars.js';
 import { api } from '../core/api.js';
-import { formatMinutes, relativeDay, localDay, timestampDay, plural } from '../core/format.js';
+import { formatMinutes, relativeDay, localDay, timestampDay, plural, formatRelease } from '../core/format.js';
 import { app, ratingDisplay, savePrefs } from './app-state.js';
 import { timeChips, gameMenu } from './sheets.js';
 import * as actions from './actions.js';
@@ -13,7 +13,47 @@ import { longPress } from '../ui/menu.js';
 import { openLogSheet } from './log.js';
 import { startTimer } from './timer.js';
 
-const state = { data: null, error: null, loading: false };
+const state = { data: null, error: null, loading: false, fit: '', picks: null, spinning: false };
+
+const FITS = [
+  { value: '', label: 'Anything' },
+  { value: 'tonight', label: '1h tonight' },
+  { value: 'weekend', label: 'A weekend' },
+  { value: 'long', label: 'A long haul' },
+];
+
+async function chooseFit(fit) {
+  state.fit = fit;
+  app.redraw();
+  try {
+    state.picks = fit ? (await api.get(`/api/v1/up-next?fit=${fit}&n=3`)).items : null;
+  } catch (err) {
+    state.picks = null;
+  }
+  app.redraw();
+}
+
+// surprise spins through the top ten and lands on one (reduced motion: no spin).
+async function surprise() {
+  let list;
+  try {
+    list = (await api.get(`/api/v1/up-next?n=10${state.fit ? `&fit=${state.fit}` : ''}`)).items;
+  } catch (err) {
+    return;
+  }
+  if (!list.length) return;
+  const pick = list[Math.floor(Math.random() * list.length)];
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  state.spinning = true;
+  for (let i = 0; !still && i < 12; i++) {
+    state.picks = [list[i % list.length]];
+    app.redraw();
+    await new Promise(r => setTimeout(r, 60 + i * 18));
+  }
+  state.spinning = false;
+  state.picks = [{ ...pick, reason: `Surprise! ${pick.reason}` }];
+  app.redraw();
+}
 
 export async function enterHome() {
   if (state.loading) return;
@@ -58,10 +98,11 @@ function nowCard(e) {
 
 function upNextCard(pick) {
   const e = app.store.get(pick.item.game_id) || { id: pick.item.game_id, name: pick.item.game.name, cover: pick.item.game.cover };
+  const pinned = pick.pinned ? html`<span class="status status-paused">In your queue</span>` : nothing;
   return html`<div class="upnext-card">
     <a href=${`#game/${e.id}`} aria-label=${`Open ${e.name}`}>${cover(e)}</a>
     <a class="title" href=${`#game/${e.id}`} style="color:inherit;text-decoration:none">${e.name}</a>
-    <span class="reason">${pick.reason}</span>
+    <span class="reason">${pick.reason}</span>${pinned}
     <button type="button" class="btn btn-sm btn-secondary" @click=${() => actions.setStatus(e.id, 'playing').catch(() => {})}>${icon('play')}Start</button>
   </div>`;
 }
@@ -109,8 +150,19 @@ export function homeView() {
     </section>
 
     ${d?.up_next?.length ? html`<section class="section" aria-labelledby="upnext-title">
-      <div class="section-head"><h2 id="upnext-title">Up next</h2><a href="#discover">More ideas</a></div>
-      <div class="upnext-grid">${repeat(d.up_next, p => p.item.game_id, upNextCard)}</div>
+      <div class="section-head"><h2 id="upnext-title">Up next</h2>
+        <button type="button" class="btn btn-sm btn-ghost" ?disabled=${state.spinning} @click=${surprise}>${icon('dices')}Surprise me</button></div>
+      <div class="chips fit-chips" role="radiogroup" aria-label="How much time do you have?">
+        ${FITS.map(f => html`<button type="button" class="chip" role="radio" aria-checked=${String(state.fit === f.value)}
+          @click=${() => chooseFit(f.value)}>${f.label}</button>`)}
+      </div>
+      <div class="upnext-grid" aria-live="polite">${repeat(state.picks ?? d.up_next, p => p.item.game_id, upNextCard)}</div>
+    </section>` : nothing}
+
+    ${d?.coming_soon?.length ? html`<section class="section" aria-labelledby="soon-title">
+      <div class="section-head"><h2 id="soon-title">Coming soon from your wishlist</h2></div>
+      <div class="shelf-row">${d.coming_soon.map(g => html`<a class="upnext-card" href=${`#game/${g.id}`}>
+        ${cover(g)}<span class="title">${g.name}</span><span class="reason">${formatRelease(g.release_date)}</span></a>`)}</div>
     </section>` : nothing}
 
     <section class="section" aria-labelledby="recent-title">

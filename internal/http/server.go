@@ -462,8 +462,11 @@ const permissionsPolicy = "accelerometer=(), camera=(self), display-capture=(), 
 // securityMiddleware sets the security headers. scriptHash is the CSP
 // source of the injected import map (the only inline script).
 func securityMiddleware(cfg *config.Config, scriptHash func() string, next http.Handler) http.Handler {
+	// frame-src: only the privacy-enhanced YouTube player, and only after
+	// a click (game page trailers load nothing from YouTube until then).
 	cspTail := "; style-src 'self' 'unsafe-inline'; " +
 		"img-src 'self' https://images.igdb.com data: blob:; connect-src 'self'; " +
+		"frame-src https://www.youtube-nocookie.com; " +
 		"frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
 	https := cfg.HTTPS()
 	if https {

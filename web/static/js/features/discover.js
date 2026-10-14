@@ -4,7 +4,7 @@ import { html, nothing, repeat, live } from '../ui/lit.js';
 import { icon } from '../ui/icons.js';
 import { cover, statusPill, empty, skeletonTiles } from '../ui/parts.js';
 import { api } from '../core/api.js';
-import { releaseYear, statusLabel } from '../core/format.js';
+import { releaseYear, statusLabel, formatMinutes } from '../core/format.js';
 import { href, go } from '../core/router.js';
 import { app } from './app-state.js';
 import * as actions from './actions.js';
@@ -58,14 +58,24 @@ export function discoverView() {
           <div class="section-head"><h2 id=${`shelf-${s.id}`}>${s.title}</h2>${s.subtitle ? html`<span class="muted">${s.subtitle}</span>` : nothing}</div>
           <div class="shelf-row">${repeat(s.items, g => g.id, gameCard)}</div>
         </section>`)}
+    ${d ? html`<p class="section muted" style="font-size:var(--fs-12)">Game data from <a href="https://www.igdb.com" target="_blank" rel="noopener noreferrer">IGDB</a>.</p>` : nothing}
   </div>`;
 }
 
 // Search results page with facets: platform, release years, rating, and
 // whether the game is in your library.
-const FACET_KEYS = ['platform', 'year_from', 'year_to', 'min_rating', 'in_library', 'sort'];
+const FACET_KEYS = ['platform', 'year_from', 'year_to', 'min_rating', 'in_library', 'sort', 'genre', 'max_ttb'];
+let genres = null;
+
+async function loadGenres() {
+  if (genres) return;
+  genres = [];
+  try { genres = (await api.get('/api/v1/genres')).items; } catch { /* the facet just stays empty */ }
+  app.redraw();
+}
 
 export async function enterSearch(route, more = false) {
+  loadGenres();
   const q = (route.query.q || '').trim();
   const params = new URLSearchParams({ q, limit: '30' });
   for (const k of FACET_KEYS) if (route.query[k]) params.set(k, route.query[k]);
@@ -121,6 +131,16 @@ export function searchView(route) {
           <label class="field" style="flex:1"><span>To</span><input class="input" type="number" min="1970" max=${year + 5} placeholder=${String(year)} .value=${live(q.year_to || '')}
             @change=${e => facet(route, 'year_to', e.target.value)}></label>
         </div>
+        ${genres?.length ? html`<label class="field"><span>Genre</span>
+          <select class="select" @change=${e => facet(route, 'genre', e.target.value)}>
+            <option value="">Any</option>
+            ${genres.map(g => html`<option value=${String(g.id)} ?selected=${q.genre === String(g.id)}>${g.name}</option>`)}
+          </select></label>` : nothing}
+        <label class="field"><span>Time to beat</span>
+          <select class="select" @change=${e => facet(route, 'max_ttb', e.target.value)}>
+            ${[['', 'Any length'], ['2', 'Up to 2 hours'], ['5', 'Up to 5 hours'], ['10', 'Up to 10 hours'], ['20', 'Up to 20 hours'], ['40', 'Up to 40 hours']]
+              .map(([v, l]) => html`<option value=${v} ?selected=${(q.max_ttb || '') === v}>${l}</option>`)}
+          </select></label>
         <label class="field"><span>Critic rating at least</span>
           <select class="select" @change=${e => facet(route, 'min_rating', e.target.value)}>
             ${[['', 'Any'], ['70', '70+'], ['80', '80+'], ['90', '90+']].map(([v, l]) => html`<option value=${v} ?selected=${(q.min_rating || '') === v}>${l}</option>`)}
@@ -143,7 +163,7 @@ export function searchView(route) {
           : html`<div class="lib-grid">${repeat(results.items, g => g.id, g => html`<div class="game-tile">
               <a href=${`#game/${g.id}`} aria-label=${`Open ${g.name}`}>${cover(g)}</a>
               <a class="tile-name" href=${`#game/${g.id}`} style="color:inherit;text-decoration:none">${g.name}</a>
-              <span class="tile-meta">${releaseYear(g.release_date) || 'TBA'}${(app.store.get(g.id)?.status || g.status) ? html` · ${statusLabel(app.store.get(g.id)?.status || g.status)}` : nothing}</span>
+              <span class="tile-meta">${releaseYear(g.release_date) || 'TBA'}${g.ttb_minutes ? ` · ${formatMinutes(g.ttb_minutes)}` : ''}${(app.store.get(g.id)?.status || g.status) ? html` · ${statusLabel(app.store.get(g.id)?.status || g.status)}` : nothing}</span>
               ${(app.store.get(g.id)?.status || g.status) ? nothing : html`<div class="chips">
                 <button type="button" class="chip" @click=${() => actions.addGame(g, 'wishlist').catch(() => {})}>Want</button>
                 <button type="button" class="chip" @click=${() => actions.addGame(g, 'backlog').catch(() => {})}>Backlog</button></div>`}

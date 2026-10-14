@@ -13,6 +13,7 @@ import { app } from './app-state.js';
 import * as actions from './actions.js';
 import { openFinishSheet } from './sheets.js';
 import { go } from '../core/router.js';
+import { openCustomGameSheet } from './custom-game.js';
 
 let open = null;
 
@@ -112,7 +113,8 @@ export function openLogSheet(initial = '') {
           html`<h3 class="log-group">All games</h3>`,
           others.length ? repeat(others, g => g.id, g => catalogRow(g, close))
             : html`<p class="muted">${state.loading ? 'Searching…' : state.error ? state.error.message : q.length < 2 ? 'Keep typing…' : 'No other games found.'}</p>`,
-          html`<p style="margin-top:var(--sp-4)"><a href=${`#discover/search?q=${encodeURIComponent(q)}`} @click=${close}>See all results for “${q}”</a></p>`,
+          html`<p style="margin-top:var(--sp-4)"><a href=${`#discover/search?q=${encodeURIComponent(q)}`} @click=${close}>See all results for “${q}”</a></p>
+            <p><button type="button" class="link" @click=${() => { close(); openCustomGameSheet(q); }}>Can’t find it? Add “${q}” yourself</button></p>`,
         ];
       }
       return html`${searchBox(s)}${groups}`;
