@@ -46,7 +46,7 @@ All endpoints live under `/api/v1`, need a session cookie, and are served over H
 }
 ```
 
-Status changes keep the journal in step: moving to Playing starts a playthrough (a replay if the last one finished), Finished and Dropped close it (Dropped records `completion: dropped`), and Paused keeps it open.
+Adding an edition (a game with an IGDB `version_parent`) adds its base game; the edition is recorded on the playthrough. Status changes keep the journal in step: moving to Playing starts a playthrough (a replay if the last one finished), Finished and Dropped close it (Dropped records `completion: dropped`), and Paused keeps it open.
 
 **Item:**
 
@@ -80,7 +80,8 @@ The item's `minutes` always equals the sum of its sessions (adjustments included
 |---|---|
 | `GET /me` | `{user, csrf_token, prefs, library_rev}`. |
 | `PATCH /me/prefs` | Merge settings: `theme` (`system`/`light`/`dark`), `rating_display` (`stars`/`ten`/`hundred`), `default_platforms`, `library_layout` (`grid`/`list`), `density` (`comfortable`/`compact`), `library_sort`, `up_next` (≤ 5 game IDs), `streaks`, `week_start`, `onboarding_done`, `haptics`, `confetti`. Unknown keys are rejected. |
-| `GET /home?today=` | Playing and paused items, Up Next picks with reasons, recent sessions, the timer, counts, streak, and whether to show onboarding. |
+| `GET /home?today=` | Playing and paused items, Up Next picks with reasons (your pinned queue first), coming_soon (wishlist games with a release date ahead), recent sessions, the timer, counts, streak, and whether to show onboarding. |
+| `GET /devices` | Signed-in sessions `{id, user_agent, created_at, last_seen_at, current}`; `DELETE /devices/{id}` signs one out, `POST /devices/revoke-others` all but this one. |
 | `GET /stats?year=&today=` | Totals, the year's minutes/sessions/days/finished, finished per year by completion type, minutes per month (12), the year's heatmap, rating distribution (ten half-star buckets), top tags/platforms/genres, backlog age and the longest session. |
 | `GET /export.json` | Everything, re-importable: items with playthroughs and sessions, and settings. |
 | `GET /export.csv` | Spreadsheet export (formula-safe cells). |
@@ -89,7 +90,12 @@ The item's `minutes` always equals the sum of its sessions (adjustments included
 
 | Method and path | Purpose |
 |---|---|
-| `GET /games/{id}` | The game page: `{game, item, playthroughs, sessions}` (`item` is null when the game isn't in your library). |
+| `GET /games/{id}` | The game page: `{game, extras, estimate, item, playthroughs, sessions}` (`item` is null when the game isn't in your library). A game seen for the first time fetches its IGDB details first (up to 3 s); stale details refresh in the background. `extras`: `ttb` (minutes: hastily/normally/completely, count), genres, themes, modes, perspectives, game_type, developers, publishers, series (games in release order), related (`similar`, `dlc`, `expansion`, `standalone`, `remake`, `remaster`, `port`, `bundle`), release_dates, screenshots/artworks (IGDB image IDs), videos (YouTube IDs), links (stores first), age_ratings, languages, multiplayer, editions / base_game, source (`igdb` or `custom`). `estimate`: `{minutes, weeks, pace: {multiplier, weekly_minutes, samples}}` at your pace. |
+| `POST /games` | Add a custom game: `{name, platform?, year?, summary?, cover?}` (`cover` is a `data:image/...;base64,` URL; JPEG, PNG or GIF, re-encoded). Returns `{game}` with a negative ID. |
+| `PUT /games/{id}/cover` | Replace a custom game's cover (its creator only): `{cover}`. |
+| `GET /discover` | `{shelves: [{id, title, subtitle, items}]}`: trending, coming-soon (your platforms), new, instance, because, short, gems, classics (popular when little else is known). |
+| `GET /up-next?fit=&n=` | Up Next picks with reasons, `fit` = `tonight`, `weekend` or `long`, `n` ≤ 10. |
+| `GET /genres` | Genre names for the search facet. |
 | `GET /typeahead?q=` | `{library: [Item], catalog: [result]}`; your library first. Each catalog result carries your `status`. |
-| `GET /search?q=&sort=&platform=&year_from=&year_to=&min_rating=&in_library=&status=&limit=&offset=` | Full catalog search: `{items, total, next_offset}`. Rate limited per IP. |
+| `GET /search?q=&sort=&platform=&genre=&max_ttb=&year_from=&year_to=&min_rating=&in_library=&limit=&offset=` | Full catalog search: `{items, total, next_offset}`; `max_ttb` is in hours. Rate limited per IP. |
 | `GET /platforms?q=` | Platform names. |

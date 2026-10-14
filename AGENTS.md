@@ -31,6 +31,8 @@ internal/db/     SQLite open (two-pool), migration runner, pre-migration snapsho
 internal/catalog/ Game search, store, service, IGDB rate limiter (two lanes), backfills, catalog jobs.
 internal/library/ The library domain: typed items, filters/sorts, writes with the journal
                  (playthroughs, sessions), undo, compact index, bulk, timer, stats, prefs, export.
+internal/discover/ Discover shelves, Up Next scoring, estimates at your pace (reads catalog + library).
+internal/integrations/wikidata/ Opt-in ID crosswalk for HowLongToBeat / PCGamingWiki links.
 internal/jobs/   Background job runner (persisted schedule, jitter, cancellation).
 internal/metrics/ In-process counters/histograms in Prometheus text format.
 internal/http/   HTTP server, legacy /api handlers, middleware, static/asset versioning.
@@ -162,6 +164,15 @@ tests/js/        node --test suites for the pure frontend modules
   inline `<script>`, inline event handlers (`onerror=`), or `javascript:` URLs; cover
   images fall back via delegated `error` listeners + `data-cover-fallback`, and the
   theme/login bootstrap scripts are external (`js/theme-init.js`, `js/login.js`).
+- **Rich catalog (v20)**: genres/themes/modes/perspectives/game types are `lookups`; time to
+  beat lives on `games` (minutes); relations, release dates, companies, series and external
+  IDs have tables; media/links/ratings/languages/multiplayer are one JSON row in
+  `game_details`. `catalog.Service.EnsureDetails` fetches on a game page view; jobs refresh
+  library games weekly, run an `updated_at` delta sync every 6 h (it replaces the
+  refresh-by-age loop when the client supports `catalog.DetailsClient`), sync lookups weekly
+  and PopScore daily. Custom games have negative IDs and `source='custom'`; editions roll up
+  to their base game on add (`playthroughs.edition_game_id`). External IDs with source
+  ≥ 1000 are Cato's own (Wikidata); IGDB refreshes leave them alone.
 - **IGDB is optional**: when `IGDB_CLIENT_ID` is empty a `noopIGDBClient` is used; IGDB calls
   fall back to local results on error.
 - **Rate limiting**: in-memory only (not shared across processes). `auth.RateLimiter`
