@@ -388,7 +388,7 @@ func TestStaticCacheHeaders(t *testing.T) {
 	srv := NewServer(cfg, database)
 
 	// JS/CSS get no-cache.
-	req := httptest.NewRequest(http.MethodGet, "/js/api.js", nil)
+	req := httptest.NewRequest(http.MethodGet, "/js/core/api.js", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
 	if cc := rec.Header().Get("Cache-Control"); cc != "no-cache" {

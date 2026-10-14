@@ -3,9 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#1a1a2e">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>Cato - Login</title>
+  <meta name="theme-color" content="#f4f5f8">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Cato: a private, fast record of the games you play.">
+  <title>Sign in · Cato</title>
   <script src="/js/theme-init.js"></script>
   <script src="/js/head-init.js"></script>
   <!-- assets -->
@@ -13,38 +14,33 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="icon" href="/icons/favicon.ico" sizes="any">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
-  <link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/css/base.css">
+  <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/views.css">
 </head>
 <body>
-  <div class="login-page">
+  <main class="login-page">
     <div class="login-card">
-      <h1>Cato</h1>
-
-      <div class="error-msg" id="errorMsg"></div>
-
-      <form id="loginForm">
-        <div class="form-group">
-          <label for="email">Email</label>
-          <input type="email" id="email" required autocomplete="email">
-        </div>
-        <div class="form-group">
-          <label for="password">Password</label>
-          <input type="password" id="password" required autocomplete="current-password" minlength="8">
-        </div>
-        <button type="submit" class="btn btn-primary" id="submitBtn">Login</button>
+      <div class="brand"><img src="/favicon.svg" alt="" width="40" height="40">Cato</div>
+      <p class="pitch" id="pitch">Your games: what you're playing, what's next and what you thought. Log a session in two taps. Private to you and the people on this server.</p>
+      <h1 id="formTitle" style="font-size:var(--fs-22)">Sign in</h1>
+      <div class="error-msg" id="errorMsg" role="alert"></div>
+      <form id="loginForm" class="form-grid">
+        <label class="field"><span>Email</span>
+          <input class="input" type="email" id="email" required autocomplete="username email" inputmode="email"></label>
+        <label class="field"><span>Password</span>
+          <input class="input" type="password" id="password" required autocomplete="current-password" minlength="8"></label>
+        <button type="submit" class="btn btn-primary btn-block" id="submitBtn">Sign in</button>
       </form>
-
       <div class="divider" id="googleDivider" hidden>or</div>
-
-      <button class="btn btn-google" id="googleBtn" hidden>Sign in with Google</button>
-
-      <div class="form-footer" id="signupFooter">
-        <span id="toggleText">Don't have an account?</span>
-        <a id="toggleLink">Sign up</a>
-      </div>
+      <a class="btn btn-secondary btn-block" id="googleBtn" href="/api/auth/google/start" hidden>Continue with Google</a>
+      <p class="form-footer" id="signupFooter" hidden>
+        <span id="toggleText">New here?</span>
+        <button type="button" class="link" id="toggleLink">Create an account</button>
+      </p>
     </div>
-  </div>
-
+  </main>
   <script type="module" src="/js/login.js"></script>
 </body>
 </html>

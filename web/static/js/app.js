@@ -1,403 +1,265 @@
-import { api, checkAuth, logout, library, getLibraryRevision } from '/js/api.js';
-import { initSearch, initVoiceSearch, recordRecentSearch, clearRecentSearches } from '/js/search.js';
-import { closeGameModal, resumeLibraryRoute, dismissLibraryFilters, loadLibrary, loadSearchResults, addGameToLibrary, getHashStatus, getHashGameId, getHashSearch, openGameModal, openLibraryItemModal, filterByTag, filterByPlatform, refreshTabCounts } from '/js/library.js';
-import { renderStatsView } from '/js/stats.js';
-import { renderSettingsView } from '/js/settings.js';
-import { renderPlayingView } from '/js/playing.js';
+// app.js — boots Cato: who's signed in, the on-device library, the router
+// and the shell (header with the one search box, bottom navigation on
+// phones / sidebar on desktop). Home and the Log sheet load eagerly; other
+// screens load on first visit.
+import { html, render, nothing } from './ui/lit.js';
+import { icon } from './ui/icons.js';
+import { skeletonTiles, empty } from './ui/parts.js';
+import { toast } from './ui/toast.js';
+import { anySheetOpen, closeAllSheets } from './ui/sheet.js';
+import { closeMenu } from './ui/menu.js';
+import { api, request, setCSRF, ApiError } from './core/api.js';
+import { openKV } from './core/idb.js';
+import { Store } from './core/store.js';
+import { start as startRouter, tab, go } from './core/router.js';
+import { initials, plural } from './core/format.js';
+import { app, applyTheme } from './features/app-state.js';
+import { homeView, enterHome } from './features/home.js';
+import { openLogSheet } from './features/log.js';
+import { timerPill, refreshTimer } from './features/timer.js';
+import { searchBox, focusSearch } from './features/search-box.js';
 
-const searchInput = document.getElementById('searchInput');
-const searchResults = document.getElementById('searchResults');
-const userDisplay = document.getElementById('userDisplay');
-const loginLink = document.getElementById('loginLink');
-const userMenuBtn = document.getElementById('userMenuBtn');
-const userMenuDropdown = document.getElementById('userMenuDropdown');
-const logoutLink = document.getElementById('logoutLink');
-const settingsLink = document.getElementById('settingsLink');
-const statusTabs = document.getElementById('statusTabs');
-const bottomTabs = document.getElementById('bottom-tabs');
-const libraryView = document.getElementById('libraryView');
-const statsView = document.getElementById('statsView');
-const playingView = document.getElementById('playingView');
-const settingsView = document.getElementById('settingsView');
-const fabAdd = document.getElementById('fabAdd');
-const libFilterFab = document.getElementById('libFilterFab');
-const libFilterPanel = document.getElementById('libFilterPanel');
-const statusFilterFab = document.getElementById('statusFilterFab');
-const statusFilterPanel = document.getElementById('statusFilterPanel');
+// Screens other than Home load on first visit. Each module exports a
+// view(route) and optionally enter(route) (data loading) and init(app).
+const SCREENS = {
+  library: () => import('./features/library.js').then(m => ({ view: m.libraryView })),
+  game: () => import('./features/game.js').then(m => ({ view: m.gameView, enter: m.enterGame, init: () => m.watchGameWrites(app.store) })),
+  discover: () => import('./features/discover.js').then(m => ({ view: m.discoverView, enter: m.enterDiscover })),
+  'discover/search': () => import('./features/discover.js').then(m => ({ view: m.searchView, enter: r => m.enterSearch(r) })),
+  you: () => import('./features/you.js').then(m => ({ view: m.youView })),
+  'you/stats': () => import('./features/you.js').then(m => ({ view: m.statsView, enter: m.enterStats })),
+  'you/diary': () => import('./features/you.js').then(m => ({ view: m.diaryView, enter: m.enterDiary })),
+  'you/settings': () => import('./features/settings.js').then(m => ({ view: m.settingsView, enter: m.enterSettings })),
+  'you/help': () => import('./features/help.js').then(m => ({ view: m.helpView })),
+  'dev/ui': () => import('./dev/gallery.js').then(m => ({ view: m.galleryView })),
+};
 
-function updateBottomTabs(route) {
-  if (!bottomTabs) return;
-  bottomTabs.querySelectorAll('.tab-item').forEach(tab => {
-    const r = tab.dataset.route || '';
-    const active = r === route;
-    tab.classList.toggle('active', active);
-    if (active) tab.setAttribute('aria-current', 'page');
-    else tab.removeAttribute('aria-current');
-  });
+// registerScreen lets later features add routes (lists, profiles, import…).
+export function registerScreen(name, loader) {
+  SCREENS[name] = loader;
 }
 
-let activeView = '';
-let lastLibraryHash = '#library';
-const scrollPositions = new Map();
-let routeVersion = 0;
+const loaded = new Map();
+const TITLES = {
+  home: 'Home', library: 'Library', game: 'Game', discover: 'Discover', 'discover/search': 'Search', you: 'You',
+  'you/stats': 'Stats', 'you/diary': 'Diary', 'you/settings': 'Settings', 'you/help': 'Help', 'dev/ui': 'Gallery',
+};
 
-function showView(name) {
-  const shell = document.querySelector('.app-shell');
-  if (activeView !== name) {
-    if (activeView) scrollPositions.set(activeView, shell ? shell.scrollTop : window.scrollY);
-    dismissLibraryFilters();
-    activeView = name;
-    requestAnimationFrame(() => {
-      if (activeView !== name) return;
-      const top = scrollPositions.get(name) || 0;
-      if (shell) shell.scrollTop = top;
-      else window.scrollTo(0, top);
-    });
-  }
-  if (libraryView) libraryView.hidden = name !== 'library';
-  if (statsView) statsView.hidden = name !== 'stats';
-  if (playingView) playingView.hidden = name !== 'playing';
-  if (settingsView) settingsView.hidden = name !== 'settings';
-  if (fabAdd) fabAdd.hidden = name === 'library';
-  const allFabs = [libFilterFab, statusFilterFab];
-  const allPanels = [libFilterPanel, statusFilterPanel];
-  if (name !== 'library') {
-    allFabs.forEach(fab => { if (fab) fab.hidden = true; });
-    allPanels.forEach(panel => { if (panel) { panel.hidden = true; panel.classList.remove('lib-filter-panel--open', 'status-filter-panel--open'); } });
-    const libFilterBtn = document.getElementById('libFilterBtn');
-    if (libFilterBtn) libFilterBtn.classList.remove('lib-filter-btn--open');
-    const statusFilterBtn = document.getElementById('statusFilterBtn');
-    if (statusFilterBtn) statusFilterBtn.classList.remove('lib-filter-btn--open');
-    // Also reset inline search filter buttons
-    const searchStatusBtn = document.getElementById('searchStatusBtn');
-    if (searchStatusBtn) { searchStatusBtn.classList.remove('lib-filter-btn--open'); searchStatusBtn.setAttribute('aria-expanded', 'false'); }
-    const searchAdvancedBtn = document.getElementById('searchAdvancedBtn');
-    if (searchAdvancedBtn) { searchAdvancedBtn.classList.remove('lib-filter-btn--open'); searchAdvancedBtn.setAttribute('aria-expanded', 'false'); }
-  } else {
-    // Library view: let library.js decide (search mode hides FAB, library mode shows)
-  }
-  if (name !== 'library') {
-    document.getElementById('statsDialog')?.remove();
-  }
+let route = { name: 'home', query: {} };
+let firstRoute = true;
+const scroll = new Map();
+
+function screenFor(r) {
+  if (r.name === 'home' || r.name === 'log') return { view: homeView };
+  return loaded.get(r.name) ?? null;
 }
 
-async function handleRoute() {
-  const version = ++routeVersion;
-  const requestedHash = window.location.hash;
-  if (!await closeGameModal(true)) return;
-  if (version !== routeVersion) return;
-  const raw = requestedHash.slice(1);
-  if (raw === 'stats') {
-    updateBottomTabs('stats');
-    showView('stats');
-    await renderStatsView(statsView);
+function navItem(name, label, iconName) {
+  const current = tab(route.name) === name;
+  return html`<a class="nav-item" href=${`#${name}`} aria-current=${current ? 'page' : nothing} data-nav=${name}>
+    ${icon(iconName)}<span>${label}</span></a>`;
+}
+
+function statusLine() {
+  const pending = app.store?.pending ?? 0;
+  if (app.online && !pending) return nothing;
+  return html`<span class="timer-pill" style="background:var(--surface-2);color:var(--text-muted)" role="status">
+    ${icon(app.online ? 'refresh-cw' : 'wifi-off')}${app.online ? `Saving ${plural(pending, 'change')}` : pending ? `Offline · ${plural(pending, 'change')} waiting` : 'Offline'}</span>`;
+}
+
+function shell(content) {
+  const name = app.me?.display_name || app.me?.email || '';
+  return html`<a class="skip-link" href="#main" @click=${e => { e.preventDefault(); document.getElementById('main')?.focus(); }}>Skip to content</a>
+  <div class="app">
+    <header class="topbar">
+      ${searchBox(route)}
+      ${statusLine()}
+      ${timerPill()}
+      <a class="avatar" href="#you" aria-label="You" title=${name}>${app.me?.avatar_url ? html`<img src=${app.me.avatar_url} alt="">` : initials(name)}</a>
+    </header>
+    <main id="main" class="main" tabindex="-1">${content}</main>
+    <nav class="nav" aria-label="Main">
+      <a class="brand-side" href="#home"><img src="/favicon.svg" alt="" width="28" height="28">Cato</a>
+      ${navItem('home', 'Home', 'house')}
+      ${navItem('library', 'Library', 'layout-grid')}
+      <button type="button" class="nav-item nav-log" aria-label="Log a game" @click=${() => openLogSheet()}>
+        <span class="log-disc">${icon('plus')}</span><span class="nav-label-desktop">Log a game</span></button>
+      ${navItem('discover', 'Discover', 'compass')}
+      ${navItem('you', 'You', 'user')}
+    </nav>
+  </div>`;
+}
+
+function draw() {
+  const screen = screenFor(route);
+  let content;
+  if (!screen) content = html`<div class="page">${skeletonTiles(6)}</div>`;
+  else {
+    try {
+      content = screen.view(route);
+    } catch (err) {
+      console.error(err);
+      content = html`<div class="page">${empty({ iconName: 'triangle-alert', title: 'Something went wrong', body: String(err.message || err) })}</div>`;
+    }
+  }
+  const root = document.getElementById('app');
+  // The static first-paint skeleton in index.html isn't lit's to manage.
+  if (!root.dataset.rendered) {
+    root.replaceChildren();
+    root.dataset.rendered = '1';
+  }
+  render(shell(content), root);
+}
+app.redraw = () => {
+  if (redrawQueued) return;
+  redrawQueued = true;
+  queueMicrotask(() => { redrawQueued = false; draw(); });
+};
+let redrawQueued = false;
+
+async function onRoute(next) {
+  const main = document.getElementById('main');
+  if (main) scroll.set(route.name + JSON.stringify(route.query) + (route.id ?? ''), main.scrollTop);
+  closeMenu();
+  if (!anySheetOpen() || next.name !== route.name) closeAllSheets();
+  route = next;
+  document.title = `${TITLES[next.name] ?? 'Cato'} · Cato`;
+  if (next.name === 'log') {
+    openLogSheet(next.query.q || '');
+    go('#home', { replace: true });
     return;
   }
-  // #search (manifest shortcut): the Library with the search box focused.
-  // The URL settles on #library, the canonical Library route.
-  if (raw === 'search') {
-    history.replaceState(null, '', window.location.pathname + window.location.search + '#library');
-    lastLibraryHash = '#library';
-    updateBottomTabs('library');
-    showView('library');
-    try { searchInput.focus({ preventScroll: true }); } catch { searchInput.focus(); }
-    await resumeLibraryRoute(null, '');
-    return;
-  }
-  if (raw === 'settings') {
-    updateBottomTabs('settings');
-    showView('settings');
-    await renderSettingsView(settingsView);
-    return;
-  }
-  // Library: explicit #library, status tabs (#backlog etc.), or #game/#search
-  if (raw === 'library' || getHashSearch() !== null || getHashGameId() !== null || getHashStatus() !== '') {
-    if (!raw.startsWith('game/')) lastLibraryHash = '#' + raw;
-    updateBottomTabs('library');
-    showView('library');
-    const searchQuery = getHashSearch();
-    if (searchQuery) {
-      searchInput.value = searchQuery;
-      recordRecentSearch(searchQuery);
-      await resumeLibraryRoute(searchQuery);
+  if (next.focusSearch) requestAnimationFrame(() => focusSearch());
+  if (!screenFor(next) && SCREENS[next.name]) {
+    draw();
+    try {
+      const mod = await SCREENS[next.name]();
+      mod.init?.();
+      loaded.set(next.name, mod);
+    } catch (err) {
+      toast("Couldn't load that screen. Check your connection.", { kind: 'error' });
       return;
     }
-    const status = getHashStatus();
-    const gameId = getHashGameId();
-    await resumeLibraryRoute(null, status);
-    if (gameId && version === routeVersion) {
-      openGameModal(gameId, () => version === routeVersion);
-    }
-    return;
+    if (route !== next) return;
   }
-  if (raw === 'now' || raw === 'now-playing' || raw === 'playing-now' || raw === 'playing' || raw === 'library/playing') {
-    updateBottomTabs('now');
-    showView('playing');
-    await renderPlayingView(playingView);
-    return;
+  draw();
+  const key = next.name + JSON.stringify(next.query) + (next.id ?? '');
+  const m = document.getElementById('main');
+  if (m) {
+    m.scrollTop = scroll.get(key) ?? 0;
+    if (!firstRoute) m.focus({ preventScroll: true });
   }
-
-  // Default: Playing (stats | library | playing | settings, playing is home)
-  updateBottomTabs('now');
-  showView('playing');
-  await renderPlayingView(playingView);
+  firstRoute = false;
+  if (next.name === 'home') enterHome();
+  else screenFor(next)?.enter?.(next);
 }
 
-// Service worker registration (PWA) – keep cache fresh, show update toast.
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/service-worker.js').then(reg => {
-    window.__catoSW = reg;
-  }).catch(() => {});
+// Keyboard: 1–4 tabs, L log, / search, Cmd/Ctrl-K palette. Not while
+// typing, and not while a sheet or menu is open.
+function onKey(e) {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    import('./features/palette.js').then(m => m.openPalette());
+    return;
+  }
+  if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return;
+  if (e.target.closest?.('input, textarea, select, [contenteditable="true"]') || anySheetOpen() || document.querySelector('.menu')) return;
+  const keys = { 1: '#home', 2: '#library', 3: '#discover', 4: '#you' };
+  if (keys[e.key]) {
+    e.preventDefault();
+    go(keys[e.key]);
+  } else if (e.key === 'l' && route.name !== 'library') {
+    e.preventDefault();
+    openLogSheet();
+  } else if (e.key === 'L') {
+    e.preventDefault();
+    openLogSheet();
+  } else if (e.key === '/') {
+    e.preventDefault();
+    focusSearch();
+  }
+}
+
+function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.register('/service-worker.js').catch(() => {});
   let hadController = !!navigator.serviceWorker.controller;
-  let refreshing = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (refreshing) return;
     if (!hadController) { hadController = true; return; }
-    const container = document.getElementById('toast-container');
-    if (!container) return;
-    const toast = document.createElement('div');
-    toast.className = 'toast toast-info';
-    toast.style.cssText = 'display:flex;align-items:center;gap:8px;background:var(--accent);color:#fff;padding:10px 14px;border-radius:8px;';
-    const label = document.createElement('span');
-    label.textContent = 'Update available';
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.textContent = 'Refresh';
-    btn.style.cssText = 'margin-left:auto;background:rgba(255,255,255,0.2);border:none;color:#fff;padding:4px 10px;border-radius:6px;cursor:pointer;font-weight:600;';
-    btn.addEventListener('click', () => { refreshing = true; window.location.reload(); });
-    toast.append(label, btn);
-    container.appendChild(toast);
-    setTimeout(() => { if (!refreshing) toast.remove(); }, 30000);
+    toast('A new version of Cato is ready', { duration: 30000, action: { label: 'Reload', run: () => location.reload() } });
+  });
+  navigator.serviceWorker.addEventListener('message', e => {
+    if (e.data?.type === 'flush-outbox') app.store?.retryNow();
   });
 }
 
-const auth = await checkAuth();
-
-if (!auth.authenticated) {
-  if (auth.network_error) {
-    // The server was unreachable (offline, DNS, timeout). The session cookie
-    // may still be valid — bouncing to /login would look like a logout and
-    // invite a needless re-authentication. Offer a retry instead.
-    const main = document.getElementById('mainContainer');
-    if (main) {
-      const state = document.createElement('div');
-      state.className = 'empty-state';
-      const title = document.createElement('div');
-      title.className = 'empty-title';
-      title.textContent = "Can't reach the server";
-      const hint = document.createElement('p');
-      hint.textContent = 'Check your connection, then try again.';
-      const retry = document.createElement('button');
-      retry.type = 'button';
-      retry.className = 'btn btn-primary btn-inline';
-      retry.textContent = 'Retry';
-      retry.addEventListener('click', () => window.location.reload());
-      state.append(title, hint, retry);
-      main.replaceChildren(state);
-    }
-    throw new Error('Network error');
-  }
-  window.location.href = '/login' + window.location.hash;
-  throw new Error('Not authenticated');
+function offlineScreen(message) {
+  render(html`<div class="login-page"><div class="login-card">
+    <div class="brand"><img src="/favicon.svg" alt="">Cato</div>
+    <h1 style="font-size:var(--fs-22)">Can't reach Cato</h1>
+    <p class="pitch">${message}</p>
+    <button type="button" class="btn btn-primary" @click=${() => location.reload()}>Try again</button>
+  </div></div>`, document.getElementById('app'));
 }
 
-if (auth.display_name) {
-  userDisplay.textContent = auth.display_name;
-} else {
-  userDisplay.style.display = 'none';
-}
-document.getElementById('userMenu').style.display = '';
-loginLink.style.display = 'none';
-if (bottomTabs) bottomTabs.hidden = false;
-
-function setUserMenu(open) {
-  userMenuDropdown.hidden = !open;
-  userMenuBtn.setAttribute('aria-expanded', String(open));
-}
-
-userMenuBtn.addEventListener('click', () => setUserMenu(userMenuDropdown.hidden));
-
-document.addEventListener('click', (e) => {
-  if (e.target.closest('.skip-link')) {
-    e.preventDefault();
-    document.getElementById('mainContainer')?.focus({ preventScroll: true });
-    return;
-  }
-  if (!userMenuDropdown.hidden && !e.target.closest('.user-menu')) setUserMenu(false);
-  // Bottom tabs are anchors; prevent full-page navigation and use SPA hash.
-  // Playing is default (empty hash), others use explicit hashes.
-  const navEl = e.target.closest('#bottom-tabs .tab-item');
-  if (navEl) {
-    e.preventDefault();
-    const route = navEl.dataset.route;
-    if (activeView === 'library' && !window.location.hash.startsWith('#game/')) lastLibraryHash = window.location.hash || '#library';
-    window.location.hash = route === 'library' ? lastLibraryHash : '#' + route;
-  }
-});
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !userMenuDropdown.hidden) {
-    e.stopPropagation();
-    setUserMenu(false);
-  }
-});
-
-if (settingsLink) {
-  settingsLink.addEventListener('click', () => setUserMenu(false));
-}
-
-document.addEventListener('keydown', (e) => {
-  if (e.key !== '/' || e.ctrlKey || e.metaKey) return;
-  const tag = document.activeElement?.tagName;
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-  e.preventDefault();
-  if (libraryView.hidden) {
-    window.location.hash = '#library';
-    setTimeout(() => searchInput.focus(), 0);
-  } else {
-    searchInput.focus();
-  }
-});
-
-fabAdd?.addEventListener('click', () => {
-  // Keep focus in the same user gesture so iOS opens the keyboard.
-  const needNav = libraryView.hidden;
-  if (needNav) {
-    // Make Library visible synchronously so the input is focusable in this tick.
-    // Update hash without waiting for the async hashchange -> handleRoute cycle.
-    try { history.replaceState(null, '', window.location.pathname + window.location.search + '#library'); } catch {}
-    updateBottomTabs('library');
-    showView('library');
-    // Kick off data load in background (don't await — focus must stay synchronous).
-    handleRoute().catch(() => {});
-  }
-  // Focus synchronously (preventScroll keeps iOS from blurring on scroll).
-  try { searchInput.focus({ preventScroll: true }); } catch { searchInput.focus(); }
-  // Then bring the search field into view smoothly.
-  requestAnimationFrame(() => {
-    try { searchInput.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch { window.scrollTo({ top: 0, behavior: 'smooth' }); }
-  });
-});
-
-const statsStrip = document.getElementById('statsStrip');
-if (statsStrip) {
-  statsStrip.setAttribute('role', 'button');
-  statsStrip.setAttribute('tabindex', '0');
-  statsStrip.title = 'View detailed stats';
-  const goStats = () => {
-    if (statsStrip.dataset.context !== 'library') return;
-    window.location.hash = '#stats';
-  };
-  statsStrip.addEventListener('click', goStats);
-  statsStrip.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goStats(); }
-  });
-}
-
-logoutLink.addEventListener('click', async (e) => {
-  e.preventDefault();
+async function boot() {
+  registerServiceWorker();
+  const kv = await openKV();
+  let me;
   try {
-    await logout();
-  } catch {
-    // Server unreachable: still drop the in-memory CSRF token and leave the
-    // authenticated shell — the session ends at expiry at worst.
-    api.setCSRF(null);
-  }
-  // Search history is personal: don't leave it on shared machines.
-  clearRecentSearches();
-  window.location.href = '/login';
-});
-
-initSearch(searchInput, searchResults, (game) => {
-  if (game.status) {
-    openLibraryItemModal(game);
-  } else {
-    addGameToLibrary(game);
-  }
-  searchInput.value = '';
-  searchInput.blur();
-}, (query) => {
-  if (query.startsWith('$')) {
-    const tag = query.slice(1).trim();
-    if (tag) {
-      searchInput.value = '';
-      searchInput.blur();
-      recordRecentSearch(query);
-      filterByTag(tag);
+    me = await api.get('/api/v1/me');
+    setCSRF(me.csrf_token);
+    await kv.put('meta', 'me', { user: me.user, prefs: me.prefs });
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401) {
+      location.href = '/login' + location.hash;
       return;
     }
-  }
-  if (query.startsWith('@')) {
-    const platform = query.slice(1).trim();
-    if (platform) {
-      searchInput.value = '';
-      searchInput.blur();
-      recordRecentSearch(query);
-      filterByPlatform(platform);
+    // Offline: open from the copy on this device if there is one.
+    const cached = await kv.get('meta', 'me');
+    if (!cached) {
+      offlineScreen('Check your connection, then try again.');
       return;
     }
+    me = cached;
+    app.online = false;
   }
-  searchInput.blur();
-  window.location.hash = '#search/' + encodeURIComponent(query);
-}, async (tag) => {
-  try {
-    // library.list resolves to {items, total, hasMore}; the dropdown wants the rows.
-    return (await library.list('', 8, 0, tag)).items || [];
-  } catch {
-    return [];
-  }
-});
+  app.me = me.user;
+  app.prefs = me.prefs || {};
+  applyTheme(app.prefs.theme);
+  try { app.config = await api.get('/api/config'); } catch { app.config = {}; }
 
-initVoiceSearch(document.getElementById('voiceBtn'), searchInput);
-
-document.getElementById('searchClear')?.addEventListener('click', () => {
-  searchInput.value = '';
-  searchInput.focus();
-  searchInput.dispatchEvent(new Event('input'));
-});
-
-searchResults.addEventListener('tagfilter', (e) => {
-  recordRecentSearch('$' + e.detail.tag);
-  searchInput.value = '';
-  searchInput.blur();
-  filterByTag(e.detail.tag);
-});
-
-searchResults.addEventListener('platformfilter', (e) => {
-  recordRecentSearch('@' + e.detail.platform);
-  searchInput.value = '';
-  searchInput.blur();
-  filterByPlatform(e.detail.platform);
-});
-
-// Status tabs: accessible tablist handling
-statusTabs.querySelectorAll('.tab').forEach(tab => {
-  tab.addEventListener('click', async () => {
-    const status = tab.dataset.status || '';
-    // Update aria-selected for accessibility
-    statusTabs.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', String(t === tab)));
-    if (status) {
-      window.location.hash = '#' + status;
-    } else {
-      history.replaceState(null, '', window.location.pathname + window.location.search + '#library');
-      searchInput.value = '';
-      await handleRoute();
-    }
+  app.store = new Store({
+    api: { request },
+    kv,
+    lock: navigator.locks ? (name, fn) => navigator.locks.request(name, fn) : null,
   });
-});
+  await app.store.init(app.me.id);
+  app.store.addEventListener('change', () => app.redraw());
+  app.store.addEventListener('rejected', e => toast(e.detail.error.message || 'That change was rejected', { kind: 'error' }));
+  app.store.addEventListener('offline', () => { app.online = navigator.onLine; app.redraw(); });
+  app.store.addEventListener('sent', () => { if (!app.online) { app.online = true; app.redraw(); } });
 
-window.addEventListener('hashchange', handleRoute);
-await handleRoute();
+  addEventListener('cato:unauthorized', () => { location.href = '/login'; });
+  addEventListener('online', () => { app.online = true; app.store.retryNow(); app.redraw(); });
+  addEventListener('offline', () => { app.online = false; app.redraw(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    app.store.sync().catch(() => {});
+    refreshTimer();
+  });
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyTheme(app.prefs.theme));
+  document.addEventListener('keydown', onKey);
+  if (!app.config.dev) delete SCREENS['dev/ui'];
 
-// Keyboard shortcut for bottom tabs: 1=Library, 2=Playing, 3=Stats, 4=Settings
-document.addEventListener('keydown', (e) => {
-  if (e.altKey || e.ctrlKey || e.metaKey) return;
-  const tag = document.activeElement?.tagName;
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-  if (e.key === '3') { e.preventDefault(); window.location.hash = '#stats'; }
-  if (e.key === '1') { e.preventDefault(); window.location.hash = '#library'; }
-  if (e.key === '2') {
-    e.preventDefault();
-    window.location.hash = '#now';
+  startRouter(onRoute);
+  if (app.online) {
+    app.store.sync().then(() => app.store.flush()).catch(() => {});
+    refreshTimer();
+  } else {
+    app.store.synced = true;
+    app.redraw();
   }
-  if (e.key === '4') { e.preventDefault(); window.location.hash = '#settings'; }
-});
+}
+
+boot();

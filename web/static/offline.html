@@ -1,48 +1,24 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <meta name="theme-color" content="#1a1a2e">
-    <title>Cato — Offline</title>
-    <style>
-      :root {
-        --bg: #1a1a2e;
-        --surface: #16213e;
-        --text: #eee;
-        --accent: #e94560;
-      }
-      * { margin: 0; padding: 0; box-sizing: border-box; }
-      body {
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        background: var(--bg);
-        color: var(--text);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 100dvh;
-        padding: 24px;
-      }
-      .card {
-        text-align: center;
-        max-width: 320px;
-        background: var(--surface);
-        border-radius: 12px;
-        padding: 32px 24px;
-      }
-      .icon { font-size: 64px; margin-bottom: 16px; }
-      h1 { font-size: 24px; margin-bottom: 8px; color: var(--text); }
-      p { color: #999; font-size: 16px; line-height: 1.5; }
-      a { color: var(--accent); text-decoration: none; }
-      a:hover { text-decoration: underline; }
-    </style>
-  </head>
-  <body>
-    <div class="card">
-      <div class="icon">🎮</div>
-      <h1>You're offline</h1>
-      <p>Cato needs a connection to load your library and save changes. Check your connection and try again.</p>
-      <p style="margin-top:16px"><a href="/">Retry</a></p>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Offline · Cato</title>
+  <script src="/js/theme-init.js"></script>
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/css/base.css">
+  <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/views.css">
+</head>
+<body>
+  <main class="login-page">
+    <div class="login-card" style="text-align:center">
+      <div class="brand" style="justify-content:center"><img src="/favicon.svg" alt="" width="40" height="40">Cato</div>
+      <h1 style="font-size:var(--fs-22)">You're offline</h1>
+      <p class="pitch">This page needs a connection. The Cato app itself opens offline once it has been loaded on this device.</p>
+      <a class="btn btn-primary" href="/">Retry</a>
     </div>
-  </body>
+  </main>
+</body>
 </html>

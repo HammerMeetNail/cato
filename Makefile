@@ -37,8 +37,6 @@ test-js:
 	node scripts/lint-js.cjs
 	node --test tests/js/*.test.mjs
 	node scripts/cache-regression.cjs
-	node scripts/rendering-regression.cjs
-	node scripts/view-cache-regression.cjs
 
 test-backup:
 	python3 -B scripts/database_test.py

@@ -2,16 +2,13 @@
 // Guardrails for the frontend (docs/cato_smooth.md §4.2): HTML must be
 // rendered through lit-html templates (which escape values), never by
 // assigning HTML strings. Fails on HTML-string sinks and eval-like calls
-// anywhere under web/static/js except the vendored libraries and the
-// legacy screens listed below (which the new shell replaces).
+// anywhere under web/static/js except the vendored libraries.
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.join(__dirname, '..', 'web', 'static', 'js');
-const LEGACY = new Set(process.env.CATO_LINT_LEGACY === '0' ? [] : [
-  'api.js', 'app.js', 'library.js', 'search.js', 'playing.js', 'stats.js', 'settings.js', 'dates.js',
-]);
+const LEGACY = new Set();
 const RULES = [
   [/\.innerHTML\b/, 'innerHTML'],
   [/\.outerHTML\b/, 'outerHTML'],
@@ -47,4 +44,4 @@ if (problems.length) {
   console.error(problems.join('\n'));
   process.exit(1);
 }
-console.log('PASS: no HTML-string sinks outside vendor/ and the legacy screens');
+console.log('PASS: no HTML-string sinks outside vendor/');

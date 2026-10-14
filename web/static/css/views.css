@@ -5,10 +5,17 @@
 /* ---- Home ------------------------------------------------------------------- */
 
 .greeting {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--sp-3);
+  display: grid;
+  gap: var(--sp-1);
+}
+
+@media (min-width: 600px) {
+  .greeting {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--sp-3);
+  }
 }
 
 .greeting p {
@@ -68,6 +75,10 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--sp-2);
+}
+
+.now-card .actions .time-chips {
+  display: contents;
 }
 
 @container (min-width: 460px) {
@@ -180,6 +191,21 @@
   min-height: 40px;
   padding: 0 var(--sp-2);
   font-size: var(--fs-14);
+}
+
+.lib-controls .segmented button {
+  min-height: 34px;
+  padding: 0 var(--sp-2);
+}
+
+@media (max-width: 599px) {
+  .lib-controls .btn .label {
+    display: none;
+  }
+
+  .lib-controls .btn {
+    padding: 0 var(--sp-2);
+  }
 }
 
 .lib-count {
@@ -386,6 +412,17 @@
   overflow-wrap: anywhere;
 }
 
+.game-hero .chips .chip {
+  min-height: 28px;
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-12);
+  background: color-mix(in srgb, var(--surface-1) 80%, transparent);
+}
+
+.game-hero .chips .chip.is-on {
+  background: var(--accent);
+}
+
 .facts {
   display: flex;
   flex-wrap: wrap;
@@ -571,6 +608,14 @@
   display: flex;
   align-items: center;
   gap: var(--sp-4);
+}
+
+.you-head > div {
+  min-width: 0;
+}
+
+.you-head h1 {
+  overflow-wrap: anywhere;
 }
 
 .stat-tiles {

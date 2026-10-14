@@ -1,70 +1,72 @@
-// login.js — login/signup page controller (was an inline module in
-// login.html; externalized so the CSP can use script-src 'self').
-import { checkAuth, login, signup, publicConfig } from './api.js';
+// login.js — sign in / create an account. Only offers what this server
+// supports: Google when configured, sign-up while CATO_SIGNUP allows it (or
+// with an invite link).
+import { api, setCSRF } from './core/api.js';
 
-const form = document.getElementById('loginForm');
-const errorMsg = document.getElementById('errorMsg');
-const submitBtn = document.getElementById('submitBtn');
-const toggleLink = document.getElementById('toggleLink');
-const toggleText = document.getElementById('toggleText');
-const googleBtn = document.getElementById('googleBtn');
-
+const $ = id => document.getElementById(id);
+const form = $('loginForm');
+const errorMsg = $('errorMsg');
+const submitBtn = $('submitBtn');
+const password = $('password');
+const params = new URLSearchParams(location.search);
+const invite = params.get('invite') || '';
 let isSignup = false;
-
-// Redirect if already logged in
-const auth = await checkAuth();
-if (auth.authenticated) {
-  window.location.href = '/' + window.location.hash;
-  throw new Error('Already authenticated');
-}
-
-// Only offer what this server supports: Google sign-in when configured, and
-// the sign-up toggle while CATO_SIGNUP allows another account.
-const config = await publicConfig();
-googleBtn.hidden = !config.google_enabled;
-document.getElementById('googleDivider').hidden = !config.google_enabled;
-document.getElementById('signupFooter').hidden = config.signup_allowed === false;
-
-toggleLink.addEventListener('click', () => {
-  isSignup = !isSignup;
-  submitBtn.textContent = isSignup ? 'Sign Up' : 'Login';
-  toggleText.textContent = isSignup ? 'Already have an account?' : "Don't have an account?";
-  toggleLink.textContent = isSignup ? 'Login' : 'Sign up';
-  hideError();
-});
-
-form.addEventListener('submit', async (e) => {
-  e.preventDefault();
-  hideError();
-
-  const email = document.getElementById('email').value;
-  const password = document.getElementById('password').value;
-
-  try {
-    if (isSignup) {
-      await signup(email, password);
-    } else {
-      await login(email, password);
-    }
-    window.location.href = '/' + window.location.hash;
-  } catch (err) {
-    showError(err.message || 'Authentication failed');
-  }
-});
-
-googleBtn.addEventListener('click', () => {
-  window.location.href = '/api/auth/google/start';
-});
 
 function showError(msg) {
   errorMsg.textContent = msg;
-  errorMsg.classList.add('show');
 }
 
-function hideError() {
-  errorMsg.textContent = '';
-  errorMsg.classList.remove('show');
+function setMode(signup) {
+  isSignup = signup;
+  $('formTitle').textContent = signup ? 'Create your account' : 'Sign in';
+  submitBtn.textContent = signup ? 'Create account' : 'Sign in';
+  $('toggleText').textContent = signup ? 'Already have an account?' : 'New here?';
+  $('toggleLink').textContent = signup ? 'Sign in' : 'Create an account';
+  // Password managers offer to generate a password only for new-password.
+  password.autocomplete = signup ? 'new-password' : 'current-password';
+  showError('');
 }
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/service-worker.js').catch(() => {});
+
+async function main() {
+  try {
+    const me = await api.get('/api/me');
+    if (me.authenticated) {
+      location.href = '/' + location.hash;
+      return;
+    }
+  } catch { /* offline or server down: still show the form */ }
+
+  let config = { google_enabled: false, signup_allowed: false };
+  try { config = await api.get('/api/config' + (invite ? `?invite=${encodeURIComponent(invite)}` : '')); } catch { /* defaults */ }
+  $('googleBtn').hidden = !config.google_enabled;
+  $('googleDivider').hidden = !config.google_enabled;
+  if (invite && config.invite_valid) {
+    $('googleBtn').href = `/api/auth/google/start?invite=${encodeURIComponent(invite)}`;
+    $('pitch').textContent = config.invited_by ? `${config.invited_by} invited you to Cato.` : "You've been invited to Cato.";
+  }
+  const canSignup = config.signup_allowed || (invite && config.invite_valid);
+  $('signupFooter').hidden = !canSignup;
+  if (invite && config.invite_valid) setMode(true);
+  if (invite && !config.invite_valid) showError('This invite link has expired or was already used. Ask for a new one.');
+  if (params.get('error')) showError(params.get('error'));
+
+  $('toggleLink').addEventListener('click', () => setMode(!isSignup));
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    showError('');
+    submitBtn.disabled = true;
+    const body = { email: $('email').value, password: password.value };
+    if (isSignup && invite) body.invite = invite;
+    try {
+      const res = await api.post(isSignup ? '/api/auth/signup' : '/api/auth/login', body);
+      setCSRF(res.csrf_token);
+      location.href = '/' + location.hash;
+    } catch (err) {
+      showError(err.status === 0 ? "Can't reach Cato. Check your connection." : err.message || 'Sign-in failed');
+      submitBtn.disabled = false;
+    }
+  });
 }
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/service-worker.js').catch(() => {});
+main();
