@@ -54,7 +54,9 @@ var ValidSorts = map[string]bool{
 type searchOptions struct {
 	limit           int
 	offset          int
-	applyFloor      bool // hide weak tier-3 substring matches unless popular
+	genre           int64 // IGDB genre ID; 0 = any
+	maxTTB          int64 // time to beat at most this many minutes; 0 = any
+	applyFloor      bool  // hide weak tier-3 substring matches unless popular
 	sort            string
 	yearFrom        int64 // unix seconds, inclusive; 0 = unset
 	yearTo          int64 // unix seconds, inclusive; 0 = unset
@@ -95,6 +97,29 @@ func (s *Store) SearchLocalPaged(ctx context.Context, query string, limit, offse
 		applyFloor: applyFloor,
 	})
 	return results, err
+}
+
+// Facets narrow a full search (Discover's results page).
+type Facets struct {
+	Sort            string
+	YearFrom        int64 // unix seconds
+	YearTo          int64
+	MinRating       int64
+	Platform        string
+	Genre           int64
+	MaxTTB          int64 // minutes
+	LibraryUserID   string
+	InLibrary       *bool
+	IncludeEditions bool
+}
+
+// SearchFaceted runs a paged, floored search with facets and a total.
+func (s *Store) SearchFaceted(ctx context.Context, query string, limit, offset int, f Facets) ([]GameResult, int64, error) {
+	return s.SearchGamesPaged(ctx, query, searchOptions{
+		limit: limit, offset: offset, sort: f.Sort, yearFrom: f.YearFrom, yearTo: f.YearTo, minRating: f.MinRating,
+		platform: f.Platform, genre: f.Genre, maxTTB: f.MaxTTB, libraryUserID: f.LibraryUserID, inLibrary: f.InLibrary,
+		includeEditions: f.IncludeEditions || ContainsEditionKeyword(query),
+	})
 }
 
 // SearchGamesPaged is the full-results-page entry point: paginated, floored,
@@ -206,6 +231,14 @@ func appendGameFilterWhere(b *strings.Builder, args *[]interface{}, o searchOpti
 	if o.minRating > 0 {
 		conds = append(conds, `g.aggregated_rating >= ?`, `g.aggregated_rating_count > 0`)
 		*args = append(*args, o.minRating)
+	}
+	if o.genre > 0 {
+		conds = append(conds, `EXISTS (SELECT 1 FROM json_each(g.genres_json) gj WHERE gj.value = ?)`)
+		*args = append(*args, o.genre)
+	}
+	if o.maxTTB > 0 {
+		conds = append(conds, `g.ttb_normally > 0 AND g.ttb_normally <= ?`)
+		*args = append(*args, o.maxTTB)
 	}
 	if p := strings.TrimSpace(o.platform); p != "" {
 		frag, fargs := PlatformFilter("g", p)
@@ -497,7 +530,7 @@ func (s *Store) execSearch(ctx context.Context, engine, match, query, prefix, wo
 	buildSearchCandidates(&candidates, &candidateArgs, engine, match, query, prefix, wordPrefix, like, o)
 
 	var sql strings.Builder
-	sql.WriteString(`SELECT g.id, g.name, g.slug, g.cover_url, g.local_cover_path, g.first_release_date, g.platforms_json`)
+	sql.WriteString(`SELECT g.id, g.name, g.slug, g.cover_url, g.local_cover_path, g.first_release_date, g.platforms_json, g.ttb_normally`)
 	if o.withTotal {
 		sql.WriteString(", COUNT(*) OVER() AS total_count")
 	}
@@ -541,7 +574,7 @@ func (s *Store) querySearch(ctx context.Context, sql string, args []interface{},
 	for rows.Next() {
 		var g GameResult
 		var platformsJSON string
-		scanArgs := []interface{}{&g.ID, &g.Name, &g.Slug, &g.CoverURL, &g.LocalCoverPath, &g.FirstReleaseDate, &platformsJSON}
+		scanArgs := []interface{}{&g.ID, &g.Name, &g.Slug, &g.CoverURL, &g.LocalCoverPath, &g.FirstReleaseDate, &platformsJSON, &g.TTBMinutes}
 		var rowTotal int64
 		if withTotal {
 			scanArgs = append(scanArgs, &rowTotal)

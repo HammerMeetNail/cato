@@ -25,6 +25,7 @@ import (
 	"cato/internal/catalog"
 	"cato/internal/config"
 	"cato/internal/db"
+	"cato/internal/discover"
 	"cato/internal/library"
 )
 
@@ -38,6 +39,8 @@ type Deps struct {
 	Games   *catalog.Store
 	// SearchLimiter bounds catalog search per client IP.
 	SearchLimiter *auth.RateLimiter
+	Discover      *discover.Service
+	CoverDir      string
 }
 
 type API struct {
@@ -94,6 +97,10 @@ func Register(mux *http.ServeMux, d Deps) *API {
 	route("DELETE /api/v1/devices/{id}", a.revokeDevice)
 	route("POST /api/v1/devices/revoke-others", a.revokeOtherDevices)
 	route("GET /api/v1/discover", a.discover)
+	route("GET /api/v1/up-next", a.upNext)
+	route("GET /api/v1/genres", a.genres)
+	route("POST /api/v1/games", a.createCustomGame)
+	route("PUT /api/v1/games/{id}/cover", a.uploadCustomCover)
 
 	route("GET /api/v1/games/{id}", a.getGame)
 	route("GET /api/v1/platforms", a.platforms)

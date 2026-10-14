@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"net/url"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -286,7 +287,27 @@ func (s *Store) GameExtras(ctx context.Context, id int64) (*Extras, error) {
 			x.Links = linksOf(d.Websites)
 		}
 	}
-	return x, nil
+	// Outbound links found through the Wikidata crosswalk.
+	rows, err = s.db.QueryContext(ctx, `SELECT source, uid FROM game_external_ids WHERE game_id = ? AND source IN (?, ?)`,
+		id, WebsiteHLTB, WebsitePCGamingWiki)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var src int64
+		var uid string
+		if rows.Scan(&src, &uid) != nil || uid == "" {
+			continue
+		}
+		switch src {
+		case WebsiteHLTB:
+			x.Links = append(x.Links, Link{Label: "HowLongToBeat", URL: "https://howlongtobeat.com/game/" + url.PathEscape(uid), Kind: "hltb"})
+		case WebsitePCGamingWiki:
+			x.Links = append(x.Links, Link{Label: "PCGamingWiki", URL: "https://www.pcgamingwiki.com/wiki/" + url.PathEscape(strings.ReplaceAll(uid, " ", "_")), Kind: "pcgamingwiki"})
+		}
+	}
+	return x, rows.Err()
 }
 
 func nonNil(v []string) []string {

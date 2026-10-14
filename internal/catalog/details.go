@@ -148,10 +148,14 @@ func (s *Store) SaveDetails(ctx context.Context, d Details, now time.Time) error
 		idsJSON(d.Genres), idsJSON(d.Themes), idsJSON(d.Modes), idsJSON(d.Perspectives), now.Unix(), d.GameID); err != nil {
 		return err
 	}
-	for _, table := range []string{"game_relations", "game_release_dates", "game_companies", "game_series", "game_external_ids"} {
+	for _, table := range []string{"game_relations", "game_release_dates", "game_companies", "game_series"} {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE game_id = ?`, d.GameID); err != nil {
 			return err
 		}
+	}
+	// External IDs from other sources (Wikidata, ≥ 1000) aren't IGDB's to replace.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM game_external_ids WHERE game_id = ? AND source < 1000`, d.GameID); err != nil {
+		return err
 	}
 	for kind, ids := range d.Related {
 		for _, rid := range ids {

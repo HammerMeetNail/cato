@@ -258,6 +258,7 @@ func (w *Worker) downloadAndSave(gameID int64, sourceURL string, attempts int) {
 	destPath := CoverPath(w.coverDir, gameID)
 	if _, err := os.Stat(destPath); err == nil {
 		// File already on disk — just mark the job complete.
+		w.fetchHiDPI(gameID, sourceURL)
 		if err := w.completeJob(w.ctx, gameID); err != nil && w.ctx.Err() == nil {
 			w.recordFailure(gameID, attempts+1, err)
 		}
@@ -280,9 +281,39 @@ func (w *Worker) downloadAndSave(gameID int64, sourceURL string, attempts int) {
 		w.recordFailure(gameID, attempts+1, fmt.Errorf("save: %w", err))
 		return
 	}
+	w.fetchHiDPI(gameID, sourceURL)
 
 	if err := w.completeJob(w.ctx, gameID); err != nil && w.ctx.Err() == nil {
 		w.recordFailure(gameID, attempts+1, err)
+	}
+}
+
+// hiDPIURL is the t_cover_big_2x variant of an IGDB t_cover_big URL ("").
+func hiDPIURL(sourceURL string) string {
+	if !strings.Contains(sourceURL, "/t_cover_big/") {
+		return ""
+	}
+	return strings.Replace(sourceURL, "/t_cover_big/", "/t_cover_big_2x/", 1)
+}
+
+// HiDPIPath is where a cover's 2x variant is stored.
+func HiDPIPath(coverDir string, gameID int64) string {
+	return filepath.Join(coverDir, fmt.Sprintf("%d@2x.jpg", gameID))
+}
+
+// fetchHiDPI caches the 2x cover for sharp library covers on high-density
+// screens (best effort: the 1x cover is what the job is about).
+func (w *Worker) fetchHiDPI(gameID int64, sourceURL string) {
+	url := hiDPIURL(sourceURL)
+	if url == "" {
+		return
+	}
+	dest := HiDPIPath(w.coverDir, gameID)
+	if _, err := os.Stat(dest); err == nil {
+		return
+	}
+	if data, err := fetchCoverContext(w.ctx, w.client, url); err == nil {
+		_ = w.saveAtomically(dest, data)
 	}
 }
 
@@ -453,6 +484,17 @@ func ServeCover(coverDir string) http.HandlerFunc {
 				break
 			}
 		}
+		// "{id}@2x.jpg" is the high-density variant; without one on disk the
+		// 1x cover answers.
+		var diskPath string
+		if base, ok := strings.CutSuffix(idStr, "@2x"); ok {
+			idStr = base
+			if id, err := strconv.ParseInt(base, 10, 64); err == nil {
+				if _, err := os.Stat(HiDPIPath(coverDir, id)); err == nil {
+					diskPath = HiDPIPath(coverDir, id)
+				}
+			}
+		}
 		gameID, err := strconv.ParseInt(idStr, 10, 64)
 		if err != nil {
 			servePlaceholder(w, 300)
@@ -460,8 +502,10 @@ func ServeCover(coverDir string) http.HandlerFunc {
 		}
 
 		// Look on disk for .jpg then .webp (prefer .jpg, support legacy .webp).
-		var diskPath string
 		for _, ext := range []string{".jpg", ".webp"} {
+			if diskPath != "" {
+				break
+			}
 			candidate := filepath.Join(coverDir, fmt.Sprintf("%d%s", gameID, ext))
 			if _, err := os.Stat(candidate); err == nil {
 				diskPath = candidate

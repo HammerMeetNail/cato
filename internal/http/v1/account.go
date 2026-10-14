@@ -2,6 +2,8 @@ package v1
 
 import (
 	"errors"
+
+	"cato/internal/discover"
 	"net/http"
 
 	"cato/internal/auth"
@@ -48,34 +50,32 @@ func (a *API) revokeOtherDevices(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"revoked": n})
 }
 
-// discoverQuery: popular catalog games with art that aren't in your library.
-const discoverPopular = `SELECT g.id, g.name, g.cover_url, g.local_cover_path, g.first_release_date
-	FROM games g
-	WHERE g.local_cover_path != ''
-	  AND NOT EXISTS (SELECT 1 FROM library_items li WHERE li.user_id = ? AND li.game_id = g.id)
-	ORDER BY g.popularity_score DESC, g.rating_count DESC, g.name
-	LIMIT ?`
-
 func (a *API) discover(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.DB.QueryContext(r.Context(), discoverPopular, user(r), min(max(queryInt(r, "limit", 18), 1), 60))
+	shelves, err := a.Discover.Shelves(r.Context(), user(r))
 	if err != nil {
 		fail(w, r, err)
 		return
 	}
-	defer rows.Close()
-	popular := []CatalogResult{}
-	for rows.Next() {
-		var c CatalogResult
-		var remote, local string
-		if err := rows.Scan(&c.ID, &c.Name, &remote, &local, &c.ReleaseDate); err != nil {
-			fail(w, r, err)
-			return
-		}
-		c.Cover = coverOf(local, remote)
-		c.Platforms = []string{}
-		popular = append(popular, c)
+	if shelves == nil {
+		shelves = []discover.Shelf{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"shelves": []map[string]any{
-		{"id": "popular", "title": "Popular", "items": popular},
-	}})
+	writeJSON(w, http.StatusOK, map[string]any{"shelves": shelves, "attribution": "Game data from IGDB"})
+}
+
+// upNext ranks the backlog: ?fit=tonight|weekend|long, ?n= (≤ 10; "Surprise
+// me" picks among the top 10).
+func (a *API) upNext(w http.ResponseWriter, r *http.Request) {
+	fit := discover.Fit(r.URL.Query().Get("fit"))
+	switch fit {
+	case "", "tonight", "weekend", "long":
+	default:
+		writeError(w, http.StatusBadRequest, "invalid_fit", "fit is tonight, weekend or long", map[string]string{"fit": "invalid"})
+		return
+	}
+	picks, err := a.Discover.UpNext(r.Context(), user(r), min(max(queryInt(r, "n", 3), 1), 10), fit)
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": picks})
 }

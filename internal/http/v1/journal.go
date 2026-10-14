@@ -194,7 +194,12 @@ func (a *API) home(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := map[string]any{
 		"playing": playing.Items, "up_next": upNext, "recent": recent, "timer": timer, "counts": counts,
-		"onboarding": counts["all"] == 0 && !prefs.OnboardingDone,
+		"onboarding": counts["all"] == 0 && !prefs.OnboardingDone, "coming_soon": []any{},
+	}
+	if a.Discover != nil {
+		if soon, err := a.Discover.ComingSoonForYou(ctx, uid, 6); err == nil && len(soon) > 0 {
+			resp["coming_soon"] = soon
+		}
 	}
 	if prefs.Streaks {
 		cur, longest, err := a.Library.Streaks(ctx, uid, r.URL.Query().Get("today"))

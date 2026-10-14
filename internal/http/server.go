@@ -21,6 +21,7 @@ import (
 	"cato/internal/config"
 	"cato/internal/covers"
 	"cato/internal/db"
+	"cato/internal/discover"
 	v1 "cato/internal/http/v1"
 	"cato/internal/jobs"
 	"cato/internal/library"
@@ -94,6 +95,10 @@ func (s *Server) routes() {
 
 	s.catalog = newCatalogWiring(s.db, s.cfg)
 	s.library = library.NewStore(s.db, s.catalog.store)
+	disc := discover.New(s.db, s.library)
+	s.library.Scorer = func(ctx context.Context, userID string, n int) ([]library.UpNextPick, error) {
+		return disc.UpNext(ctx, userID, n, "")
+	}
 
 	v1.Register(s.mux, v1.Deps{
 		DB:            s.db,
@@ -103,6 +108,8 @@ func (s *Server) routes() {
 		Catalog:       s.catalog.service,
 		Games:         s.catalog.store,
 		SearchLimiter: s.catalog.searchLimiter,
+		Discover:      disc,
+		CoverDir:      s.cfg.CoverDir,
 	})
 
 	s.mux.HandleFunc("/covers/", covers.ServeCover(s.cfg.CoverDir))

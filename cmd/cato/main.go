@@ -24,6 +24,7 @@ import (
 	"cato/internal/http"
 	"cato/internal/importer"
 	"cato/internal/integrations/igdb"
+	"cato/internal/integrations/wikidata"
 	"cato/internal/jobs"
 	"cato/internal/library"
 )
@@ -215,6 +216,10 @@ func serve(ctx context.Context, cfg *config.Config, stderr io.Writer) error {
 	}
 	runner.Add(jobs.Job{Name: "maintenance", Interval: 24 * time.Hour, Jitter: 30 * time.Minute,
 		Run: func(ctx context.Context) error { return maintenance(ctx, database, logger) }})
+	if cfg.WikidataLinks {
+		runner.Add(jobs.Job{Name: "wikidata.crosswalk", Interval: 7 * 24 * time.Hour, Jitter: 6 * time.Hour, FirstRun: 20 * time.Minute,
+			Run: wikidata.Crosswalk(database, wikidata.New(), 20)})
+	}
 	srv.SetJobRunner(runner)
 	runner.Start(context.Background())
 

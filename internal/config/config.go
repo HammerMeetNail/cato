@@ -68,6 +68,10 @@ type Config struct {
 	MetricsToken string
 	// Dev enables developer pages such as the component gallery (#dev/ui).
 	Dev bool
+	// WikidataLinks enables the weekly Wikidata crosswalk that adds
+	// HowLongToBeat and PCGamingWiki links (it sends library games' IGDB
+	// slugs to query.wikidata.org, so it is opt-in: CATO_WIKIDATA_LINKS=1).
+	WikidataLinks bool
 
 	// trustedProxiesErr is reported by Validate so a typo in
 	// CATO_TRUSTED_PROXIES fails startup instead of silently trusting nothing.
@@ -103,6 +107,7 @@ func Load() *Config {
 		LogLevel:          strings.ToLower(getEnv("CATO_LOG_LEVEL", "info")),
 		MetricsToken:      os.Getenv("CATO_METRICS_TOKEN"),
 		Dev:               boolFromEnv("CATO_DEV"),
+		WikidataLinks:     boolFromEnv("CATO_WIKIDATA_LINKS"),
 	}
 }
 
@@ -129,7 +134,7 @@ func (c *Config) Summary() []any {
 		"http_redirect", c.HTTPRedirectAddr, "trusted_proxies", len(c.TrustedProxies),
 		"db", c.DBPath, "covers", c.CoverDir, "static", c.StaticDir, "backups", c.BackupDir,
 		"signup", c.SignupMode(), "igdb", set(c.IGDBClientID), "google", set(c.GoogleKey),
-		"metrics_token", set(c.MetricsToken), "dev", c.Dev,
+		"metrics_token", set(c.MetricsToken), "dev", c.Dev, "wikidata_links", c.WikidataLinks,
 	}
 }
 

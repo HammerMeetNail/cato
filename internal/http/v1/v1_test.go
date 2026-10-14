@@ -16,6 +16,7 @@ import (
 	"cato/internal/catalog"
 	"cato/internal/config"
 	"cato/internal/db"
+	"cato/internal/discover"
 	"cato/internal/library"
 )
 
@@ -63,6 +64,7 @@ func newFixture(t *testing.T) *fixture {
 	api := Register(mux, Deps{
 		DB: database, Cfg: &config.Config{}, Cookies: auth.Cookies{}, Library: lib,
 		Catalog: catalog.NewService(games, noIGDB{}, database), Games: games,
+		Discover: discover.New(database, lib), CoverDir: t.TempDir(),
 	})
 	return &fixture{db: database, mux: mux, api: api}
 }
@@ -457,9 +459,59 @@ func TestDiscoverSkipsCoverlessAndLimits(t *testing.T) {
 	c := f.user(t, "u1")
 	f.db.Exec(`UPDATE games SET local_cover_path = '/covers/1.jpg', popularity_score = 5 WHERE id = 1`)
 	f.db.Exec(`UPDATE games SET local_cover_path = '/covers/3.jpg', popularity_score = 9 WHERE id = 3`)
-	shelves := c.json(http.MethodGet, "/api/v1/discover?limit=1", nil, http.StatusOK)["shelves"].([]any)
+	shelves := c.json(http.MethodGet, "/api/v1/discover", nil, http.StatusOK)["shelves"].([]any)
 	items := shelves[0].(map[string]any)["items"].([]any)
-	if len(items) != 1 || items[0].(map[string]any)["id"].(float64) != 3 {
-		t.Errorf("popular %v: want the most popular game with a cover", items)
+	if len(items) != 2 || items[0].(map[string]any)["id"].(float64) != 3 {
+		t.Errorf("popular %v: games with covers, most popular first", items)
+	}
+}
+
+func TestGamePageExtrasCustomGamesAndEditions(t *testing.T) {
+	f := newFixture(t)
+	c := f.user(t, "u1")
+	f.db.Exec(`UPDATE games SET ttb_normally = 600 WHERE id = 1`)
+	f.db.Exec(`INSERT INTO games (id, name, slug, normalized_name, version_parent) VALUES (4, 'Hades Deluxe', 'hd', 'hades deluxe', 1)`)
+	page := c.json(http.MethodGet, "/api/v1/games/1", nil, http.StatusOK)
+	x := page["extras"].(map[string]any)
+	if x["ttb"].(map[string]any)["normally"].(float64) != 600 || len(x["editions"].([]any)) != 1 {
+		t.Errorf("extras %v", x)
+	}
+	if page["estimate"].(map[string]any)["minutes"].(float64) != 600 {
+		t.Errorf("estimate at a neutral pace %v", page["estimate"])
+	}
+
+	// Adding an edition puts the base game in the library and records the
+	// edition on the playthrough.
+	res := c.json(http.MethodPut, "/api/v1/library/4", map[string]any{"status": "playing"}, http.StatusCreated)
+	if res["item"].(map[string]any)["game_id"].(float64) != 1 {
+		t.Fatalf("edition not rolled up: %v", res["item"])
+	}
+	var edition int64
+	f.db.QueryRow(`SELECT edition_game_id FROM playthroughs WHERE game_id = 1`).Scan(&edition)
+	if edition != 4 {
+		t.Errorf("edition on playthrough = %d", edition)
+	}
+
+	// Custom entries.
+	png := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+	made := c.json(http.MethodPost, "/api/v1/games", map[string]any{"name": "Local Demo", "platform": "Nintendo Switch", "year": 2025, "cover": png}, http.StatusCreated)
+	g := made["game"].(map[string]any)
+	id := int64(g["id"].(float64))
+	if id >= 0 || !strings.HasPrefix(g["cover"].(string), "/covers/"+strconv.FormatInt(id, 10)+".jpg?u=") {
+		t.Fatalf("custom game %v", g)
+	}
+	c.json(http.MethodPut, "/api/v1/library/"+strconv.FormatInt(id, 10), map[string]any{"status": "backlog"}, http.StatusCreated)
+	other := f.user(t, "u2")
+	other.json(http.MethodPut, "/api/v1/games/"+strconv.FormatInt(id, 10)+"/cover", map[string]any{"cover": png}, http.StatusForbidden)
+	c.json(http.MethodPut, "/api/v1/games/"+strconv.FormatInt(id, 10)+"/cover", map[string]any{"cover": png}, http.StatusOK)
+	c.json(http.MethodPost, "/api/v1/games", map[string]any{"name": ""}, http.StatusBadRequest)
+	c.json(http.MethodPost, "/api/v1/games", map[string]any{"name": "X", "cover": "data:text/html;base64,PHNjcmlwdD4="}, http.StatusBadRequest)
+
+	// Up Next with a fit, and its validation.
+	c.json(http.MethodGet, "/api/v1/up-next?fit=tonight", nil, http.StatusOK)
+	c.json(http.MethodGet, "/api/v1/up-next?fit=forever", nil, http.StatusBadRequest)
+	home := c.json(http.MethodGet, "/api/v1/home", nil, http.StatusOK)
+	if _, ok := home["coming_soon"]; !ok {
+		t.Error("home lacks coming_soon")
 	}
 }

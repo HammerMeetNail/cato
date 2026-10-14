@@ -72,6 +72,7 @@ type GameResult struct {
 	LocalCoverPath   string   `json:"local_cover_path"`
 	FirstReleaseDate int64    `json:"first_release_date"`
 	Platforms        []string `json:"platforms,omitempty"`
+	TTBMinutes       int64    `json:"ttb_minutes,omitempty"`
 }
 
 // Lane is an IGDB request priority. Interactive requests (a person is

@@ -174,7 +174,18 @@ func (a *API) putItem(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &ch) {
 		return
 	}
-	res, err := a.Library.Upsert(r.Context(), user(r), id, ch)
+	// Editions roll up to their base game; the edition played is recorded
+	// on the playthrough (plan §6.2).
+	base, err := a.Games.BaseGame(r.Context(), id)
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	if base != id {
+		edition := id
+		ch.EditionGameID = &edition
+	}
+	res, err := a.Library.Upsert(r.Context(), user(r), base, ch)
 	if err != nil {
 		fail(w, r, err)
 		return

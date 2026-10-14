@@ -1,11 +1,15 @@
 package v1
 
 import (
+	"encoding/base64"
 	"net/http"
+	"sort"
 	"strings"
+	"time"
 
 	"cato/internal/auth"
 	"cato/internal/catalog"
+	"cato/internal/covers"
 	"cato/internal/library"
 )
 
@@ -49,6 +53,7 @@ func (a *API) getGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := catalog.WithLane(r.Context(), catalog.LaneInteractive)
+	a.Catalog.EnsureDetails(ctx, id, 3*time.Second)
 	g, err := a.Catalog.GetGame(ctx, id)
 	if err != nil {
 		fail(w, r, err)
@@ -58,7 +63,17 @@ func (a *API) getGame(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "game_not_found", "Game not found", nil)
 		return
 	}
-	resp := map[string]any{"game": detailOf(g), "item": nil, "playthroughs": []library.Playthrough{}, "sessions": []library.Session{}}
+	extras, err := a.Games.GameExtras(ctx, id)
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	resp := map[string]any{"game": detailOf(g), "extras": extras, "item": nil, "playthroughs": []library.Playthrough{}, "sessions": []library.Session{}}
+	if a.Discover != nil {
+		if est, err := a.Discover.EstimateFor(ctx, user(r), id); err == nil && est != nil {
+			resp["estimate"] = est
+		}
+	}
 	item, err := a.Library.Get(ctx, user(r), id)
 	switch {
 	case err == nil:
@@ -102,6 +117,7 @@ type CatalogResult struct {
 	ReleaseDate int64    `json:"release_date"`
 	Platforms   []string `json:"platforms"`
 	Status      string   `json:"status,omitempty"`
+	TTBMinutes  int64    `json:"ttb_minutes,omitempty"`
 }
 
 func (a *API) annotate(r *http.Request, results []catalog.GameResult) ([]CatalogResult, error) {
@@ -120,7 +136,7 @@ func (a *API) annotate(r *http.Request, results []catalog.GameResult) ([]Catalog
 			p = []string{}
 		}
 		out = append(out, CatalogResult{ID: g.ID, Name: g.Name, Cover: library.CoverURL(g.LocalCoverPath, g.CoverURL),
-			ReleaseDate: g.FirstReleaseDate, Platforms: p, Status: statuses[g.ID]})
+			ReleaseDate: g.FirstReleaseDate, Platforms: p, Status: statuses[g.ID], TTBMinutes: g.TTBMinutes})
 	}
 	return out, nil
 }
@@ -202,10 +218,25 @@ func (a *API) search(w http.ResponseWriter, r *http.Request) {
 	if !catalog.ValidSorts[sort] {
 		sort = ""
 	}
-	minRating := int64(queryInt(r, "min_rating", 0))
-	results, total, err := a.Catalog.SearchPagedFullWithFilters(catalog.WithLane(r.Context(), catalog.LaneInteractive), q, limit, offset, sort,
-		library.ParseYear(vals.Get("year_from"), false), library.ParseYear(vals.Get("year_to"), true), minRating,
-		vals.Get("platform"), nil, "", user(r), inLibrary, vals.Get("status"), vals.Get("editions") == "1")
+	facets := catalog.Facets{
+		Sort:            sort,
+		YearFrom:        library.ParseYear(vals.Get("year_from"), false),
+		YearTo:          library.ParseYear(vals.Get("year_to"), true),
+		MinRating:       int64(queryInt(r, "min_rating", 0)),
+		Platform:        vals.Get("platform"),
+		Genre:           int64(queryInt(r, "genre", 0)),
+		MaxTTB:          int64(queryInt(r, "max_ttb", 0)) * 60,
+		LibraryUserID:   user(r),
+		InLibrary:       inLibrary,
+		IncludeEditions: vals.Get("editions") == "1",
+	}
+	ctx := catalog.WithLane(r.Context(), catalog.LaneInteractive)
+	if offset == 0 {
+		// Page one also asks IGDB (in the background) so the next search is
+		// fresher; deeper pages are local.
+		a.Catalog.Search(ctx, q, facets.IncludeEditions)
+	}
+	results, total, err := a.Games.SearchFaceted(ctx, q, limit, offset, facets)
 	if err != nil {
 		fail(w, r, err)
 		return
@@ -223,3 +254,104 @@ func (a *API) search(w http.ResponseWriter, r *http.Request) {
 }
 
 func coverOf(local, remote string) string { return library.CoverURL(local, remote) }
+
+func (a *API) genres(w http.ResponseWriter, r *http.Request) {
+	names, err := a.Games.LookupNames(r.Context(), "genres")
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	out := []map[string]any{}
+	for id, name := range names {
+		out = append(out, map[string]any{"id": id, "name": name})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i]["name"].(string) < out[j]["name"].(string) })
+	writeJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+// decodeDataURL accepts "data:image/...;base64,..." (uploads ride in JSON
+// so the API stays one content type).
+func decodeDataURL(s string) ([]byte, bool) {
+	head, data, ok := strings.Cut(s, ",")
+	if !ok || !strings.HasPrefix(head, "data:image/") || !strings.HasSuffix(head, ";base64") {
+		return nil, false
+	}
+	b, err := base64.StdEncoding.DecodeString(data)
+	return b, err == nil
+}
+
+type customInput struct {
+	catalog.CustomGame
+	Cover string `json:"cover"`
+}
+
+// createCustomGame adds a game the catalog doesn't have.
+func (a *API) createCustomGame(w http.ResponseWriter, r *http.Request) {
+	var in customInput
+	if !decode(w, r, &in) {
+		return
+	}
+	var img []byte
+	if in.Cover != "" {
+		var ok bool
+		if img, ok = decodeDataURL(in.Cover); !ok {
+			writeError(w, http.StatusBadRequest, "invalid_cover", "The cover must be an image", map[string]string{"cover": "invalid"})
+			return
+		}
+	}
+	id, err := a.Games.CreateCustom(r.Context(), user(r), in.CustomGame)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_game", err.Error(), map[string]string{"name": err.Error()})
+		return
+	}
+	if img != nil {
+		if err := covers.SaveUpload(a.CoverDir, id, img); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_cover", err.Error(), map[string]string{"cover": err.Error()})
+			return
+		}
+		a.Games.SetCustomCover(r.Context(), id)
+	}
+	g, err := a.Catalog.GetGame(r.Context(), id)
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"game": detailOf(g)})
+}
+
+// uploadCustomCover replaces a custom game's cover (its creator only).
+func (a *API) uploadCustomCover(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	owner, err := a.Games.CustomOwner(r.Context(), id)
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	if owner == "" || owner != user(r) {
+		writeError(w, http.StatusForbidden, "forbidden", "Only the person who added this game can change its cover", nil)
+		return
+	}
+	var in struct {
+		Cover string `json:"cover"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	img, ok := decodeDataURL(in.Cover)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid_cover", "The cover must be an image", map[string]string{"cover": "invalid"})
+		return
+	}
+	if err := covers.SaveUpload(a.CoverDir, id, img); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_cover", err.Error(), map[string]string{"cover": err.Error()})
+		return
+	}
+	if err := a.Games.SetCustomCover(r.Context(), id); err != nil {
+		fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}

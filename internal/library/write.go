@@ -48,6 +48,9 @@ type Change struct {
 	// Completion is recorded on the current playthrough when the game is
 	// (or becomes) finished: main, main_extras, completionist, endless.
 	Completion *string `json:"completion"`
+	// EditionGameID records which edition was played on the current
+	// playthrough (editions roll up to their base game; set by the API).
+	EditionGameID *int64 `json:"-"`
 }
 
 // WriteResult is what a write changed.
@@ -426,8 +429,18 @@ func (s *Store) updatePlaythroughs(ctx context.Context, tx *sql.Tx, userID strin
 			}
 		}
 	}
+	if !curID.Valid && ch.EditionGameID != nil && (st.status == StatusPlaying || st.status == StatusCompleted) {
+		if err := create(firstStart()); err != nil {
+			return 0, err
+		}
+	}
 	if !curID.Valid {
 		return 0, nil
+	}
+	if ch.EditionGameID != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE playthroughs SET edition_game_id = ? WHERE id = ?`, *ch.EditionGameID, curID.Int64); err != nil {
+			return 0, err
+		}
 	}
 	// Explicit edits flow into the current playthrough.
 	if ch.Completion != nil && (st.status == StatusCompleted || st.status == StatusAbandoned) {
