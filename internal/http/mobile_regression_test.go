@@ -200,7 +200,7 @@ func TestStatusFilterSupportsMultiple(t *testing.T) {
 		t.Fatalf("api.js must handle libraryStatus as array for multi-library search")
 	}
 	// Backend must handle multiple statuses
-	storeContent := readStaticFile(t, "internal/games/store.go")
+	storeContent := readStaticFile(t, "internal/catalog/store.go")
 	if !strings.Contains(storeContent, "libraryStatuses") {
 		t.Fatalf("store.go must have libraryStatuses field for multi-library search")
 	}

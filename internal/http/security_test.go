@@ -15,22 +15,22 @@ import (
 	"cato/internal/auth"
 	"cato/internal/config"
 	"cato/internal/db"
-	"cato/internal/games"
+	"cato/internal/catalog"
 )
 
 // --- S2: public search must not drive IGDB or grow the database -----------
 
 type countingIGDB struct{ searches atomic.Int64 }
 
-func (c *countingIGDB) SearchGames(ctx context.Context, q string, limit int, editions bool) ([]games.Game, error) {
+func (c *countingIGDB) SearchGames(ctx context.Context, q string, limit int, editions bool) ([]catalog.Game, error) {
 	c.searches.Add(1)
-	return []games.Game{{ID: 777, Name: "Remote " + q, Slug: "remote", CoverURL: "https://images.igdb.com/x.jpg"}}, nil
+	return []catalog.Game{{ID: 777, Name: "Remote " + q, Slug: "remote", CoverURL: "https://images.igdb.com/x.jpg"}}, nil
 }
-func (c *countingIGDB) GetGame(context.Context, int64) (*games.Game, error)          { return nil, nil }
-func (c *countingIGDB) GetGamesBatch(context.Context, []int64) ([]games.Game, error) { return nil, nil }
-func (c *countingIGDB) GetPlatforms(context.Context) ([]games.Platform, error)       { return nil, nil }
+func (c *countingIGDB) GetGame(context.Context, int64) (*catalog.Game, error)          { return nil, nil }
+func (c *countingIGDB) GetGamesBatch(context.Context, []int64) ([]catalog.Game, error) { return nil, nil }
+func (c *countingIGDB) GetPlatforms(context.Context) ([]catalog.Platform, error)       { return nil, nil }
 
-func newSearchMux(t *testing.T, database *db.DB, cfg *config.Config, client games.IGDBClient) *http.ServeMux {
+func newSearchMux(t *testing.T, database *db.DB, cfg *config.Config, client catalog.IGDBClient) *http.ServeMux {
 	t.Helper()
 	mux := http.NewServeMux()
 	h := newGameHandlerWithClient(database, cfg, client)

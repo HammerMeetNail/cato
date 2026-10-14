@@ -9,7 +9,7 @@ import (
 
 	"cato/internal/config"
 	"cato/internal/db"
-	"cato/internal/games"
+	"cato/internal/catalog"
 
 	_ "modernc.org/sqlite"
 )
@@ -56,7 +56,7 @@ func TestSearchFull(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	var results []games.GameResult
+	var results []catalog.GameResult
 	if err := json.NewDecoder(rec.Body).Decode(&results); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestSearchFull(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
-	var results2 []games.GameResult
+	var results2 []catalog.GameResult
 	if err := json.NewDecoder(rec.Body).Decode(&results2); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestSearchDropdownUnchanged(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
-	var results []games.GameResult
+	var results []catalog.GameResult
 	if err := json.NewDecoder(rec.Body).Decode(&results); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestSearchDropdownUnchanged(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 
-	var fullResults []games.GameResult
+	var fullResults []catalog.GameResult
 	if err := json.NewDecoder(rec.Body).Decode(&fullResults); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}

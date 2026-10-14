@@ -16,9 +16,9 @@ import (
 	"cato/internal/config"
 	"cato/internal/covers"
 	"cato/internal/db"
-	"cato/internal/games"
+	"cato/internal/catalog"
 	"cato/internal/http"
-	"cato/internal/igdb"
+	"cato/internal/integrations/igdb"
 	"cato/internal/importer"
 )
 
@@ -88,9 +88,9 @@ func main() {
 			fmt.Fprintf(os.Stderr, "migrate: %v\n", err)
 			os.Exit(1)
 		}
-		store := games.NewStore(database)
+		store := catalog.NewStore(database)
 		igdbClient := igdb.NewClient(cfg.IGDBClientID, cfg.IGDBClientSecret)
-		svc := games.NewService(store, igdbClient, database)
+		svc := catalog.NewService(store, igdbClient, database)
 
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
@@ -128,9 +128,9 @@ func main() {
 			fmt.Fprintf(os.Stderr, "migrate: %v\n", err)
 			os.Exit(1)
 		}
-		store := games.NewStore(database)
+		store := catalog.NewStore(database)
 		igdbClient := igdb.NewClient(cfg.IGDBClientID, cfg.IGDBClientSecret)
-		svc := games.NewService(store, igdbClient, database)
+		svc := catalog.NewService(store, igdbClient, database)
 
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
@@ -168,9 +168,9 @@ func main() {
 			fmt.Fprintf(os.Stderr, "migrate: %v\n", err)
 			os.Exit(1)
 		}
-		store := games.NewStore(database)
+		store := catalog.NewStore(database)
 		igdbClient := igdb.NewClient(cfg.IGDBClientID, cfg.IGDBClientSecret)
-		svc := games.NewService(store, igdbClient, database)
+		svc := catalog.NewService(store, igdbClient, database)
 
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
@@ -208,9 +208,9 @@ func main() {
 			fmt.Fprintf(os.Stderr, "migrate: %v\n", err)
 			os.Exit(1)
 		}
-		store := games.NewStore(database)
+		store := catalog.NewStore(database)
 		igdbClient := igdb.NewClient(cfg.IGDBClientID, cfg.IGDBClientSecret)
-		svc := games.NewService(store, igdbClient, database)
+		svc := catalog.NewService(store, igdbClient, database)
 
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
@@ -248,9 +248,9 @@ func main() {
 			fmt.Fprintf(os.Stderr, "migrate: %v\n", err)
 			os.Exit(1)
 		}
-		store := games.NewStore(database)
+		store := catalog.NewStore(database)
 		igdbClient := igdb.NewClient(cfg.IGDBClientID, cfg.IGDBClientSecret)
-		svc := games.NewService(store, igdbClient, database)
+		svc := catalog.NewService(store, igdbClient, database)
 
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
@@ -307,7 +307,7 @@ func main() {
 	// One-time cleanup of cover URLs pointing at the defunct
 	// images.cato.com host (legacy import). Cheap, idempotent SQL —
 	// runs regardless of IGDB configuration.
-	if n, err := games.PurgeDeadCoverSources(database); err != nil {
+	if n, err := catalog.PurgeDeadCoverSources(database); err != nil {
 		log.Printf("startup: dead cover source purge failed: %v", err)
 	} else if n > 0 {
 		log.Printf("startup: cleared %d games pointing at dead cover host", n)
@@ -316,7 +316,7 @@ func main() {
 	// One-time migration: ownership encoded as tags ("Switch", "PS5", …)
 	// moves into library_items.platform, tag removed after the move.
 	// Idempotent — no-ops once every mappable tag is gone.
-	if n, err := games.MigratePlatformTags(database); err != nil {
+	if n, err := catalog.MigratePlatformTags(database); err != nil {
 		log.Printf("startup: platform tag migration failed: %v", err)
 	} else if n > 0 {
 		log.Printf("startup: migrated %d items from platform tags to ownership field", n)
@@ -325,7 +325,7 @@ func main() {
 	// One-time dedupe: tags are now case-insensitive ("RPG" = "rpg") for
 	// filtering and autocomplete. Older items may contain both cases as
 	// separate entries; keep the first occurrence's casing and drop the rest.
-	if n, err := games.NewStore(database).RepairTagCaseDuplicates(context.Background()); err != nil {
+	if n, err := catalog.NewStore(database).RepairTagCaseDuplicates(context.Background()); err != nil {
 		log.Printf("startup: tag case dedupe failed: %v", err)
 	} else if n > 0 {
 		log.Printf("startup: deduplicated tags on %d items", n)
@@ -354,7 +354,7 @@ func main() {
 		} else if n > 0 {
 			log.Printf("maintenance: deleted %d expired sessions", n)
 		}
-		if n, err := games.PurgeExpiredQueryCacheContext(ctx, database); err != nil {
+		if n, err := catalog.PurgeExpiredQueryCacheContext(ctx, database); err != nil {
 			log.Printf("maintenance: query cache purge failed: %v", err)
 		} else if n > 0 {
 			log.Printf("maintenance: purged %d expired cache entries", n)

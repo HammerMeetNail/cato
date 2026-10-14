@@ -17,7 +17,7 @@ import (
 
 	"cato/internal/auth"
 	"cato/internal/db"
-	"cato/internal/games"
+	"cato/internal/catalog"
 )
 
 // maxLibraryPageSize caps the per-page limit for GET /api/library.
@@ -25,7 +25,7 @@ const maxLibraryPageSize = 200
 
 type LibraryHandler struct {
 	db      *db.DB
-	games   *games.Store
+	games   *catalog.Store
 	cookies auth.Cookies
 	// coverQueued wakes the cover worker after a write that may have queued
 	// a cover job (nil in tests that don't care).
@@ -39,7 +39,7 @@ func (h *LibraryHandler) notifyCoverQueued() {
 }
 
 func NewLibraryHandler(db *db.DB, cookies auth.Cookies) *LibraryHandler {
-	return &LibraryHandler{db: db, games: games.NewStore(db), cookies: cookies}
+	return &LibraryHandler{db: db, games: catalog.NewStore(db), cookies: cookies}
 }
 
 // platformNames loads the IGDB ID→name lookup once per request; callers pass
@@ -159,7 +159,7 @@ func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, use
 	// Availability filter ("show games I can play on X"): substring match
 	// against the resolved names of games.platforms_json.
 	if platform := strings.TrimSpace(r.URL.Query().Get("platform")); platform != "" && len(platform) <= 64 {
-		frag, fargs := games.PlatformFilter("g", platform)
+		frag, fargs := catalog.PlatformFilter("g", platform)
 		where += " AND " + frag
 		whereArgs = append(whereArgs, fargs...)
 	}
@@ -168,7 +168,7 @@ func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, use
 	// against library_items.owned_platforms_json and legacy platform column,
 	// resolved via platforms table so shortnames (ps5, sw2) match canonical names.
 	if ownedPlatform := strings.TrimSpace(r.URL.Query().Get("owned_platform")); ownedPlatform != "" && len(ownedPlatform) <= 64 {
-		pattern := "%" + games.EscapeLike(strings.ToLower(ownedPlatform)) + "%"
+		pattern := "%" + catalog.EscapeLike(strings.ToLower(ownedPlatform)) + "%"
 		frag := `(
 			EXISTS (
 				SELECT 1 FROM json_each(li.owned_platforms_json) je
@@ -505,7 +505,7 @@ func scanLibraryItem(row interface{ Scan(...interface{}) error }, platformNames 
 	ownedPlatforms := []string{}
 	json.Unmarshal([]byte(ownedPlatformsJSON), &ownedPlatforms)
 
-	platforms := games.ResolvePlatformNames(platformsJSON, platformNames)
+	platforms := catalog.ResolvePlatformNames(platformsJSON, platformNames)
 	if platforms == nil {
 		platforms = []string{}
 	}
@@ -1032,7 +1032,7 @@ func (h *LibraryHandler) handleLibraryTags(w http.ResponseWriter, r *http.Reques
 		WHERE user_id = ? AND LOWER(tag) LIKE ? ESCAPE '\'
 		GROUP BY LOWER(tag)
 		ORDER BY LOWER(MIN(tag)), MIN(tag)
-		LIMIT ?`, userID, strings.ToLower(games.EscapeLike(q))+"%", limit)
+		LIMIT ?`, userID, strings.ToLower(catalog.EscapeLike(q))+"%", limit)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to fetch tags"))
 		return
@@ -1063,8 +1063,8 @@ func (h *LibraryHandler) handleLibraryPlatforms(w http.ResponseWriter, r *http.R
 
 	userID := auth.GetUserID(r.Context())
 	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
-	pattern := "%" + games.EscapeLike(q) + "%"
-	prefix := games.EscapeLike(q) + "%"
+	pattern := "%" + catalog.EscapeLike(q) + "%"
+	prefix := catalog.EscapeLike(q) + "%"
 
 	// Availability names resolve through the lookup table (matched against
 	// name, IGDB abbreviation, and curated shortname); ownership platforms

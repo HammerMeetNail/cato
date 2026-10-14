@@ -146,9 +146,9 @@ internal/auth          Password hashing, sessions, CSRF, rate limiting
 internal/config        Environment configuration
 internal/covers        Cover image downloader with background worker
 internal/db            SQLite connection and migration runner
-internal/games         Local-first search, ranking, IGDB fallback orchestration
+internal/catalog       Local-first search, ranking, IGDB fallback orchestration
 internal/http          HTTP server, handlers, middleware
-internal/igdb          IGDB API v4 client with Twitch token auth
+internal/integrations/igdb IGDB API v4 client with Twitch token auth
 internal/importer      Postgres COPY parser for game seed imports
 web/static             Vanilla HTML, CSS, and JavaScript frontend
 ```

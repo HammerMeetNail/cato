@@ -11,12 +11,12 @@ import (
 	"cato/internal/auth"
 	"cato/internal/config"
 	"cato/internal/db"
-	"cato/internal/games"
-	"cato/internal/igdb"
+	"cato/internal/catalog"
+	"cato/internal/integrations/igdb"
 )
 
 type GameHandler struct {
-	service       *games.Service
+	service       *catalog.Service
 	db            *db.DB
 	cookies       auth.Cookies
 	searchLimiter *auth.RateLimiter
@@ -31,7 +31,7 @@ const maxSearchQueryLen = 100
 const defaultSearchRateLimit = 120
 
 func NewGameHandler(db *db.DB, cfg *config.Config) *GameHandler {
-	var igdbClient games.IGDBClient
+	var igdbClient catalog.IGDBClient
 	if cfg.IGDBClientID != "" {
 		igdbClient = igdb.NewClient(cfg.IGDBClientID, cfg.IGDBClientSecret)
 	} else {
@@ -40,8 +40,8 @@ func NewGameHandler(db *db.DB, cfg *config.Config) *GameHandler {
 	return newGameHandlerWithClient(db, cfg, igdbClient)
 }
 
-func newGameHandlerWithClient(db *db.DB, cfg *config.Config, igdbClient games.IGDBClient) *GameHandler {
-	svc := games.NewService(games.NewStore(db), igdbClient, db)
+func newGameHandlerWithClient(db *db.DB, cfg *config.Config, igdbClient catalog.IGDBClient) *GameHandler {
+	svc := catalog.NewService(catalog.NewStore(db), igdbClient, db)
 	limit := defaultSearchRateLimit
 	if cfg.SearchRateLimit > 0 {
 		limit = cfg.SearchRateLimit
@@ -91,8 +91,8 @@ func (h *GameHandler) handlePlatforms(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, []string{})
 		return
 	}
-	pattern := "%" + games.EscapeLike(q) + "%"
-	prefix := games.EscapeLike(q) + "%"
+	pattern := "%" + catalog.EscapeLike(q) + "%"
+	prefix := catalog.EscapeLike(q) + "%"
 	rows, err := h.db.Query(`SELECT name, COALESCE(shortname,'') FROM platforms
 		WHERE name != '' AND (LOWER(name) LIKE ? ESCAPE '\'
 		   OR LOWER(COALESCE(abbreviation,'')) LIKE ? ESCAPE '\'
@@ -184,7 +184,7 @@ func (h *GameHandler) handleSearch(w http.ResponseWriter, r *http.Request) {
 	// signed-in searches may refresh from IGDB: an anonymous caller must not
 	// spend the IGDB quota or write games, cover jobs and cache rows.
 	if tryGetUserID(r, h.db, h.cookies) == "" {
-		r = r.WithContext(games.LocalOnly(r.Context()))
+		r = r.WithContext(catalog.LocalOnly(r.Context()))
 	}
 
 	includeEditions := parseIncludeEditions(r)
@@ -202,7 +202,7 @@ func (h *GameHandler) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if results == nil {
-		results = []games.GameResult{}
+		results = []catalog.GameResult{}
 	}
 	writeJSON(w, http.StatusOK, results)
 }
@@ -239,7 +239,7 @@ func (h *GameHandler) handleSearchFull(w http.ResponseWriter, r *http.Request, q
 	}
 
 	sort := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("sort")))
-	if !games.ValidSorts[sort] {
+	if !catalog.ValidSorts[sort] {
 		sort = ""
 	}
 
@@ -288,7 +288,7 @@ func (h *GameHandler) handleSearchFull(w http.ResponseWriter, r *http.Request, q
 		for _, key := range []string{"library_status", "libraryStatus", "status"} {
 			for _, raw := range r.URL.Query()[key] {
 				for _, part := range strings.Split(raw, ",") {
-					if s := strings.ToLower(strings.TrimSpace(part)); s != "" && games.ValidLibraryStatuses[s] {
+					if s := strings.ToLower(strings.TrimSpace(part)); s != "" && catalog.ValidLibraryStatuses[s] {
 						statuses = append(statuses, s)
 					}
 				}
@@ -367,7 +367,7 @@ func (h *GameHandler) handleSearchFull(w http.ResponseWriter, r *http.Request, q
 	}
 
 	if results == nil {
-		results = []games.GameResult{}
+		results = []catalog.GameResult{}
 	}
 	w.Header().Set("X-Total-Count", strconv.FormatInt(total, 10))
 	writeJSON(w, http.StatusOK, results)
@@ -530,18 +530,18 @@ func (h *GameHandler) handleGameByID(w http.ResponseWriter, r *http.Request) {
 
 type noopIGDBClient struct{}
 
-func (c *noopIGDBClient) SearchGames(ctx context.Context, query string, limit int, includeEditions bool) ([]games.Game, error) {
+func (c *noopIGDBClient) SearchGames(ctx context.Context, query string, limit int, includeEditions bool) ([]catalog.Game, error) {
 	return nil, nil
 }
 
-func (c *noopIGDBClient) GetGame(ctx context.Context, id int64) (*games.Game, error) {
+func (c *noopIGDBClient) GetGame(ctx context.Context, id int64) (*catalog.Game, error) {
 	return nil, nil
 }
 
-func (c *noopIGDBClient) GetGamesBatch(ctx context.Context, ids []int64) ([]games.Game, error) {
+func (c *noopIGDBClient) GetGamesBatch(ctx context.Context, ids []int64) ([]catalog.Game, error) {
 	return nil, nil
 }
 
-func (c *noopIGDBClient) GetPlatforms(ctx context.Context) ([]games.Platform, error) {
+func (c *noopIGDBClient) GetPlatforms(ctx context.Context) ([]catalog.Platform, error) {
 	return nil, nil
 }

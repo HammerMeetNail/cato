@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"cato/internal/games"
+	"cato/internal/catalog"
 )
 
 // maxBatchIDs is IGDB's hard cap on `where id = (...)` tuple size.
@@ -39,7 +39,7 @@ type Client struct {
 	accessToken  string
 	tokenExpiry  time.Time
 	httpClient   *http.Client
-	rateLimiter  *games.IGDBRateLimiter
+	rateLimiter  *catalog.IGDBRateLimiter
 	mu           sync.Mutex // guards accessToken and tokenExpiry
 	apiBase      string
 	authBase     string
@@ -111,7 +111,7 @@ func NewClient(clientID, clientSecret string) *Client {
 	return &Client{
 		clientID:     clientID,
 		clientSecret: clientSecret,
-		rateLimiter:  games.NewIGDBRateLimiter(),
+		rateLimiter:  catalog.NewIGDBRateLimiter(),
 		httpClient:   &http.Client{Timeout: 10 * time.Second},
 		apiBase:      defaultAPIBase,
 		authBase:     defaultAuthBase,
@@ -125,12 +125,12 @@ func newTestClient(clientID, clientSecret, apiBase, authBase string) *Client {
 	c := NewClient(clientID, clientSecret)
 	c.apiBase = apiBase
 	c.authBase = authBase
-	c.rateLimiter = games.NewIGDBRateLimiterWithInterval(0)
+	c.rateLimiter = catalog.NewIGDBRateLimiterWithInterval(0)
 	c.backoff = time.Millisecond
 	return c
 }
 
-func (c *Client) SearchGames(ctx context.Context, query string, limit int, includeEditions bool) ([]games.Game, error) {
+func (c *Client) SearchGames(ctx context.Context, query string, limit int, includeEditions bool) ([]catalog.Game, error) {
 	if c.clientID == "" {
 		return nil, nil
 	}
@@ -142,8 +142,8 @@ func (c *Client) SearchGames(ctx context.Context, query string, limit int, inclu
 	// Hide IGDB editions/packs by default: `version_parent` marks
 	// deluxe/collector editions, `game_type` packs/skins (13) etc. Bypass
 	// when the query explicitly asks for them or the caller opts in.
-	editionInclude := includeEditions || games.ContainsEditionKeyword(query)
-	packInclude := includeEditions || games.ContainsPackKeyword(query)
+	editionInclude := includeEditions || catalog.ContainsEditionKeyword(query)
+	packInclude := includeEditions || catalog.ContainsPackKeyword(query)
 	var whereParts []string
 	if !editionInclude {
 		whereParts = append(whereParts, "version_parent = null")
@@ -162,7 +162,7 @@ func (c *Client) SearchGames(ctx context.Context, query string, limit int, inclu
 		return nil, err
 	}
 
-	result := make([]games.Game, 0, len(igdbGames))
+	result := make([]catalog.Game, 0, len(igdbGames))
 	for _, g := range igdbGames {
 		result = append(result, c.toGame(g))
 	}
@@ -170,7 +170,7 @@ func (c *Client) SearchGames(ctx context.Context, query string, limit int, inclu
 	return result, nil
 }
 
-func (c *Client) GetGame(ctx context.Context, id int64) (*games.Game, error) {
+func (c *Client) GetGame(ctx context.Context, id int64) (*catalog.Game, error) {
 	if c.clientID == "" {
 		return nil, nil
 	}
@@ -201,7 +201,7 @@ func (c *Client) GetGame(ctx context.Context, id int64) (*games.Game, error) {
 // authoritative covers.image_id. IGDB accepts up to 500 IDs per query, so
 // 300k+ rows cost ~1 request per 500 games (~10 min at the ~1 req/s limiter)
 // instead of one request per game.
-func (c *Client) GetGamesBatch(ctx context.Context, ids []int64) ([]games.Game, error) {
+func (c *Client) GetGamesBatch(ctx context.Context, ids []int64) ([]catalog.Game, error) {
 	if c.clientID == "" {
 		return nil, nil
 	}
@@ -232,7 +232,7 @@ func (c *Client) GetGamesBatch(ctx context.Context, ids []int64) ([]games.Game, 
 		return nil, err
 	}
 
-	result := make([]games.Game, 0, len(igdbGames))
+	result := make([]catalog.Game, 0, len(igdbGames))
 	for _, g := range igdbGames {
 		result = append(result, c.toGame(g))
 	}
@@ -242,7 +242,7 @@ func (c *Client) GetGamesBatch(ctx context.Context, ids []int64) ([]games.Game, 
 // GetPlatforms fetches the complete platform reference list (id, name,
 // abbreviation) in a single rate-limited request — the table is small
 // (~230 rows), well under IGDB's page cap.
-func (c *Client) GetPlatforms(ctx context.Context) ([]games.Platform, error) {
+func (c *Client) GetPlatforms(ctx context.Context) ([]catalog.Platform, error) {
 	if c.clientID == "" {
 		return nil, nil
 	}
@@ -258,7 +258,7 @@ func (c *Client) GetPlatforms(ctx context.Context) ([]games.Platform, error) {
 	return decodePlatforms(raw)
 }
 
-func decodePlatforms(raw []byte) ([]games.Platform, error) {
+func decodePlatforms(raw []byte) ([]catalog.Platform, error) {
 	var plats []struct {
 		ID           int64  `json:"id"`
 		Name         string `json:"name"`
@@ -267,9 +267,9 @@ func decodePlatforms(raw []byte) ([]games.Platform, error) {
 	if err := json.Unmarshal(raw, &plats); err != nil {
 		return nil, fmt.Errorf("decode platforms: %w", err)
 	}
-	out := make([]games.Platform, 0, len(plats))
+	out := make([]catalog.Platform, 0, len(plats))
 	for _, p := range plats {
-		out = append(out, games.Platform{ID: p.ID, Name: p.Name, Abbreviation: p.Abbreviation})
+		out = append(out, catalog.Platform{ID: p.ID, Name: p.Name, Abbreviation: p.Abbreviation})
 	}
 	return out, nil
 }
@@ -289,7 +289,7 @@ func escapeAPIQLString(s string) string {
 	return r.Replace(s)
 }
 
-func (c *Client) toGame(g igdbGame) games.Game {
+func (c *Client) toGame(g igdbGame) catalog.Game {
 	var coverID int64
 	var coverURL string
 	if g.Cover != nil {
@@ -302,12 +302,12 @@ func (c *Client) toGame(g igdbGame) games.Game {
 			aliases = append(aliases, a.Name)
 		}
 	}
-	return games.Game{
+	return catalog.Game{
 		ID:                    g.ID,
 		Name:                  g.Name,
 		Slug:                  g.Slug,
 		SafeName:              g.Name,
-		NormalizedName:        games.NormalizeName(g.Name),
+		NormalizedName:        catalog.NormalizeName(g.Name),
 		Summary:               g.Summary,
 		Storyline:             g.Storyline,
 		CoverID:               coverID,
@@ -331,7 +331,7 @@ func (c *Client) toGame(g igdbGame) games.Game {
 		Status:                g.Status,
 		VersionParent:         g.VersionParent,
 		ParentGame:            g.ParentGame,
-		PopularityScore: games.ComputePopularityScore(
+		PopularityScore: catalog.ComputePopularityScore(
 			g.Follows, g.Hypes, g.TotalRatingCount, gameCategory(g), g.Status,
 		),
 	}

@@ -27,9 +27,9 @@ internal/config/ Env-based config (CATO_* prefix)
 internal/covers/ Background cover downloader (IGDB images → data/covers/{id}.jpg) + /covers/ handler
 internal/devtls/ Self-signed dev certificates (crypto/x509) + SPKI pins; `cato dev-cert --out DIR`
 internal/db/     SQLite open (two-pool), migration runner
-internal/games/  Search, types, store, service, IGDB rate limiter. Defines IGDBClient interface.
+internal/catalog/ Search, types, store, service, IGDB rate limiter. Defines IGDBClient interface.
 internal/http/   HTTP server, handlers, middleware. All JSON responses via writeJSON/errResp.
-internal/igdb/   IGDB API v4 client (Twitch OAuth token auth)
+internal/integrations/igdb/ IGDB API v4 client (Twitch OAuth token auth)
 internal/importer/ Postgres COPY parser for game seed imports (opens its own *sql.DB)
 web/static/      HTML, CSS, JS (vanilla, no bundler)
 ```
