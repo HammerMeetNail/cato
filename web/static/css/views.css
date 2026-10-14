@@ -859,8 +859,14 @@
 }
 
 .gallery .swatch {
-  padding: var(--sp-3);
-  border-radius: var(--r-md);
+  display: grid;
+  gap: var(--sp-1);
   font-size: var(--fs-12);
   font-weight: 700;
+}
+
+.gallery .swatch-color {
+  height: 40px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
 }
