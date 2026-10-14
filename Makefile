@@ -86,7 +86,7 @@ DOCKER ?= PATH=/usr/local/bin:/usr/bin:/bin /usr/local/bin/docker
 COMPOSE ?= PATH=/usr/local/bin:/usr/bin:/bin /usr/local/bin/docker-compose
 
 deploy-build:
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o cato ./cmd/cato
+	GOTOOLCHAIN=$(GO_TOOLCHAIN) CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o cato ./cmd/cato
 
 deploy-push: deploy-build
 	cat cato | ssh $(NAS_HOST) 'cat > $(NAS_PATH)/cato && chmod +x $(NAS_PATH)/cato'
