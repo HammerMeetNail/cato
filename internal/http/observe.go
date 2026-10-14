@@ -193,7 +193,7 @@ func (s *Server) collectGauges(r *metrics.Registry) {
 			}
 		}
 	}
-	for _, ln := range s.gameHandler.LaneStatus() {
+	for _, ln := range s.catalog.LaneStatus() {
 		l := metrics.Labels{"lane", ln.Lane}
 		r.Set("cato_igdb_queued", "IGDB requests waiting per lane.", l, float64(ln.Queued))
 		r.Set("cato_igdb_requests", "IGDB requests sent per lane.", l, float64(ln.Requests))

@@ -1,8 +1,6 @@
 package http
 
 import (
-	"context"
-	"encoding/csv"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,37 +11,9 @@ import (
 	"time"
 
 	"cato/internal/auth"
-	"cato/internal/catalog"
 	"cato/internal/config"
 	"cato/internal/db"
 )
-
-// --- S2: public search must not drive IGDB or grow the database -----------
-
-type countingIGDB struct{ searches atomic.Int64 }
-
-func (c *countingIGDB) SearchGames(ctx context.Context, q string, limit int, editions bool) ([]catalog.Game, error) {
-	c.searches.Add(1)
-	return []catalog.Game{{ID: 777, Name: "Remote " + q, Slug: "remote", CoverURL: "https://images.igdb.com/x.jpg"}}, nil
-}
-func (c *countingIGDB) GetGame(context.Context, int64) (*catalog.Game, error) { return nil, nil }
-func (c *countingIGDB) GetGamesBatch(context.Context, []int64) ([]catalog.Game, error) {
-	return nil, nil
-}
-func (c *countingIGDB) GetPlatforms(context.Context) ([]catalog.Platform, error) { return nil, nil }
-
-func newSearchMux(t *testing.T, database *db.DB, cfg *config.Config, client catalog.IGDBClient) *http.ServeMux {
-	t.Helper()
-	mux := http.NewServeMux()
-	h := newGameHandlerWithClient(database, cfg, client)
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		h.service.Shutdown(ctx)
-	})
-	h.Register(mux)
-	return mux
-}
 
 func countRows(t *testing.T, database *db.DB, table string) int {
 	t.Helper()
@@ -52,87 +22,6 @@ func countRows(t *testing.T, database *db.DB, table string) int {
 		t.Fatal(err)
 	}
 	return n
-}
-
-func TestAnonymousSearchIsLocalOnly(t *testing.T) {
-	database := setupLibraryTestDB(t)
-	defer database.Close()
-	client := &countingIGDB{}
-	mux := newSearchMux(t, database, &config.Config{}, client)
-	for _, q := range []string{"zelda", "metroid", "zelda&full=1"} {
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/games/search?q="+q, nil))
-		if rec.Code != http.StatusOK {
-			t.Fatalf("anonymous search %s: %d", q, rec.Code)
-		}
-	}
-	time.Sleep(200 * time.Millisecond)
-	if n := client.searches.Load(); n != 0 {
-		t.Fatalf("anonymous searches triggered %d IGDB calls", n)
-	}
-	for _, table := range []string{"igdb_query_cache", "cover_jobs"} {
-		if n := countRows(t, database, table); n != 0 {
-			t.Fatalf("anonymous search wrote %d %s rows", n, table)
-		}
-	}
-	if n := countRows(t, database, "games"); n != 2 {
-		t.Fatalf("anonymous search grew the catalog to %d games", n)
-	}
-
-	// A signed-in search still refreshes from IGDB.
-	sessionID := createLibrarySession(t, database, "user-1")
-	req := httptest.NewRequest(http.MethodGet, "/api/games/search?q=zelda", nil)
-	req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})
-	mux.ServeHTTP(httptest.NewRecorder(), req)
-	deadline := time.Now().Add(5 * time.Second)
-	for client.searches.Load() == 0 && time.Now().Before(deadline) {
-		time.Sleep(20 * time.Millisecond)
-	}
-	if client.searches.Load() != 1 {
-		t.Fatal("signed-in search did not refresh from IGDB")
-	}
-}
-
-func TestSearchQueryLengthIsCapped(t *testing.T) {
-	database := setupLibraryTestDB(t)
-	defer database.Close()
-	mux := newSearchMux(t, database, &config.Config{}, &countingIGDB{})
-	for _, extra := range []string{"", "&full=1"} {
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/games/search?q="+strings.Repeat("a", 101)+extra, nil))
-		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "query_too_long") {
-			t.Fatalf("101-char query: %d %s", rec.Code, rec.Body)
-		}
-	}
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/games/search?q="+strings.Repeat("a", 100), nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("100-char query: %d", rec.Code)
-	}
-}
-
-func TestSearchIsRateLimitedPerIP(t *testing.T) {
-	database := setupLibraryTestDB(t)
-	defer database.Close()
-	mux := newSearchMux(t, database, &config.Config{SearchRateLimit: 3}, &countingIGDB{})
-	get := func(ip string) int {
-		req := httptest.NewRequest(http.MethodGet, "/api/games/search?q=zz", nil)
-		req.RemoteAddr = ip + ":1234"
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
-		return rec.Code
-	}
-	for i := 0; i < 3; i++ {
-		if code := get("192.0.2.1"); code != http.StatusOK {
-			t.Fatalf("request %d: %d", i, code)
-		}
-	}
-	if code := get("192.0.2.1"); code != http.StatusTooManyRequests {
-		t.Fatalf("4th request = %d, want 429", code)
-	}
-	if code := get("192.0.2.2"); code != http.StatusOK {
-		t.Fatalf("other IP limited: %d", code)
-	}
 }
 
 // --- S3: signup switch -------------------------------------------------------
@@ -250,74 +139,6 @@ func TestLoginBacksOffPerAccount(t *testing.T) {
 
 // --- S5: CSV formula injection and size limits ------------------------------------
 
-func TestCSVExportNeutralizesFormulas(t *testing.T) {
-	database := setupLibraryTestDB(t)
-	defer database.Close()
-	database.Exec(`UPDATE games SET name = '=HYPERLINK("http://evil")' WHERE id = 1`)
-	sessionID := createLibrarySession(t, database, "user-1")
-	mux := newTestLibraryMux(database)
-	if rec, _ := postLibraryItem(t, mux, database, sessionID, 1, `{"status":"backlog","notes":"+cmd|' /C calc'!A0","tags":["@sum","-1","\tx","ok"]}`); rec.Code != http.StatusOK {
-		t.Fatalf("setup %d %s", rec.Code, rec.Body)
-	}
-	req := httptest.NewRequest(http.MethodGet, "/api/library/export", nil)
-	req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	records, err := csv.NewReader(rec.Body).ReadAll()
-	if err != nil || len(records) != 2 {
-		t.Fatalf("csv = %v %v", records, err)
-	}
-	row := records[1]
-	if row[0] != `'=HYPERLINK("http://evil")` {
-		t.Errorf("game = %q", row[0])
-	}
-	if row[10] != `'+cmd|' /C calc'!A0` {
-		t.Errorf("notes = %q", row[10])
-	}
-	// Tags are trimmed on save; only the cell's first character matters.
-	if row[9] != "'@sum; -1; x; ok" {
-		t.Errorf("tags = %q", row[9])
-	}
-	for i, cell := range row {
-		if cell != "" && strings.ContainsRune("=+-@\t\r", rune(cell[0])) {
-			t.Errorf("cell %d starts with a formula character: %q", i, cell)
-		}
-	}
-}
-
-func TestLibraryFieldLimits(t *testing.T) {
-	database := setupLibraryTestDB(t)
-	defer database.Close()
-	sessionID := createLibrarySession(t, database, "user-1")
-	mux := newTestLibraryMux(database)
-	many := make([]string, 33)
-	for i := range many {
-		many[i] = `"t` + strings.Repeat("x", i%5) + string(rune('a'+i%26)) + string(rune('a'+i/26)) + `"`
-	}
-	cases := []struct {
-		body, code string
-	}{
-		{`{"status":"backlog","notes":"` + strings.Repeat("é", 10001) + `"}`, "invalid_notes"},
-		{`{"status":"backlog","tags":[` + strings.Join(many, ",") + `]}`, "invalid_tags"},
-		{`{"status":"backlog","tags":["` + strings.Repeat("y", 41) + `"]}`, "invalid_tags"},
-	}
-	for _, tc := range cases {
-		rec, _ := postLibraryItem(t, mux, database, sessionID, 1, tc.body)
-		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), tc.code) {
-			t.Errorf("POST %s…: %d %s", tc.body[:40], rec.Code, rec.Body)
-		}
-	}
-	// The limits themselves are allowed (characters, not bytes).
-	ok := `{"status":"backlog","notes":"` + strings.Repeat("é", 10000) + `","tags":["` + strings.Repeat("ü", 40) + `"]}`
-	if rec, _ := postLibraryItem(t, mux, database, sessionID, 1, ok); rec.Code != http.StatusOK {
-		t.Fatalf("at-limit POST = %d %s", rec.Code, rec.Body)
-	}
-	// PATCH goes through the same validation.
-	if rec, _ := patchLibraryItem(t, mux, database, sessionID, 1, `{"notes":"`+strings.Repeat("n", 10001)+`"}`); rec.Code != http.StatusBadRequest {
-		t.Fatalf("PATCH over limit = %d", rec.Code)
-	}
-}
-
 // --- S6: no directory listings -------------------------------------------------------
 
 func TestStaticDirectoriesAreNotListed(t *testing.T) {
@@ -345,10 +166,10 @@ func TestCSRFTokenComparisonIsExact(t *testing.T) {
 	defer database.Close()
 	sessionID := createLibrarySession(t, database, "user-1")
 	session, _ := auth.GetSession(database, sessionID)
-	mux := newTestLibraryMux(database)
+	mux := NewServer(&config.Config{StaticDir: t.TempDir(), AllowInsecure: true}, database).Handler()
 	authMux := createTestMux(newTestAuthHandler(database))
 	for _, token := range []string{strings.ToUpper(session.CSRFToken), session.CSRFToken[:len(session.CSRFToken)-1]} {
-		req := httptest.NewRequest(http.MethodPost, "/api/library/1", strings.NewReader(`{"status":"backlog"}`))
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/library/1", strings.NewReader(`{"status":"backlog"}`))
 		req.AddCookie(&http.Cookie{Name: "cato_session", Value: sessionID})
 		req.Header.Set("X-CSRF-Token", token)
 		rec := httptest.NewRecorder()

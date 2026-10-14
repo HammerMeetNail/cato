@@ -117,11 +117,11 @@ tests/js/        node --test suites for the pure frontend modules
     refresh results never queue jobs). Library writes call `Worker.Wake()`; the idle worker
     otherwise re-checks every 30 s. `covers.PruneJobs` drops orphaned jobs in the daily
     sweep. Do not reintroduce a catalog-wide `EnqueueMissingCovers` at startup.
-- **API v1** (`internal/http/v1`, docs/api-v1.md) is what the app uses: Go 1.22 method
-  patterns, `{items, next_cursor, total}` collections, `{error, message, fields}` errors,
-  mutations return the item + `library_rev` + `undo_id`, ETags on every GET (library ones from
-  `library_rev`), and a per-account write rate limit. The legacy `/api/library*` routes below
-  remain until the old frontend is gone; their writes also go through `library.Store`.
+- **API v1** (`internal/http/v1`, docs/api-v1.md) is the only app API (besides `/api/auth/*`,
+  `/api/me` and `/api/config`, which the login page uses): Go 1.22 method patterns,
+  `{items, next_cursor, total}` collections, `{error, message, fields}` errors, mutations return
+  the item + `library_rev` + `undo_id`, ETags on every GET (library ones from `library_rev`),
+  and a per-account write rate limit. The old `/api/library*` and `/api/games*` routes are gone.
 - **Background work** runs on `internal/jobs` (registered in `cmd/cato/main.go`: catalog
   jobs from `catalog.Service.Jobs`, the daily `maintenance` sweep). `/healthz` reports the
   most overdue job. Don't start ad-hoc goroutine loops. IGDB requests pass the two-lane
@@ -130,11 +130,11 @@ tests/js/        node --test suites for the pure frontend modules
   line per request (request ID, hashed user ID, route pattern, status, duration); statements
   over 50 ms are logged as slow; `/metrics` (Prometheus text) needs `CATO_METRICS_TOKEN`
   as a bearer token, or a loopback/private-network client when unset.
-- **Library API is paginated**: `GET /api/library?status=&limit=&offset=` (default limit 60,
-  max 200). The default order (`updated`) pages by keyset: follow the opaque `X-Next-Cursor`
-  header with `?cursor=` (index-backed, stable when edits reorder items); other sorts use
-  `offset`. `X-Total-Count` is only sent with the first page. The frontend
-  (`web/static/js/library.js`) does infinite scroll and appends pages.
+- **Library paging**: `GET /api/v1/library` (default limit 60, max 200). The default order
+  (`updated`) pages by keyset (`next_cursor`, index-backed, stable when edits reorder items);
+  other sorts use `offset`. `total` only comes with the first page. The app itself rarely
+  pages: it syncs the whole compact index (`/api/v1/library/index?since=rev`) into IndexedDB
+  and filters, sorts and searches on the device (`web/static/js/core/filter.js`).
 - **Asset versioning is automatic** (internal/http/assets.go): the server hashes every
   file under `web/static`, rewrites local `src`/`href` in HTML to `?v=<hash>` (served
   `immutable`), injects an import map pinning every `/js/**.js` module plus modulepreload
@@ -144,8 +144,8 @@ tests/js/        node --test suites for the pure frontend modules
   the marker in `<head>` of every app page, and import modules with relative or absolute
   `/js/...` paths (both are mapped).
 - **Frontend guardrails**: `make test-js` runs `scripts/lint-js.cjs` (no `innerHTML`,
-  `insertAdjacentHTML`, `document.write`, `unsafeHTML`, `eval` outside `js/vendor/` and the
-  legacy screens it lists), `node --test tests/js`, and the service worker regression.
+  `insertAdjacentHTML`, `document.write`, `unsafeHTML`, `eval` outside `js/vendor/`),
+  `node --test tests/js`, and the service worker regression.
   Vendored files change only via `scripts/vendor-update.sh`; a Go test checks them against
   `js/vendor/CHECKSUMS`.
 - **HTTP middleware**: `gzipMiddleware` wraps the mux via `Server.Handler()` but only
@@ -173,26 +173,22 @@ tests/js/        node --test suites for the pure frontend modules
   through `AuthHandler.createUser`, which enforces the mode atomically (first account on an
   empty DB always allowed) for both email and Google sign-up. `GET /api/config` tells the
   login page whether to show sign-up and the Google button.
-- **PWA shell & bottom navigation (Nabu parity)**: `web/static/index.html` is the only
-  authenticated page. It uses a `height: var(--app-h)` flex-column shell (see
-  `web/static/js/head-init.js` for iOS standalone `screen.height` vs `innerHeight`
-  logic and `--safe-bottom` for notches) with a static `#bottom-tabs` bar at the
-  body level (not `fixed` — avoids iOS PWA cold-open gap). The bar has 4 tabs:
-  **Library** (`#`, grid icon), **Playing** (`#now`, play icon), **Stats**
-  (`#stats`, bar-chart), **Settings** (`#settings`, gear), each
-  `a.tab-item[data-route]` with `aria-current="page"` on active, styled via
-  `.tab-item.active`. `handleRoute()` dispatches on `window.location.hash`:
-  `#now` (aliases `#now-playing`/`#playing-now`) → `renderPlayingView()`
-  (`web/static/js/playing.js`), `#stats` → `renderStatsView()`
-  (`web/static/js/stats.js`), `#settings` → `renderSettingsView()`
-  (`web/static/js/settings.js`), `#library`/status tabs/`#search/<q>`/
-  `#game/<id>` modal → Library, else Playing (empty hash is home). Playing/Stats/Settings data is lazy-fetched when the tab
-  becomes active; old `/settings` redirects to `/#settings`. `GET /api/me`,
-  search, and hash-back navigation must keep working across tabs; don't fold
-  `/login` into the shell. `#library` is the Library canonical URL (empty hash
-  is the Playing tab's home — `/#` renders Playing, not the grid). The
-  old in-library "Playing now" hero strip has been removed in favor of the
-  dedicated Playing tab.
+- **App shell (docs/cato_smooth.md §3.4; the 4-tab Nabu layout is retired)**:
+  `web/static/index.html` is the only authenticated page; `js/app.js` renders the shell with
+  lit-html: a header with the one search box (library first, then all games; on the Library
+  screen the page's own instant search takes over), the session timer pill and an offline /
+  queued-changes indicator; bottom navigation on phones (Home, Library, ⊕ Log, Discover, You)
+  that becomes a left sidebar from 1024 px. The frame is a CSS grid sized by `--app-h`
+  (`js/head-init.js`, iOS standalone `screen.height` logic, `--safe-bottom`); the nav is a
+  grid row, not `position: fixed` (avoids the iOS PWA cold-open gap). Routes (`js/core/router.js`):
+  `#home` (also the empty hash), `#library?shelf=&q=&sort=&view=&dense=`, `#game/<id>`, `#log`
+  (opens the Log sheet), `#discover`, `#discover/search?q=…`, `#you`, `#you/stats`, `#you/diary`,
+  `#you/settings`, `#you/help`, `#dev/ui` (component gallery, only with `CATO_DEV=1`). Legacy
+  hashes redirect (`#now`→`#home`, `#stats`→`#you/stats`, `#settings`→`#you/settings`, status
+  hashes→`#library?shelf=…`, `#search/<q>`→`#library?q=…`). Home and the Log sheet load
+  eagerly; every other screen is a dynamic `import()` on first visit (`SCREENS` in app.js).
+  Screens render from the store (`app.store`), so they work offline; every library write
+  goes through `features/actions.js` (optimistic, outbox, Undo toast).
 - **PWA installability**: `web/static/manifest.webmanifest` (`name: Cato — Game
   Library`, `display: standalone`, `theme_color: #1a1a2e`, icons in
   `web/static/icons/*`, shortcuts to Library/Stats/Search), `web/static/offline.html`
@@ -205,12 +201,15 @@ tests/js/        node --test suites for the pure frontend modules
   `staticCacheMiddleware` sends `no-cache` for `/js/ /css/ /icons/ /manifest*`,
   and `no-store` for `/service-worker.js`. Keep all four files and the
   `head-init.js` `<script>` in `<head>` — removing them breaks install/offline.
-- **Accessibility**: bottom tabs have `aria-label`, `aria-current`,
-  `role="tablist"/tab` on status filters, `aria-live="polite"` on `#mainContainer`
-  and `#statsStrip`, skip-link `href="#mainContainer"`, `:focus-visible` outlines,
-  `@media (prefers-reduced-motion: reduce)` disables animations,
-  `viewport-fit=cover` + `safe-area-inset-*` for notches, and keyboard shortcuts
-  `1/2/3/4` for Library/Playing/Stats/Settings. Preserve these.
+- **Accessibility**: one dedicated `role=status` live region (the toast region), sheets are
+  modal `<dialog>`s (background inert, focus returns to the opener), the status control is a
+  radio group, the rating input is a slider (arrows step half stars), status is never shown
+  by colour alone, touch targets are at least 44 px, `:focus-visible` outlines, skip link,
+  `prefers-reduced-motion` disables animation and confetti, `viewport-fit=cover` +
+  `safe-area-inset-*`. Keyboard: `1`–`4` Home/Library/Discover/You, `L` log, `/` search,
+  `Cmd/Ctrl-K` palette, and in the Library `j`/`k`/arrows, `Enter`, `s`, `r`, `l`; shortcuts
+  never fire while typing or while a sheet or menu is open. Playwright runs axe-core on every
+  screen in light and dark. Preserve these.
 - **Env config fallbacks**: `IGDB_CLIENT_ID`→`TWITCH_OAUTH_ID`,
   `IGDB_CLIENT_SECRET`→`TWITCH_OAUTH_SECRET` (docker-compose sets both).
 - **No codegen, no ORM, no frontend build step**. Raw SQL everywhere; vanilla JS.

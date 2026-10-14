@@ -421,3 +421,45 @@ func TestDevicesAndDiscover(t *testing.T) {
 	}
 	c.json(http.MethodPatch, "/api/v1/me/prefs", map[string]any{"saved_views": []map[string]string{{"name": "", "query": "x"}}}, http.StatusBadRequest)
 }
+
+// S2: catalog search needs an account, caps the query and is rate limited
+// per IP; typeahead shares the limiter.
+func TestSearchGuards(t *testing.T) {
+	f := newFixture(t)
+	c := f.user(t, "u1")
+	rec := httptest.NewRecorder()
+	f.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/search?q=hades", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("anonymous search: %d", rec.Code)
+	}
+	long := strings.Repeat("a", 150)
+	if q := searchQuery(httptest.NewRequest(http.MethodGet, "/api/v1/search?q="+long, nil)); len(q) != maxQueryChars {
+		t.Errorf("query not capped: %d", len(q))
+	}
+	f.api.SearchLimiter = auth.NewRateLimiter(3, time.Minute)
+	for i := 0; i < 3; i++ {
+		c.json(http.MethodGet, "/api/v1/typeahead?q=hades", nil, http.StatusOK)
+	}
+	c.json(http.MethodGet, "/api/v1/search?q=hades", nil, http.StatusTooManyRequests)
+	// A different client IP has its own bucket.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=hades", nil)
+	req.RemoteAddr = "198.51.100.7:1234"
+	req.AddCookie(&http.Cookie{Name: "cato_session", Value: c.session.ID})
+	rec = httptest.NewRecorder()
+	f.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("other IP: %d", rec.Code)
+	}
+}
+
+func TestDiscoverSkipsCoverlessAndLimits(t *testing.T) {
+	f := newFixture(t)
+	c := f.user(t, "u1")
+	f.db.Exec(`UPDATE games SET local_cover_path = '/covers/1.jpg', popularity_score = 5 WHERE id = 1`)
+	f.db.Exec(`UPDATE games SET local_cover_path = '/covers/3.jpg', popularity_score = 9 WHERE id = 3`)
+	shelves := c.json(http.MethodGet, "/api/v1/discover?limit=1", nil, http.StatusOK)["shelves"].([]any)
+	items := shelves[0].(map[string]any)["items"].([]any)
+	if len(items) != 1 || items[0].(map[string]any)["id"].(float64) != 3 {
+		t.Errorf("popular %v: want the most popular game with a cover", items)
+	}
+}

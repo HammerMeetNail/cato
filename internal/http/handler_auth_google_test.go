@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"golang.org/x/oauth2"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+
+	"golang.org/x/oauth2"
 
 	"cato/internal/auth"
 	"cato/internal/config"

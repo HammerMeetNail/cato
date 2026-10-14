@@ -23,6 +23,7 @@ import (
 	"cato/internal/db"
 	v1 "cato/internal/http/v1"
 	"cato/internal/jobs"
+	"cato/internal/library"
 	"cato/internal/metrics"
 )
 
@@ -32,8 +33,8 @@ type Server struct {
 	mux            *http.ServeMux
 	httpServer     *http.Server
 	redirectServer *http.Server
-	gameHandler    *GameHandler
-	libraryHandler *LibraryHandler
+	catalog        *catalogWiring
+	library        *library.Store
 	static         *gzipStatic
 	assets         *assetIndex
 	jobs           *jobs.Runner
@@ -91,33 +92,30 @@ func (s *Server) routes() {
 	authHandler := NewAuthHandler(s.db, s.cfg)
 	authHandler.Register(s.mux)
 
-	gameHandler := NewGameHandler(s.db, s.cfg)
-	gameHandler.Register(s.mux)
-	s.gameHandler = gameHandler
-
-	libraryHandler := NewLibraryHandler(s.db, auth.Cookies{Secure: s.cfg.SecureCookies()})
-	libraryHandler.Register(s.mux)
-	s.libraryHandler = libraryHandler
+	s.catalog = newCatalogWiring(s.db, s.cfg)
+	s.library = library.NewStore(s.db, s.catalog.store)
 
 	v1.Register(s.mux, v1.Deps{
 		DB:            s.db,
 		Cfg:           s.cfg,
 		Cookies:       auth.Cookies{Secure: s.cfg.SecureCookies()},
-		Library:       libraryHandler.lib,
-		Catalog:       gameHandler.service,
-		Games:         libraryHandler.games,
-		SearchLimiter: gameHandler.searchLimiter,
+		Library:       s.library,
+		Catalog:       s.catalog.service,
+		Games:         s.catalog.store,
+		SearchLimiter: s.catalog.searchLimiter,
 	})
 
 	s.mux.HandleFunc("/covers/", covers.ServeCover(s.cfg.CoverDir))
 
 	// Page routes
 	s.mux.HandleFunc("/login", s.servePage("login.html"))
-	s.mux.HandleFunc("/library", s.servePage("index.html"))
+	s.mux.HandleFunc("/library", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/#library", http.StatusFound)
+	})
 	// Settings is now a SPA tab (#settings). Keep /settings as a redirect so
 	// old links/bookmarks land in the right place without a full-page reload loop.
 	s.mux.HandleFunc("/settings", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/#settings", http.StatusFound)
+		http.Redirect(w, r, "/#you/settings", http.StatusFound)
 	})
 
 	// Static files with cache headers; text assets are served gzipped.
@@ -319,14 +317,14 @@ func (s *Server) clientMiddleware(next http.Handler) http.Handler {
 
 // Jobs returns the server-owned recurring tasks (catalog refresh and
 // repair) for the shared job runner.
-func (s *Server) Jobs() []jobs.Job { return s.gameHandler.Jobs(s.cfg) }
+func (s *Server) Jobs() []jobs.Job { return s.catalog.Jobs(s.cfg) }
 
 // SetJobRunner lets /healthz and the admin pages report job health.
 func (s *Server) SetJobRunner(r *jobs.Runner) { s.jobs = r }
 
 // SetCoverNotifier registers a callback (the cover worker's Wake) run after
 // library writes that may have queued a cover job.
-func (s *Server) SetCoverNotifier(fn func()) { s.libraryHandler.coverQueued = fn }
+func (s *Server) SetCoverNotifier(fn func()) { s.library.OnWrite = fn }
 
 // Listen binds the application listener (TLS when configured) and the
 // optional HTTP→HTTPS redirect listener. Start calls it when needed;
@@ -420,7 +418,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if drainErr != nil {
 		_ = s.httpServer.Close()
 	}
-	workerErr := s.gameHandler.service.Shutdown(ctx)
+	workerErr := s.catalog.service.Shutdown(ctx)
 	return errors.Join(drainErr, redirectErr, workerErr)
 }
 

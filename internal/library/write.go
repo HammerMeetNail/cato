@@ -244,8 +244,9 @@ func (s *Store) applyChange(ctx context.Context, tx *sql.Tx, userID string, game
 		primary = st.platforms[0]
 	}
 
-	// Timestamps: an unspecified value is preserved, and auto-set when the
-	// status moves into playing/completed while still unset.
+	// Timestamps: an unspecified value is preserved, and auto-set only when
+	// the status moves into playing/completed (a date the user cleared stays
+	// cleared through later edits).
 	if _, err := tx.ExecContext(ctx, `INSERT INTO library_items (user_id, game_id, status, rating, playtime_minutes, tags_json, notes,
 			started_at, completed_at, platform, owned_platforms_json, medium, created_at, updated_at)
 		VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -258,14 +259,14 @@ func (s *Store) applyChange(ctx context.Context, tx *sql.Tx, userID string, game
 				WHEN ? THEN NULL
 				WHEN ? THEN ?
 				WHEN library_items.started_at IS NOT NULL THEN library_items.started_at
-				WHEN excluded.status = 'playing' THEN excluded.updated_at
+				WHEN excluded.status = 'playing' AND library_items.status != 'playing' THEN excluded.updated_at
 				ELSE NULL
 			END,
 			completed_at = CASE
 				WHEN ? THEN NULL
 				WHEN ? THEN ?
 				WHEN library_items.completed_at IS NOT NULL THEN library_items.completed_at
-				WHEN excluded.status = 'completed' THEN excluded.updated_at
+				WHEN excluded.status = 'completed' AND library_items.status != 'completed' THEN excluded.updated_at
 				ELSE NULL
 			END,
 			platform = excluded.platform,

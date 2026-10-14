@@ -105,7 +105,7 @@ func TestHTTPSModeUsesHostPrefixedSessionCookie(t *testing.T) {
 		t.Fatal("unprefixed cookie accepted in HTTPS mode")
 	}
 	// The library API (AuthRequired) reads the same cookie.
-	req := httptest.NewRequest(http.MethodGet, "/api/library", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/library", nil)
 	req.AddCookie(session)
 	rec = httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
