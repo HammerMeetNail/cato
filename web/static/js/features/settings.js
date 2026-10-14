@@ -9,6 +9,7 @@ import { api, setCSRF } from '../core/api.js';
 import { SORTS } from '../core/filter.js';
 import { formatDay, timestampDay } from '../core/format.js';
 import { app, savePrefs } from './app-state.js';
+import { reachSettings, loadReach } from './reach.js';
 
 const st = { devices: null, platforms: null, platformQuery: '' };
 
@@ -16,6 +17,7 @@ const st = { devices: null, platforms: null, platformQuery: '' };
 export const extraSettings = [];
 
 export async function enterSettings(route) {
+  loadReach();
   try {
     st.devices = (await api.get('/api/v1/devices')).items;
   } catch {
@@ -165,6 +167,7 @@ export function settingsView() {
         <label class="switch"><span>Show the first-run guide on Home</span><input type="checkbox" .checked=${!p.onboarding_done} @change=${e => save({ onboarding_done: !e.target.checked })}></label>
       </div></section>
 
+    ${reachSettings()}
     ${extraSettings.map(fn => fn())}
 
     <section id="set-data" aria-labelledby="h-data"><h2 id="h-data" class="section-head">Your data</h2>

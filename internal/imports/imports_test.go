@@ -344,3 +344,39 @@ func TestCleanProductTitle(t *testing.T) {
 		}
 	}
 }
+
+func TestBarcodeLookupCachesAndRemembers(t *testing.T) {
+	f := newFixture(t)
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.URL.Query().Get("upc") == "045496596439" {
+			w.Write([]byte(`{"code":"OK","items":[{"title":"Celeste - Nintendo Switch"}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	b := &Barcode{DB: f.db, Matcher: f.svc.Matcher, Endpoint: srv.URL}
+	res, err := b.Lookup(f.ctx, "u", "045496596439")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Title != "Celeste - Nintendo Switch" || res.Candidate == nil || res.Candidate.Match.ID != 3 {
+		t.Fatalf("lookup %+v", res)
+	}
+	b.Lookup(f.ctx, "u", "045496596439")
+	if calls != 1 {
+		t.Fatalf("each code is looked up once, got %d calls", calls)
+	}
+	if err := b.Confirm(f.ctx, "045496596439", 3); err != nil {
+		t.Fatal(err)
+	}
+	res, _ = b.Lookup(f.ctx, "v", "045496596439")
+	if res.Confirmed == nil || res.Confirmed.ID != 3 {
+		t.Fatalf("confirmed match %+v", res)
+	}
+	if _, err := b.Lookup(f.ctx, "u", "12ab"); err != ErrBadCode {
+		t.Fatalf("bad code: %v", err)
+	}
+}

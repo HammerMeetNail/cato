@@ -2,6 +2,7 @@
 // supports: Google when configured, sign-up while CATO_SIGNUP allows it (or
 // with an invite link).
 import { api, setCSRF } from './core/api.js';
+import { requestOptions, credentialJSON, passkeysPossible } from './core/b64.js';
 
 // Trusted Types (CSP require-trusted-types-for 'script'): registering the
 // service worker needs a TrustedScriptURL, from a policy that allows only it.
@@ -83,6 +84,27 @@ async function main() {
   if (invite && config.invite_valid) setMode(true);
   if (invite && !config.invite_valid) showError('This invite link has expired or was already used. Ask for a new one.');
   if (params.get('error')) showError(params.get('error'));
+
+  // Passkeys: offered when the browser supports them and Cato is reached by
+  // a host name (an IP address can't hold a passkey).
+  if (passkeysPossible() && !(invite && config.invite_valid)) {
+    $('passkeyBtn').hidden = false;
+    $('googleDivider').hidden = false;
+    $('passkeyBtn').addEventListener('click', async () => {
+      showError('');
+      $('passkeyBtn').disabled = true;
+      try {
+        const { publicKey } = await api.post('/api/auth/passkey/begin', {});
+        const cred = await navigator.credentials.get({ publicKey: requestOptions(publicKey) });
+        const res = await api.post('/api/auth/passkey/finish', credentialJSON(cred));
+        setCSRF(res.csrf_token);
+        location.href = '/' + location.hash;
+      } catch (err) {
+        if (err?.name !== 'NotAllowedError') showError(err.message || 'Passkey sign-in failed');
+        $('passkeyBtn').disabled = false;
+      }
+    });
+  }
 
   $('toggleLink').addEventListener('click', () => setMode(!isSignup));
   form.addEventListener('submit', async e => {

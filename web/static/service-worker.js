@@ -71,6 +71,40 @@ self.addEventListener("sync", event => {
     .then(list => list.forEach(c => c.postMessage({ type: "flush-outbox" }))));
 });
 
+// Web Push (plan §8.2): the server sends {title, body, url, tag, badge,
+// icon}, encrypted for this browser. Showing a notification is required for
+// every push (userVisibleOnly).
+self.addEventListener("push", event => {
+  let msg = {};
+  try { msg = event.data ? event.data.json() : {}; } catch { msg = { body: event.data && event.data.text() }; }
+  const title = msg.title || "Cato";
+  const url = typeof msg.url === "string" && msg.url.startsWith("/") ? msg.url : "/#you/inbox";
+  event.waitUntil(Promise.all([
+    self.registration.showNotification(title, {
+      body: msg.body || "",
+      tag: msg.tag || undefined,
+      icon: typeof msg.icon === "string" && msg.icon.startsWith("/") ? msg.icon : "/icons/icon-192.png",
+      badge: "/icons/icon-192.png",
+      data: { url },
+    }),
+    // App icon badge (iOS 16.4+ installed apps, desktop Chrome).
+    msg.badge > 0 && self.navigator.setAppBadge ? self.navigator.setAppBadge(msg.badge).catch(() => {}) : Promise.resolve(),
+  ]));
+});
+
+self.addEventListener("notificationclick", event => {
+  event.notification.close();
+  const url = new URL((event.notification.data && event.notification.data.url) || "/#you/inbox", self.location.origin).href;
+  event.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(list => {
+    for (const c of list) {
+      if (c.url && new URL(c.url).origin === self.location.origin && "focus" in c) {
+        return c.navigate(url).then(w => (w || c).focus()).catch(() => c.focus());
+      }
+    }
+    return self.clients.openWindow(url);
+  }));
+});
+
 function withTimeout(promise, ms) {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error("timeout")), ms);

@@ -49,9 +49,18 @@ and production environment using the runbook before cutting a release tag.
 | `CATO_HTTP_REDIRECT_ADDR` | — | Optional plain-HTTP listener that answers every request with a 308 to HTTPS. Needs native TLS. |
 | `CATO_TRUSTED_PROXIES` | — | Comma-separated CIDRs/IPs whose `X-Forwarded-For`/`X-Forwarded-Proto` are believed (rate limiting, scheme). Ignored from anyone else. |
 | `CATO_ALLOW_INSECURE` | — | `1` permits plain HTTP. For tests only. |
-| `CATO_SIGNUP` | `closed` | `open`, `invite` or `closed`. Every mode allows the first account on an empty server; `closed` blocks the rest (email and Google). `invite` behaves like `closed` until invites ship. |
+| `CATO_SIGNUP` | `closed` | `open`, `invite` or `closed`. The first account on an empty server is always allowed and becomes the admin. `invite` accepts anyone's invite link; `closed` only an admin's. Admins can override it on the Admin page. |
 | `CATO_SEARCH_RATE_LIMIT` | `120` | Per-IP `/api/games/search` requests per minute. |
 | `CATO_SECURE_COOKIES` | `false` | Legacy override; HTTPS already forces `Secure`. |
+| `CATO_METRICS_TOKEN` | — | Bearer token for `/metrics` (otherwise private-network clients only). |
+| `CATO_LOG_FORMAT` / `CATO_LOG_LEVEL` | `text` / `info` | `json` for structured logs. |
+| `CATO_BACKUP_DIR` | `backups` next to the DB | Automatic snapshots taken before a schema upgrade (five kept). |
+| `CATO_WIKIDATA_LINKS` | — | `1` adds HowLongToBeat/PCGamingWiki links via Wikidata (sends game slugs to wikidata.org). |
+| `STEAM_WEB_API_KEY` | — | Steam import and the opt-in daily play time sync. |
+| `ITAD_API_KEY` | — | IsThereAnyDeal price alerts for wishlists. |
+| `UPCITEMDB_KEY` | — | UPCitemdb paid tier for barcode lookups (free tier: 100/day without it). |
+| `CATO_PUSH_CONTACT` | `CATO_BASE_URL` | `mailto:`/`https:` contact sent to push services. VAPID keys are generated on first use and stored in the database. |
+| `CATO_SMTP_HOST`, `_PORT`, `_USER`, `_PASSWORD`, `_FROM` | port `587` | Enables the optional weekly email digest (465 = implicit TLS, otherwise STARTTLS). |
 
 Over HTTPS the session cookie is `__Host-cato_session` (`Secure`, `Path=/`, no
 `Domain`), and responses add HSTS (`max-age=31536000`, not with dev certificates)
@@ -91,7 +100,9 @@ At startup Cato also repairs cover data poisoned by earlier bugs: URLs pointing 
 
 Email/password signup and login, plus Google OAuth. Sessions are stored as opaque hashed tokens. Unsafe methods require a CSRF token returned by `GET /api/me` (compared exactly, in constant time). Expired sessions and cache entries are swept daily by a background job.
 
-- Sign-up follows `CATO_SIGNUP` (default `closed`: only the first account). Set `CATO_SIGNUP=open` temporarily to let more people register.
+- Sign-up follows the effective mode (Admin page, else `CATO_SIGNUP`; default `closed`). People join with invite links (You → People → Invite; single use, 7 days); an invite makes the inviter and the newcomer follow each other.
+- Passkeys (WebAuthn) can be added in Settings and used on the sign-in page; they need Cato to be reached by a host name, not an IP address.
+- Sessions last 90 days from the last use on that device. Admins can make one-time password reset links (24 hours) for people who forget theirs.
 - Login is limited per IP and per account: after 5 consecutive failures an account waits 1 s, 2 s, 4 s… (up to 15 minutes) whether or not it exists. Unknown emails cost a bcrypt compare, and duplicate sign-ups get a generic error, so responses don't reveal which emails have accounts.
 - Deleting an account needs the current password (or, for Google-only accounts, a sign-in within the last 10 minutes).
 - Anonymous catalog searches are local only; only signed-in searches refresh from IGDB. Queries are capped at 100 characters.
@@ -101,27 +112,21 @@ Google OAuth needs `CATO_BASE_URL` set to the `https://` address users type into
 
 ## API
 
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| `GET` | `/healthz` | No | Health check |
-| `GET` | `/api/me` | No | Current user info + CSRF token |
-| `GET` | `/api/config` | No | `{google_enabled, signup, signup_allowed}` for the login page |
-| `DELETE` | `/api/me` | Session+CSRF | Delete account; body `{"confirm":"DELETE","password":"…"}` |
-| `POST` | `/api/auth/signup` | No | Create account |
-| `POST` | `/api/auth/login` | No | Login |
-| `POST` | `/api/auth/logout` | No | Logout |
-| `GET` | `/api/auth/google/start` | No | Google OAuth start |
-| `GET` | `/api/auth/google/callback` | No | Google OAuth callback |
-| `GET` | `/api/games/search?q=zelda` | No | Search games (`full=1` enables paginated results with `limit`/`offset`). Anonymous: local catalog only. 120/min per IP. |
-| `GET` | `/api/games/{id}` | No | Get game detail (ETag, `Cache-Control: public, max-age=300`) |
-| `GET` | `/api/library?status=backlog&limit=&offset=&tag=` | Session | List library. The default order pages by `cursor=` (from the `X-Next-Cursor` header); other sorts by `offset`. `X-Has-More` on every page, `X-Total-Count` on the first. |
-| `GET` | `/api/library/{gameID}` | Session | Get one library item (404 if not owned) |
-| `PATCH` | `/api/library/{gameID}` | Session+CSRF | Update only the fields sent; `playtime_delta_minutes` adds time atomically. Returns the item. |
-| `POST`/`PUT` | `/api/library/{gameID}` | Session+CSRF | Add/update item. Omitted timestamps are preserved and auto-tracked on status changes; `""` clears them. Timestamps accept RFC3339 or `YYYY-MM-DD`. |
-| `DELETE` | `/api/library/{gameID}` | Session+CSRF | Remove item |
-| `GET` | `/api/library/check?ids=1,2,3` | Session | Which of these game IDs are in the library |
-| `GET` | `/api/library/counts` | Session | Per-status item counts |
-| `GET` | `/api/library/tags?q=ps` | Session | Tag autocomplete |
+The app uses `/api/v1` (sessions + CSRF); see [docs/api-v1.md](docs/api-v1.md). The public endpoints are:
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/healthz` | Health, including background job lag |
+| `GET` | `/metrics` | Prometheus metrics (token or private network) |
+| `GET` | `/api/me` | `{authenticated, csrf_token, …}` |
+| `GET` | `/api/config?invite=` | What the sign-in page offers: Google, sign-up, whether an invite is valid |
+| `POST` | `/api/auth/signup` | `{email, password, invite?}` |
+| `POST` | `/api/auth/login`, `/api/auth/logout` | Password sign-in and sign-out |
+| `POST` | `/api/auth/passkey/begin`, `/api/auth/passkey/finish` | Passkey sign-in |
+| `POST` | `/api/auth/reset` | `{token, password}` from an admin-made reset link |
+| `GET` | `/api/auth/google/start?invite=`, `/api/auth/google/callback` | Google sign-in |
+| `GET` | `/share?title=&text=&url=` | PWA share target → the Log sheet (or the game page) |
+| `GET` | `/covers/{id}.jpg`, `/avatars/{file}` | Covers (public, immutable) and avatars (signed-in only) |
 
 ## Backup
 

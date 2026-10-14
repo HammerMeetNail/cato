@@ -317,7 +317,7 @@ func (c *Challenges) Take(clientDataJSON []byte, userID string) ([]byte, error) 
 // proxy), otherwise from the request's host. Passkeys need a host name;
 // IP addresses are refused.
 func RPFor(baseURL string, https bool, r *http.Request) (RP, error) {
-	errIP := errors.New("passkeys need a host name, not an IP address")
+	errIP := errors.New("Passkeys need Cato to be opened by its host name, not an IP address.")
 	if baseURL != "" {
 		if u, err := url.Parse(baseURL); err == nil && u.Host != "" {
 			if net.ParseIP(u.Hostname()) != nil {

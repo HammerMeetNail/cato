@@ -22,6 +22,10 @@ async function main() {
   let writeGate = null;
   let rejectWrites = false;
   const posted = [];
+  const shown = [];
+  const opened = [];
+  const badges = [];
+  let windows = null;
   const key = request => typeof request === 'string' ? request : request.url;
   const norm = u => u.startsWith('http') ? u : 'https://cato.test' + u;
   const caches = {
@@ -49,7 +53,13 @@ async function main() {
     URL, Response, caches, setTimeout, clearTimeout,
     self: {
       location: { origin: 'https://cato.test' },
-      clients: { claim: async () => {}, matchAll: async () => [{ postMessage: m => posted.push(m) }] },
+      clients: {
+        claim: async () => {},
+        matchAll: async () => (windows ?? [{ postMessage: m => posted.push(m) }]),
+        openWindow: async url => { opened.push(url); },
+      },
+      registration: { showNotification: async (title, opts) => { shown.push({ title, ...opts }); } },
+      navigator: { setAppBadge: async n => { badges.push(n); } },
       skipWaiting: async () => {},
       addEventListener: (name, handler) => { handlers[name] = handler; },
     },
@@ -154,7 +164,30 @@ async function main() {
   handlers.sync({ tag: 'cato-outbox', waitUntil: p => sync.push(p) });
   await Promise.all(sync);
   assert.equal(JSON.stringify(posted), JSON.stringify([{ type: 'flush-outbox' }]));
-  console.log('PASS: manifest precache, offline shell, versioned assets, cover cache rules and LRU, upgrades, background sync');
+  // Push: shows the server's message, sets the badge, and a click opens
+  // (or focuses and navigates) the app at the message's same-origin URL.
+  const pushes = [];
+  handlers.push({ data: { json: () => ({ title: 'Out today', body: 'Hades II is out', url: '/#game/2', tag: 'release-2', badge: 3 }) }, waitUntil: p => pushes.push(p) });
+  handlers.push({ data: { json: () => ({ title: 'Evil', url: 'https://evil.example/' }) }, waitUntil: p => pushes.push(p) });
+  await Promise.all(pushes);
+  assert.equal(shown[0].title, 'Out today');
+  assert.equal(shown[0].body, 'Hades II is out');
+  assert.equal(shown[0].data.url, '/#game/2');
+  assert.equal(shown[1].data.url, '/#you/inbox', 'off-site URLs are ignored');
+  assert.deepEqual(badges, [3]);
+  const clicks = [];
+  windows = [];
+  handlers.notificationclick({ notification: { data: { url: '/#game/2' }, close: () => {} }, waitUntil: p => clicks.push(p) });
+  await Promise.all(clicks);
+  assert.deepEqual(opened, ['https://cato.test/#game/2']);
+  let navigated = null;
+  let focused = false;
+  windows = [{ url: 'https://cato.test/#home', navigate: async u => { navigated = u; return null; }, focus: () => { focused = true; } }];
+  handlers.notificationclick({ notification: { data: { url: '/#you/inbox' }, close: () => {} }, waitUntil: p => clicks.push(p) });
+  await Promise.all(clicks);
+  assert.equal(navigated, 'https://cato.test/#you/inbox');
+  assert.ok(focused, 'an open Cato window is focused instead of opening another');
+  console.log('PASS: manifest precache, offline shell, versioned assets, cover cache rules and LRU, upgrades, background sync, push and notification clicks');
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => clearTimeout(watchdog));

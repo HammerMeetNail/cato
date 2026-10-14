@@ -79,11 +79,11 @@ The item's `minutes` always equals the sum of its sessions (adjustments included
 | Method and path | Purpose |
 |---|---|
 | `GET /me` | `{user, csrf_token, prefs, library_rev}`. |
-| `PATCH /me/prefs` | Merge settings: `theme` (`system`/`light`/`dark`), `rating_display` (`stars`/`ten`/`hundred`), `default_platforms`, `library_layout` (`grid`/`list`), `density` (`comfortable`/`compact`), `library_sort`, `up_next` (≤ 5 game IDs), `streaks`, `week_start`, `onboarding_done`, `haptics`, `confetti`. Unknown keys are rejected. |
+| `PATCH /me/prefs` | Merge settings: `theme` (`system`/`light`/`dark`), `rating_display` (`stars`/`ten`/`hundred`), `default_platforms`, `library_layout` (`grid`/`list`), `density` (`comfortable`/`compact`), `library_sort`, `up_next` (≤ 5 game IDs), `streaks`, `week_start`, `onboarding_done`, `haptics`, `confetti`, `saved_views`, `notify`, `email_digest`, `release_alerts`, `release_week`, `price_alerts`. Unknown keys are rejected. |
 | `GET /home?today=` | Playing and paused items, Up Next picks with reasons (your pinned queue first), coming_soon (wishlist games with a release date ahead), recent sessions, the timer, counts, streak, and whether to show onboarding. |
 | `GET /devices` | Signed-in sessions `{id, user_agent, created_at, last_seen_at, current}`; `DELETE /devices/{id}` signs one out, `POST /devices/revoke-others` all but this one. |
 | `GET /stats?year=&today=` | Totals, the year's minutes/sessions/days/finished, finished per year by completion type, minutes per month (12), the year's heatmap, rating distribution (ten half-star buckets), top tags/platforms/genres, backlog age and the longest session. |
-| `GET /export.json` | Everything, re-importable: items with playthroughs and sessions, and settings. |
+| `GET /export.json` | Everything, re-importable (`version: 2`): items with playthroughs and sessions, settings, profile, reviews, lists and follows. |
 | `GET /export.csv` | Spreadsheet export (formula-safe cells). |
 
 ## Catalog
@@ -146,3 +146,33 @@ Admins only (`403` otherwise). Every change is written to the audit log.
 | `GET /admin/audit` | Admin actions, newest first. |
 | `GET /admin/system` | Database and WAL size, last backup, cover queue, IGDB lanes, background jobs and lag. `POST /admin/jobs/{name}/run` runs one now. |
 | `POST /admin/games/merge` | `{custom_id, into_id}`: fold a custom game into its catalog entry. |
+
+## Import
+
+Every source previews first and writes nothing; `POST /import/commit` writes the games you chose as one batch. A batch never overwrites what you recorded: a game already in your library only gains an empty rating, notes, platform or dates, extra tags, and more play time. Running the same import twice changes nothing the second time, and imports don't appear in friends' feeds.
+
+| Method and path | Purpose |
+|---|---|
+| `GET /import` | `{steam_configured, steam: {steam_id, persona, sync, last_sync_at, last_error} | null, ra_user, batches, presets, fields}`. |
+| `POST /import/csv/preview` | `{csv, mapping?}` → `{headers, preset, mapping, rows, items}`. The preset (Grouvee, HowLongToBeat, Infinite Backlog, Cato, generic) and the column mapping are detected; send `mapping: {columns: {title: 0, …}, rating_scale, statuses}` to override. Up to 10,000 rows. |
+| `POST /import/json/preview` | `{data}` (a Cato export, as text or JSON) → `{items, extras: {reviews, lists}}`. |
+| `POST /import/steam/preview` | `{profile}` (a profile link, custom URL name or SteamID64) → `{steam, items}`. The profile and its game details must be public (`400` explains otherwise; `503 not_configured` without `STEAM_WEB_API_KEY`). Suggested status: played in the last 30 days → Playing, played before → Backlog tagged `played`, never → Backlog. |
+| `PATCH /import/steam` | `{sync}`: the daily job logs new Steam play time as `steam` sessions. `DELETE /import/steam` disconnects. |
+| `POST /import/ra/preview` | `{user, key, remember}` → RetroAchievements progress (beaten/mastered → Finished). |
+| `POST /import/commit` | `{source, entries: [{game_id, row}], extras?}` → `{batch_id, added, updated, unchanged, reviews, lists, library_rev}`. |
+| `POST /import/batches/{id}/undo` | Puts every game the batch touched back as it was (games it added are removed). Works any time, once. |
+
+**Preview items** are `{index, row, match: {id, name, year, cover}, confidence, state, alternatives, in_library}`. `state` is `matched` (an IGDB or Steam ID, or a confident name and year), `review` (a likely match to confirm, with alternatives) or `none`.
+
+## Notifications, passkeys and barcodes
+
+| Method and path | Purpose |
+|---|---|
+| `GET /push` | `{public_key (VAPID), devices, email, price_alerts, steam}`: what this server can do. |
+| `POST /push/subscriptions` | A `PushSubscription.toJSON()` (`{endpoint, keys: {p256dh, auth}}`; https endpoints only). `DELETE` with `{endpoint}` removes it. |
+| `POST /push/test` | Sends a test notification to your devices. |
+| `GET /passkeys` | `{items, available, reason}`; passkeys need a host name, not an IP address. |
+| `POST /passkeys/begin` | `PublicKeyCredentialCreationOptions` (base64url fields). Then `POST /passkeys` with `{name, id, rawId, response: {clientDataJSON, attestationObject, transports}}`. `DELETE /passkeys/{id}`. |
+| `GET /barcode/{upc}` | `{code, title, confirmed?, candidate?}`: the product title (looked up once, ever) and the catalog match. `PUT /barcode/{upc}` `{game_id}` remembers the right game for everyone. |
+
+Notification delivery follows `prefs.notify[kind].push` (release, release_soon and price are on by default; social kinds are off). Alerts: `release_alerts` (day of release on your platforms), `release_week` (a week ahead), `price_alerts: {enabled, min_cut, low_only, country}`, `email_digest` (weekly, when the server has SMTP).

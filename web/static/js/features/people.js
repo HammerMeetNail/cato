@@ -687,7 +687,7 @@ function notificationText(n) {
     case 'invite_used': return html`${who} joined with your invite`;
     case 'release': return html`${game} is out today${n.data?.platform ? ` on ${n.data.platform}` : ''}`;
     case 'release_soon': return html`${game} comes out ${n.data?.when || 'soon'}`;
-    case 'price': return html`${game} is ${n.data?.cut ? `${n.data.cut}% off` : 'on sale'}${n.data?.shop ? ` at ${n.data.shop}` : ''}${n.data?.price ? ` (${n.data.price})` : ''}${n.data?.low ? ' — historical low' : ''}`;
+    case 'price': return html`${game} is ${n.data?.cut ? `${n.data.cut}% off` : 'on sale'}${n.data?.shop ? ` at ${n.data.shop}` : ''}${n.data?.price ? ` (${n.data.price})` : ''}${n.data?.low ? ' — historical low' : ''} · via IsThereAnyDeal`;
     default: return html`${n.kind.replaceAll('_', ' ')}${game ? html` · ${game}` : ''}`;
   }
 }

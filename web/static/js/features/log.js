@@ -135,6 +135,9 @@ export function openLogSheet(initial = '') {
           else if (e.key === 'Escape') { e.preventDefault(); s.close(); }
         }}>
       </div>
+      <button type="button" class="btn btn-ghost btn-icon" aria-label="Scan a barcode" @click=${() => {
+        import('./scan.js').then(m => m.openScanner(q => { state.q = q; search(s); s.update(); }));
+      }}>${icon('scan-barcode')}</button>
       <button type="button" class="btn btn-ghost btn-icon" aria-label="Close" @click=${() => s.close()}>${icon('x')}</button>
     </div>`;
   }

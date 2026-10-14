@@ -103,6 +103,20 @@ for (const scheme of ['light', 'dark'] as const) {
       await scan(page, 'edit profile sheet');
     });
 
+    test(`import screens have no serious violations (${scheme})`, async ({ page }) => {
+      await account(page, 'a11y-import');
+      for (const source of ['steam', 'file', 'ra', 'history']) {
+        await gotoApp(page, `#you/import?source=${source}`);
+        await expect(page.getByRole('heading', { name: 'Import' })).toBeVisible();
+        await scan(page, `import ${source}`);
+      }
+      await gotoApp(page, '#you/import?source=file');
+      await page.setInputFiles('input[type=file]', { name: 'g.csv', mimeType: 'text/csv', buffer: Buffer.from('Title,Status\nHades,Beaten\nZelda Breath,Playing\nNope Nope 123,Backlog\n') });
+      await expect(page.locator('.import-row').first()).toBeVisible();
+      await page.getByRole('radio', { name: /^All/ }).click();
+      await scan(page, 'import review');
+    });
+
     test(`admin screens have no serious violations (${scheme})`, async ({ page }) => {
       expect((await page.request.post('/api/auth/login', { data: { email: 'admin@e2e.test', password: 'e2e-password-1' } })).status()).toBe(200);
       for (const tab of ['users', 'reports', 'invites', 'system', 'audit']) {

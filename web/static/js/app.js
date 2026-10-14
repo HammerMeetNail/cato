@@ -45,6 +45,7 @@ const SCREENS = {
   'you/people': () => import('./features/people.js').then(m => ({ view: m.peopleView, enter: m.enterPeople })),
   'you/inbox': () => import('./features/people.js').then(m => ({ view: m.inboxView, enter: m.enterInbox })),
   admin: () => import('./features/admin.js').then(m => ({ view: m.adminView, enter: m.enterAdmin })),
+  'you/import': () => import('./features/import.js').then(m => ({ view: m.importView, enter: m.enterImport })),
   'dev/ui': () => import('./dev/gallery.js').then(m => ({ view: m.galleryView })),
 };
 
@@ -57,7 +58,7 @@ const loaded = new Map();
 const TITLES = {
   home: 'Home', library: 'Library', game: 'Game', discover: 'Discover', 'discover/search': 'Search', you: 'You',
   'you/stats': 'Stats', 'you/diary': 'Diary', 'you/settings': 'Settings', 'you/help': 'Help', 'dev/ui': 'Gallery',
-  profile: 'Profile', list: 'List', 'you/lists': 'Lists', 'you/people': 'People', 'you/inbox': 'Inbox', admin: 'Admin',
+  profile: 'Profile', list: 'List', 'you/lists': 'Lists', 'you/people': 'People', 'you/inbox': 'Inbox', admin: 'Admin', 'you/import': 'Import',
 };
 
 let route = { name: 'home', query: {} };
@@ -148,8 +149,12 @@ async function onRoute(next) {
   if (navigated && next.name === 'home') beginHomeVisit();
   document.title = `${TITLES[next.name] ?? 'Cato'} · Cato`;
   if (next.name === 'log') {
-    openLogSheet(next.query.q || '');
+    // Land on Home first, then open the sheet: opening it before the
+    // redirect let the route change close it again (#log shortcut, share
+    // target).
+    route = { name: 'home', query: {} };
     go('#home', { replace: true });
+    openLogSheet(next.query.q || '');
     return;
   }
   if (!screenFor(next) && SCREENS[next.name]) {

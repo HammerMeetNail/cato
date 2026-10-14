@@ -34,6 +34,12 @@ internal/library/ The library domain: typed items, filters/sorts, writes with th
 internal/discover/ Discover shelves, Up Next scoring, estimates at your pace (reads catalog + library).
 internal/social/ People (plan §7): visibility rules, profiles, follows/blocks, reviews, lists, feed,
                  notifications, invites, reset links, sign-up, admin tools and the audit log.
+internal/imports/ Imports (plan §8.1): CSV presets/mapping, Cato JSON, Steam (+ daily sync),
+                 RetroAchievements, matching, barcode (UPC) lookups.
+internal/alerts/ Wishlist release-day / week-ahead alerts and IsThereAnyDeal price alerts.
+internal/push/   Web Push without a library: VAPID (RFC 8292) + aes128gcm (RFC 8291).
+internal/notify/ Push delivery per person's settings, subscriptions, weekly email digest.
+internal/webauthn/ Passkeys: minimal CBOR, registration/assertion checks, challenge store.
 internal/integrations/wikidata/ Opt-in ID crosswalk for HowLongToBeat / PCGamingWiki links.
 internal/jobs/   Background job runner (persisted schedule, jitter, cancellation).
 internal/metrics/ In-process counters/histograms in Prometheus text format.
@@ -182,6 +188,21 @@ tests/js/        node --test suites for the pure frontend modules
   and PopScore daily. Custom games have negative IDs and `source='custom'`; editions roll up
   to their base game on add (`playthroughs.edition_game_id`). External IDs with source
   ≥ 1000 are Cato's own (Wikidata); IGDB refreshes leave them alone.
+- **Reach (P5)**: imports go preview → person reviews → `POST /api/v1/import/commit` →
+  `library.Store.Import`, one `import_batches` row holding the before-snapshots so the whole
+  batch can be undone at any time. `Import` must stay idempotent and never overwrite recorded
+  data (only fill gaps / raise play time) and never write `activity`. Steam app IDs map through
+  `game_external_ids` (source 1), asking IGDB `external_games` for unknown ones;
+  `catalog.Service.EnsureGames` stores games first seen that way. The daily `steam.sync` job
+  turns play time increases into `source='steam'` sessions (`library.LogSynced`).
+  Notifications: `social` writes the inbox; `notify.Deliver` (job `push.deliver`, woken by
+  `social.OnNotify`) pushes per `prefs.notify[kind].push`; VAPID keys live in
+  `instance_settings`. Never add a push library or send unencrypted payloads. Passkeys:
+  `webauthn.RPFor` derives the RP ID from `CATO_BASE_URL` or the Host (IP addresses refused);
+  challenges are single-use, in memory, 5 minutes. Sessions slide: `TouchSession` (hourly)
+  extends `expires_at` to 90 days and refreshes the cookie. `/share` is the manifest
+  `share_target`. API bodies are limited to 1 MiB except imports (24 MiB) and image uploads
+  (12 MiB) (`bodyLimit`). Integrations are optional and hide themselves when their key is unset.
 - **IGDB is optional**: when `IGDB_CLIENT_ID` is empty a `noopIGDBClient` is used; IGDB calls
   fall back to local results on error.
 - **Rate limiting**: in-memory only (not shared across processes). `auth.RateLimiter`

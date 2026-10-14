@@ -712,6 +712,33 @@ For a household or friends server. **Decided:** social features are limited to t
   - Admin-generated reset links as a fallback.
   - A list of sessions and devices.
 
+### 8.4 P5 implementation notes (2026-10-14)
+
+- **Imports always preview first, and every import can be undone.** Each source (CSV, Cato JSON, Steam, RetroAchievements) produces rows, and the matcher tries IGDB ID, then Steam app ID, then name and year. Rows it is unsure about wait for "Is this right?". Committing writes one batch that keeps a snapshot of every game it touched, so the whole import can be undone at any time, not just inside the 15-minute window.
+- **Imports never overwrite and never repeat.** An imported game already in your library only gains what it lacked: rating, notes, platform, dates, tags, and more play time. Importing the same file twice changes nothing the second time.
+- **Presets:**
+  - Grouvee: detected by its `shelves` and `giantbomb_id` columns; ratings out of 5.
+  - HowLongToBeat and Infinite Backlog: detected by column names, then mapped by synonyms *(their exact export columns are unverified)*.
+  - Backloggd: has no export, so it is read through the generic mapping of community-script CSVs.
+  - Cato's own CSV: the formula-safety apostrophes are removed again.
+  - Anything else: the column-mapping editor.
+- **The Cato JSON export** (version 2) adds reviews, lists, follows and profile. Re-importing it restores sessions for games that are new to the library, plus reviews and lists. Follows are kept only as a record, because people differ between servers.
+- **Steam:** the import marks played-but-not-current games with a `played` tag on the Backlog shelf. The daily sync is opt-in and logs only play time that happens after the import.
+- **Web Push and passkeys are implemented from the RFCs instead of with libraries.** Web Push encryption (RFC 8291 aes128gcm, RFC 8292 VAPID) is about 200 lines and matches the RFC 8291 test vector. Passkeys use a minimal CBOR decoder and accept any attestation without checking it; the CBOR decoder is fuzzed. This keeps the dependency list unchanged.
+- **Notification delivery:**
+  - Push delivery runs within seconds of a notification, through a job woken by social writes, and at least every minute.
+  - A subscription is dropped on 404 or 410, or after five failures in a row.
+  - The weekly email lists unread notifications from the past week.
+- **Release alerts use the UTC day.** A game counts as released for you when a release date on one of your platforms (your default platforms, or platforms you own games on) falls on that day. With no platforms set, any platform counts.
+- **Price alerts:**
+  - They cover wishlist games that have a Steam app ID, using IsThereAnyDeal's Steam lookup and overview endpoints.
+  - An alert fires on a cut of at least your minimum, or on a historical low.
+  - Each deal is announced once.
+  - The response fields are unverified beyond the documentation: if IsThereAnyDeal changes them, alerts stop and the job reports the error on the System page.
+- **Barcodes:** the camera uses BarcodeDetector where it exists. Elsewhere, including iOS, you type the number. **Deferred:** the vendored ZXing-WASM fallback; typing the number covers iOS without adding a large WASM blob.
+- **Share target:** a Steam or IGDB link to a game Cato knows opens that game's page; anything else opens the ⊕ sheet with the search filled in. iOS gets a bookmarklet in Help. Building this exposed a bug where `#log` closed its own sheet (which also broke the "Log time" shortcut); it is fixed.
+- **Not built:** OAuth "waitlist" sync with IsThereAnyDeal, because polling covers the need; and PriceCharting, which is paid.
+
 ---
 
 ## 9. External data sources

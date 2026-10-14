@@ -14,6 +14,7 @@ export const youSections = [
   { hash: '#you/lists', icon: 'list', label: 'Lists', sub: 'Favourites, rankings and collections to share' },
   { hash: '#you/people', icon: 'users', label: 'People', sub: 'Follow friends, requests, invites and blocks' },
   { hash: '#you/inbox', icon: 'inbox', label: 'Inbox', sub: 'Follows, likes and alerts', badge: () => app.unread },
+  { hash: '#you/import', icon: 'upload', label: 'Import', sub: 'Steam, Grouvee, HowLongToBeat, spreadsheets, RetroAchievements' },
   { hash: '#you/settings', icon: 'settings', label: 'Settings', sub: 'Theme, ratings, platforms, devices, account' },
   { hash: '#you/help', icon: 'circle-question-mark', label: 'Help', sub: 'How Cato works and keyboard shortcuts' },
 ];
