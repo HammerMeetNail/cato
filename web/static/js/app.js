@@ -5,7 +5,7 @@
 import { html, render, nothing } from './ui/lit.js';
 import { icon } from './ui/icons.js';
 import { skeletonTiles, empty } from './ui/parts.js';
-import { toast } from './ui/toast.js';
+import { toast, prepareToasts } from './ui/toast.js';
 import { anySheetOpen, closeAllSheets } from './ui/sheet.js';
 import { closeMenu } from './ui/menu.js';
 import { api, request, setCSRF, getCSRF, ApiError } from './core/api.js';
@@ -14,7 +14,7 @@ import { Store } from './core/store.js';
 import { start as startRouter, tab, go } from './core/router.js';
 import { initials, plural } from './core/format.js';
 import { app, applyTheme } from './features/app-state.js';
-import { homeView, enterHome } from './features/home.js';
+import { homeView, enterHome, beginHomeVisit } from './features/home.js';
 import { openLogSheet } from './features/log.js';
 import { timerPill, refreshTimer } from './features/timer.js';
 import { searchBox, focusSearch } from './features/search-box.js';
@@ -62,7 +62,10 @@ function navItem(name, label, iconName) {
 
 function statusLine() {
   const pending = app.store?.pending ?? 0;
-  if (app.online && !pending) return nothing;
+  // Online, a write normally lands within a request: only say "Saving"
+  // once one had to be retried, instead of flashing it on every tap.
+  const retrying = (app.store?.retryDelay ?? 0) > 2000;
+  if (app.online && (!pending || !retrying)) return nothing;
   return html`<span class="timer-pill" style="background:var(--surface-2);color:var(--text-muted)" role="status">
     ${icon(app.online ? 'refresh-cw' : 'wifi-off')}${app.online ? `Saving ${plural(pending, 'change')}` : pending ? `Offline · ${plural(pending, 'change')} waiting` : 'Offline'}</span>`;
 }
@@ -126,6 +129,7 @@ async function onRoute(next) {
   // stays where it is, e.g. in the Library search box while typing.
   const navigated = next.name !== route.name || next.id !== route.id;
   route = next;
+  if (navigated && next.name === 'home') beginHomeVisit();
   document.title = `${TITLES[next.name] ?? 'Cato'} · Cato`;
   if (next.name === 'log') {
     openLogSheet(next.query.q || '');
@@ -221,6 +225,7 @@ async function sendWithSession(method, path, opts) {
 
 async function boot() {
   registerServiceWorker();
+  prepareToasts();
   const kv = await openKV();
   let me;
   try {

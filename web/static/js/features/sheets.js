@@ -10,7 +10,6 @@ import { COMPLETIONS, STATUSES, formatMinutes, localDay, statusLabel } from '../
 import { app, ratingDisplay, savePrefs } from './app-state.js';
 import * as actions from './actions.js';
 import { go } from '../core/router.js';
-import { celebrate } from './delight.js';
 
 // openFinishSheet: "You finished X 🎉" → stars → completion → date → Done.
 // Three taps from the Finish chip: Finish, a star, Done.
@@ -52,7 +51,7 @@ export function openFinishSheet(id) {
       if (state.notes) opts.notes = [e.notes, state.notes].filter(Boolean).join('\n\n');
     }
     actions.finish(id, opts).catch(() => {});
-    if (app.prefs.confetti) celebrate();
+    if (app.prefs.confetti) import('./delight.js').then(m => m.celebrate()).catch(() => {});
   });
 }
 
