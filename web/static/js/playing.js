@@ -38,6 +38,45 @@ function playingCardHTML(item, index) {
     </div>`;
 }
 
+// setFinished swaps a card between its normal and "finished" states. A
+// finished card keeps its size so the list doesn't shift under the finger.
+function setFinished(cardEl, finished) {
+  cardEl.classList.toggle('hero-finished', finished);
+  cardEl.querySelectorAll('.hero-actions button').forEach(button => { button.disabled = finished; });
+  const cover = cardEl.querySelector('.hero-open');
+  if (cover) cover.disabled = false;
+  const finishBtn = cardEl.querySelector('[data-hero-finish]');
+  if (finishBtn) finishBtn.textContent = finished ? 'Finished ✓' : 'Finish';
+}
+
+function updatePlayingCount(page) {
+  const countEl = page.querySelector('.playing-count');
+  const remaining = page.querySelectorAll('.hero-card:not(.hero-finished)').length;
+  if (!countEl) return;
+  countEl.textContent = remaining === 0
+    ? 'All caught up! No games in progress — time to start the next one.'
+    : `${remaining} ${remaining === 1 ? 'game' : 'games'} in progress`;
+}
+
+// undoFinish restores the status and the previous completion date (cleared
+// when the game had never been finished before).
+async function undoFinish(item, cardEl, page, container) {
+  try {
+    const restored = await library.patch(item.game_id, { status: 'playing', completed_at: item.completed_at || '' });
+    if (cardEl.isConnected) {
+      playingItems.set(String(restored.game_id), restored);
+      setFinished(cardEl, false);
+      updatePlayingCount(page);
+      renderedRevision = getLibraryRevision();
+    } else if (!container.hidden) {
+      await loadPlayingView(container);
+    }
+    showToast(`${restored.game_name} is back in Playing`);
+  } catch (err) {
+    showToast(`Couldn't undo: ${err.message}`, { type: 'error' });
+  }
+}
+
 const playingItems = new Map();
 const pendingGames = new Set();
 let renderedRevision = -1;
@@ -157,39 +196,24 @@ async function loadPlayingView(container) {
       return;
     }
 
-    // Finish
+    // Finish. The card stays where it is (dimmed, without buttons) instead
+    // of collapsing, so an impatient second tap can't land on the next
+    // game's Finish button; the toast offers Undo.
     const finishItem = playingItems.get(String(gameId));
     if (!finishItem) { release(); return; }
-    finishBtn.disabled = true;
     try {
       const updated = await library.patch(gameId, { status: 'completed' });
       if (version !== loadVersion) return;
-      showToast(`Finished ${updated.game_name} ✓`);
-
-        cardEl.remove();
-        playingItems.delete(String(gameId));
-        // Update count
-        const countEl = page.querySelector('.playing-count');
-        const remaining = page.querySelectorAll('.hero-card').length;
-        if (countEl) countEl.textContent = `${remaining} ${remaining === 1 ? 'game' : 'games'} in progress`;
-        if (remaining === 0) {
-          container.innerHTML = `
-            <div class="playing-page">
-              <div class="empty-state">
-                <div class="empty-title">All caught up!</div>
-                <p>No games in progress — time to start the next one.</p>
-                <button type="button" class="btn btn-primary btn-inline" id="playingEmptyCta2">Go to backlog</button>
-              </div>
-            </div>`;
-          container.querySelector('#playingEmptyCta2')?.addEventListener('click', () => {
-            window.location.hash = '#backlog';
-          });
-        }
-
+      playingItems.delete(String(gameId));
+      pendingGames.delete(gameId);
+      setFinished(cardEl, true);
+      updatePlayingCount(page);
+      showToast(`Finished ${updated.game_name} ✓`, {
+        action: { label: 'Undo', fn: () => undoFinish(finishItem, cardEl, page, container) },
+      });
     } catch (err) {
-      showToast(`Couldn't mark as finished: ${err.message}`, { type: 'error' });
-    } finally {
       release();
+      showToast(`Couldn't mark as finished: ${err.message}`, { type: 'error' });
     }
   });
 }

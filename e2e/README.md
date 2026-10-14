@@ -38,6 +38,7 @@ Artifacts default to `/tmp/cato-e2e-results` (override with `CATO_E2E_RESULTS`).
 | `resilience.spec.ts` | Failed autosave retains the draft/route, close retries persistence; Stats error/retry and recent-item route; actual CSV download filename and contents |
 | `release.spec.ts` | Tab/history consistency after logged time; password change retains current session, revokes another session and rejects old credentials |
 | `platform.spec.ts` | Auth/CSRF API boundaries, `__Host-`/`Secure` cookie attributes, failed login semantics, health/database, missing covers/game, PWA headers, search injection |
+| `regressions.spec.ts` | Plan §2.1 bugs: Filters tag suggestion completes the tag (and stays tappable above the panel footer); autosave PATCHes only edited fields with hours as a delta; `$tag` lists tagged games; quick-add after removal; Finish undo with no second-tap finish; edit-sheet close keeps loaded pages; malformed `%` hash; offline copy; `#search` shortcut focuses search |
 | `https.spec.ts` | Secure context on `cato.test`/`127.0.0.1`, service worker registration, WebAuthn passkey creation (Chromium virtual authenticator), HSTS/CSP upgrade/Permissions-Policy headers, `__Host-` session cookie |
 | `pwa.spec.ts` | Real service worker install/control, precache, activation removes old static caches and retains covers/unrelated caches, online worker interception |
 | `offline.spec.ts` | Chromium offline asset and navigation fallback, online retry |

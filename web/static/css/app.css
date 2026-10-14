@@ -1681,6 +1681,8 @@ body.modal-open .app-shell {
   box-shadow: 0 4px 12px rgba(0,0,0,0.15);
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
+  /* Clear the sticky panel footer when scrolled into view. */
+  scroll-margin-bottom: 84px;
 }
 .lib-filter-autocomplete[hidden] { display: none !important; }
 .lib-filter-autocomplete-option {
@@ -3654,6 +3656,11 @@ body.modal-open {
 .library-toolbar h2 { font-size: 1.2rem; }
 .library-toolbar-actions { display: flex; align-items: center; gap: 8px; }
 #statusFilterFab { position: static; }
+/* #statusFilterFab is a flex item, so its z-index (45, keeping the Status
+   button above its backdrop) applies even though it is static and would paint
+   the toolbar over the open search dropdown. Lift the search while its
+   dropdown is open. */
+.search-wrap:has(.search-results.active) { z-index: 47; }
 #statusFilterBtn, #searchAdvancedBtn {
   display: inline-flex;
   align-items: center;
@@ -3745,3 +3752,8 @@ body.modal-open .app-shell { overflow: hidden; }
   .settings-page input, .settings-page select { font-size: 16px; }
   .opt-chip, .plat-chip, .modal-footer .btn { min-height: 44px; }
 }
+
+/* Playing: a finished card stays in place (no layout shift under the finger)
+   until the next render; only its "Finished" label remains visible. */
+.hero-card.hero-finished { opacity: 0.6; }
+.hero-card.hero-finished .hero-btn:not(.hero-finish) { visibility: hidden; }

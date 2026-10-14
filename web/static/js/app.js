@@ -93,6 +93,17 @@ async function handleRoute() {
     await renderStatsView(statsView);
     return;
   }
+  // #search (manifest shortcut): the Library with the search box focused.
+  // The URL settles on #library, the canonical Library route.
+  if (raw === 'search') {
+    history.replaceState(null, '', window.location.pathname + window.location.search + '#library');
+    lastLibraryHash = '#library';
+    updateBottomTabs('library');
+    showView('library');
+    try { searchInput.focus({ preventScroll: true }); } catch { searchInput.focus(); }
+    await resumeLibraryRoute(null, '');
+    return;
+  }
   if (raw === 'settings') {
     updateBottomTabs('settings');
     showView('settings');
@@ -329,7 +340,8 @@ initSearch(searchInput, searchResults, (game) => {
   window.location.hash = '#search/' + encodeURIComponent(query);
 }, async (tag) => {
   try {
-    return await library.list('', 8, 0, tag);
+    // library.list resolves to {items, total, hasMore}; the dropdown wants the rows.
+    return (await library.list('', 8, 0, tag)).items || [];
   } catch {
     return [];
   }

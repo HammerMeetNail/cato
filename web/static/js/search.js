@@ -1,4 +1,4 @@
-import { searchGames, getCoverThumbnailURL, autocompleteTags, autocompletePlatforms, autocompleteGlobalPlatforms, formatTagForQuery, library } from './api.js';
+import { searchGames, getCoverThumbnailURL, autocompleteTags, autocompletePlatforms, autocompleteGlobalPlatforms, formatTagForQuery, library, onLibraryMutation } from './api.js';
 import { escapeHTML, showToast, formatPlatformName, statusBadgeLabel, refreshTabCounts, refreshSearchResults, refreshLibraryView } from './library.js';
 import { releaseLabel, releaseStatus } from './dates.js';
 
@@ -57,6 +57,9 @@ const resultCache = new Map();
 // mapped to their status, so badges say WHICH list the game is in ("Completed ✓").
 // Positives only — a missing ID just means "unknown", never "confirmed absent".
 const ownedStatuses = new Map();
+// Any add/remove/status change makes the cached positives stale ("already in
+// your library" after a removal); re-check on the next render instead.
+onLibraryMutation(() => ownedStatuses.clear());
 
 const QUICK_ADD_STATUSES = ['wishlist', 'backlog', 'playing', 'completed', 'abandoned'];
 const QUICK_ADD_LABELS = {

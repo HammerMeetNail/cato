@@ -1,4 +1,4 @@
-import { getLibraryRevision, library, getCoverURL, getGame, searchGamesFull, parseTagQuery, formatTagForQuery, autocompleteTags, autocompletePlatforms, autocompleteGlobalPlatforms } from './api.js';
+import { getLibraryRevision, onLibraryMutation, library, getCoverURL, getGame, searchGamesFull, parseTagQuery, formatTagForQuery, autocompleteTags, autocompletePlatforms, autocompleteGlobalPlatforms } from './api.js';
 import { formatYear, releaseLabel, releaseStatus, modalReleaseLabel } from './dates.js';
 
 const VALID_STATUSES = ['wishlist', 'backlog', 'playing', 'completed', 'abandoned'];
@@ -37,7 +37,13 @@ export function getHashGameId() {
 export function getHashSearch() {
   const hash = window.location.hash.slice(1);
   if (!hash.startsWith('search/')) return null;
-  return decodeURIComponent(hash.slice(7));
+  // A hand-typed or truncated link ("#search/100%") is not valid
+  // percent-encoding; search for the literal text instead of breaking routing.
+  try {
+    return decodeURIComponent(hash.slice(7));
+  } catch {
+    return hash.slice(7);
+  }
 }
 
 export function setHash(status) {
@@ -159,6 +165,41 @@ async function refreshVisibleLibrary() {
   return paginationState.mode === 'search' ? refreshSearchResults() : refreshLibraryView();
 }
 
+// refreshEditedCard applies a saved edit to the library grid in place: the
+// card is re-rendered from the stored item, or removed when it no longer
+// matches the status filter, so closing the sheet keeps every loaded page and
+// the scroll position. Other views (Playing, search, a card that isn't
+// rendered) fall back to refreshVisibleLibrary.
+async function refreshEditedCard(gameID) {
+  const grid = document.getElementById('gameGrid');
+  const card = grid?.querySelector(`.game-card[data-game-id="${Number(gameID)}"]`);
+  if (!card || paginationState.mode !== 'library' || document.getElementById('libraryView')?.hidden) {
+    return refreshVisibleLibrary();
+  }
+  let item;
+  try {
+    item = await library.get(gameID);
+  } catch {
+    return refreshVisibleLibrary();
+  }
+  const statuses = currentStatuses();
+  if (statuses.length > 0 && !statuses.includes(item.status)) {
+    card.remove();
+    itemsById.delete(String(gameID));
+    // The server-side page boundary moved up by one; keep the next page's
+    // offset aligned so infinite scroll neither skips nor repeats an item.
+    paginationState.offset = Math.max(0, paginationState.offset - 1);
+    if (!grid.querySelector('.game-card')) return refreshLibraryView();
+  } else {
+    itemsById.set(String(gameID), item);
+    const tpl = document.createElement('template');
+    tpl.innerHTML = buildCardHTML([item]);
+    if (tpl.content.firstElementChild) card.replaceWith(tpl.content.firstElementChild);
+  }
+  renderedRevision = getLibraryRevision();
+  refreshTabCounts().catch(() => {});
+}
+
 export function dismissLibraryFilters() {
   closeStatusFilterPanel();
   closeLibFilterPanel();
@@ -255,6 +296,7 @@ const searchResultsById = new Map();
 // list a game is in and clicks can open the edit form instead of the
 // destructive add form.
 const ownedStatuses = new Map();
+onLibraryMutation(() => ownedStatuses.clear());
 
 function indexItems(items, replace = false) {
   if (replace) itemsById.clear();
@@ -1381,6 +1423,9 @@ function wireLibFilterPanel(panel) {
       }
       listEl.innerHTML = items.slice(0, 8).map(v => `<div class="lib-filter-autocomplete-option" data-value="${escapeHTML(v)}">${escapeHTML(v)}</div>`).join('');
       listEl.hidden = false;
+      // The list is in the panel's flow; near the bottom it would render under
+      // the sticky Apply/Clear footer (scroll-margin-bottom clears it).
+      try { listEl.scrollIntoView({ block: 'nearest' }); } catch {}
       listEl.querySelectorAll('.lib-filter-autocomplete-option').forEach(opt => {
         opt.addEventListener('click', () => {
           const val = opt.dataset.value || '';
@@ -1398,7 +1443,7 @@ function wireLibFilterPanel(panel) {
                 }
                 return { start: segStart };
               })();
-              const before = raw.slice(0, segStart);
+              const before = raw.slice(0, start);
               const needsQuote = /[\s|"]/.test(val);
               const formatted = needsQuote ? `"${val.replace(/"/g, '')}"` : val;
               inputEl.value = before + formatted + ' ';
@@ -1438,8 +1483,8 @@ function wireLibFilterPanel(panel) {
       // Delay hide to allow click on option to register
       setTimeout(() => hide(), 150);
     });
-    // Also hide when panel scrolls or closes
-    panel.addEventListener('scroll', hide, true);
+    // No hide-on-scroll: the list scrolls with the panel, and hiding it made
+    // suggestions vanish as soon as the panel scrolled to reveal them.
   }
 
   setupFilterAutocomplete(platEl, panel.querySelector('#lfPlatformList'), autocompleteGlobalPlatforms, rankPlatformSuggestions);
@@ -1820,7 +1865,10 @@ function ensureLibFilterFab() {
     ensureLibFilterFab._wiredDoc = true;
     document.addEventListener('click', (e) => {
       if (!libFilterOpen) return;
-      if (panel.contains(e.target)) return;
+      // composedPath is fixed at dispatch: an autocomplete option removes
+      // itself while handling the click, so panel.contains(target) is false
+      // by the time this runs and the staged value would be discarded.
+      if (panel.contains(e.target) || e.composedPath().includes(panel)) return;
       if (e.target.closest('#searchAdvancedBtn')) return;
       if (fab && fab.contains(e.target)) return;
       // Don't close when clicking the tag filter bar or modal
@@ -2813,6 +2861,26 @@ export function openLibraryItemModal(item) {
   });
 }
 
+// diffLibraryPayload returns the PATCH body that turns `base` (the stored
+// state the form last saw) into `next` (the form now). Only edited fields are
+// sent, so playtime or status logged elsewhere (Playing tab, another device)
+// is never overwritten by a stale form snapshot. Hours travel as a delta for
+// the same reason. The legacy singular `platform` follows `platforms`
+// server-side, so it is never sent on its own.
+function diffLibraryPayload(base, next) {
+  const changes = {};
+  for (const key of Object.keys(next)) {
+    if (key === 'platform') continue;
+    if (JSON.stringify(next[key]) === JSON.stringify(base[key])) continue;
+    if (key === 'playtime_minutes') {
+      changes.playtime_delta_minutes = next.playtime_minutes - (base.playtime_minutes || 0);
+    } else {
+      changes[key] = next[key];
+    }
+  }
+  return changes;
+}
+
 // openGameForm renders the routable game popup (#game/<id>). In "add" mode it
 // shows a blank form with an "Add to Library" action; in "edit" mode
 // (inLibrary=true) it is pre-filled and offers Save and Remove. Both actions
@@ -2995,6 +3063,9 @@ async function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, 
   let removed = false;
   let lastSnapshot = null;
   let flashTimer = null;
+  // The stored state edits are diffed against (set once the form is built,
+  // then advanced after every successful save).
+  let baseline = null;
 
   // Format chips are a single-select button group; re-tapping the selected
   // chip clears the value (allowClear). Status uses a native select instead
@@ -3093,7 +3164,14 @@ async function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, 
     }
     flashSaveState('Saving…', true);
     try {
-      await library.add(id, payload);
+      if (createdYet) {
+        // Existing entry: PATCH just the fields edited since the last save.
+        const changes = diffLibraryPayload(baseline, payload);
+        if (Object.keys(changes).length > 0) await library.patch(id, changes);
+      } else {
+        await library.add(id, payload);
+      }
+      baseline = payload;
       lastSnapshot = snapshot;
       unsavedChanges = JSON.stringify(collectPayload()) !== snapshot;
       savedAtLeastOnce = true;
@@ -3449,7 +3527,7 @@ async function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, 
         history.replaceState(null, '', window.location.pathname + window.location.search + prevHash);
       }
     }
-    if (shouldRefresh) await refreshVisibleLibrary();
+    if (shouldRefresh) await refreshEditedCard(id);
     return true;
   };
   activeModalClose = close;
@@ -3522,6 +3600,7 @@ async function openGameForm({ id, name, cover, year = '', firstReleaseDate = 0, 
     });
   }
 
+  baseline = collectPayload();
   modal.querySelector('.modal-close').focus();
 }
 

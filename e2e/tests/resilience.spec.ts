@@ -21,8 +21,9 @@ test('failed autosave preserves the open draft and closing retries the persisted
   const modal = page.locator('#addGameModal');
   await expect(modal.locator('.modal-notes')).toHaveValue('Original notes');
   let failedSaves = 0;
+  // Edits to an existing entry autosave as a PATCH of just the changed fields.
   await page.route('**/api/library/1', async route => {
-    if (route.request().method() === 'POST') {
+    if (route.request().method() === 'PATCH') {
       failedSaves++;
       await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'unavailable', message: `Temporary save failure ${failedSaves}` }) });
     } else {
@@ -34,7 +35,7 @@ test('failed autosave preserves the open draft and closing retries the persisted
   expect(failedSaves).toBe(1);
   expect((await (await page.request.get('/api/library/1')).json()).notes).toBe('Original notes');
   // A failed close must preserve both the visible draft and its game route.
-  const rejected = page.waitForResponse(r => r.url().endsWith('/api/library/1') && r.request().method() === 'POST' && r.status() === 503);
+  const rejected = page.waitForResponse(r => r.url().endsWith('/api/library/1') && r.request().method() === 'PATCH' && r.status() === 503);
   await modal.locator('.modal-cancel').click();
   await rejected;
   await expect(page.locator('#toast')).toContainText('Temporary save failure 2');
@@ -42,9 +43,9 @@ test('failed autosave preserves the open draft and closing retries the persisted
   await expect(modal.locator('.modal-notes')).toHaveValue('Draft retained after a failed save');
   await expect(page).toHaveURL(/#game\/1$/);
   await page.unroute('**/api/library/1');
-  const saved = page.waitForResponse(r => r.url().endsWith('/api/library/1') && r.request().method() === 'POST' && r.status() === 200);
+  const saved = page.waitForResponse(r => r.url().endsWith('/api/library/1') && r.request().method() === 'PATCH' && r.status() === 200);
   await modal.locator('.modal-cancel').click();
-  await saved;
+  expect((await saved).request().postDataJSON()).toEqual({ notes: 'Draft retained after a failed save' });
   await expect(modal).toHaveCount(0);
   await page.goto('/#game/1');
   await expect(modal.locator('.modal-notes')).toHaveValue('Draft retained after a failed save');

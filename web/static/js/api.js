@@ -2,9 +2,16 @@ const BASE = '';
 
 let libraryRevision = 0;
 export function getLibraryRevision() { return libraryRevision; }
+// Caches derived from library membership (search ownership badges, quick-add
+// guards) subscribe here and drop their state after every successful write.
+const mutationListeners = new Set();
+export function onLibraryMutation(fn) { mutationListeners.add(fn); }
 async function libraryMutation(promise) {
   const result = await promise;
   libraryRevision++;
+  for (const fn of mutationListeners) {
+    try { fn(); } catch { /* a cache reset must never fail the write */ }
+  }
   return result;
 }
 

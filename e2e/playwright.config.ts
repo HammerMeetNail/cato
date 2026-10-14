@@ -37,8 +37,8 @@ export default defineConfig({
     { name: 'chromium', use: { ...devices['Desktop Chrome'], ...chromiumHTTPS } },
     // Offline SW emulation is verified in Chromium; see e2e/README.md.
     { name: 'webkit', testIgnore: /offline\.spec\.ts/, use: { ...devices['Desktop Safari'], ...webkitHTTPS } },
-    { name: 'mobile-chromium', testMatch: /(release|journeys|pwa|resilience|offline|https)\.spec\.ts/, use: { ...devices['Pixel 7'], ...chromiumHTTPS } },
-    { name: 'mobile-webkit', testMatch: /(release|journeys|pwa|resilience|https)\.spec\.ts/, use: { ...devices['iPhone 13'], ...webkitHTTPS } },
+    { name: 'mobile-chromium', testMatch: /(release|journeys|pwa|resilience|offline|https|regressions)\.spec\.ts/, use: { ...devices['Pixel 7'], ...chromiumHTTPS } },
+    { name: 'mobile-webkit', testMatch: /(release|journeys|pwa|resilience|https|regressions)\.spec\.ts/, use: { ...devices['iPhone 13'], ...webkitHTTPS } },
   ],
   webServer: {
     command: 'bash scripts/e2e-server.sh',

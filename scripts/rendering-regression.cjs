@@ -11,7 +11,7 @@ const shell = { scrollTop: 0, clientHeight: 600, scrollHeight: 3000, addEventLis
 const view = {hidden:false};
 const grid = { dataset: {}, querySelector:()=>null, addEventListener() {}, insertAdjacentHTML() {} };
 const document = {getElementById: id => ({libraryView:view, gameGrid:grid})[id] || null, querySelector:()=>shell, documentElement:{scrollHeight:600}};
-const context = vm.createContext({document, window:{innerWidth:390, innerHeight:600,scrollY:0,addEventListener(){}}, getLibraryRevision:()=>0,library:{list:async()=>{requests++; await pageDone; return {items:[],hasMore:false};}}, getCoverURL:()=>'/cover.jpg',formatYear:()=>'',releaseStatus:()=>'',releaseLabel:()=>''});
+const context = vm.createContext({document, window:{innerWidth:390, innerHeight:600,scrollY:0,addEventListener(){}}, getLibraryRevision:()=>0,onLibraryMutation:()=>{},library:{list:async()=>{requests++; await pageDone; return {items:[],hasMore:false};}}, getCoverURL:()=>'/cover.jpg',formatYear:()=>'',releaseStatus:()=>'',releaseLabel:()=>''});
 vm.runInContext(source, context);
 vm.runInContext("paginationState.loading=true; paginationState.hasMore=true; renderPagedItems(document.getElementById('gameGrid'), [], false)", context);
 assert.equal(vm.runInContext('paginationState.loading',context),false);
@@ -83,7 +83,7 @@ const closingContext = vm.createContext({
   document: {body:{classList:{remove(){}}}, removeEventListener(){}},
   window: {location:{hash:'#stats',pathname:'/',search:''}},
   history: {replaceState(){}}, id: 1, prevHash: '#now', prevHashWasGame: false,
-  escHandler() {}, refreshVisibleLibrary: async () => { refreshes++; },
+  escHandler() {}, refreshEditedCard: async () => { refreshes++; },
   runSave: async () => { if (!failSave) closingContext.unsavedChanges = false; },
 });
 vm.runInContext(closeSource, closingContext);
@@ -116,7 +116,18 @@ closingContext.runSave = async () => {};
 assert.equal(await vm.runInContext('close()', closingContext), false,
   'draft cancellation must wait for an in-flight creation before deciding ownership');
 assert.equal(removals, beforeCancel + 1, 'created entry retains unsaved edits');
-console.log('PASS: pagination completion, shell scrolling, cover priorities, route/filter cache, serialized modal saves and failed-close retry');
+// Autosave diff (plan §2.1 #2): only edited fields, hours as a delta.
+const diff = (a, b) => JSON.parse(JSON.stringify(vm.runInContext(`diffLibraryPayload(${JSON.stringify(a)}, ${JSON.stringify(b)})`, context)));
+const base = {status:'playing', rating:70, playtime_minutes:60, tags:['a'], notes:'n', platforms:['PC'], platform:'PC', medium:''};
+assert.deepEqual(diff(base, {...base}), {}, 'unchanged form sends nothing');
+assert.deepEqual(diff(base, {...base, notes:'m'}), {notes:'m'});
+assert.deepEqual(diff(base, {...base, playtime_minutes:90}), {playtime_delta_minutes:30}, 'hours travel as a delta');
+assert.deepEqual(diff(base, {...base, playtime_minutes:15}), {playtime_delta_minutes:-45});
+assert.deepEqual(diff(base, {...base, tags:['a','b']}), {tags:['a','b']});
+assert.deepEqual(diff(base, {...base, platforms:['PS5'], platform:'PS5'}), {platforms:['PS5']}, 'platform follows platforms server-side');
+assert.deepEqual(diff(base, {...base, completed_at:'2026-01-02'}), {completed_at:'2026-01-02'});
+assert.deepEqual(diff({...base, completed_at:'2026-01-02'}, {...base, completed_at:'2026-01-02'}), {});
+console.log('PASS: pagination completion, shell scrolling, cover priorities, route/filter cache, serialized modal saves and failed-close retry, autosave field diff');
 }
 const watchdog = setTimeout(() => { console.error('FAIL: regression did not complete'); process.exitCode = 1; }, 5000);
 main().then(() => clearTimeout(watchdog), error => { clearTimeout(watchdog); console.error(error); process.exitCode = 1; });
