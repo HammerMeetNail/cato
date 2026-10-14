@@ -19,10 +19,17 @@ export async function loadReach() {
   st.push = push.status === 'fulfilled' ? push.value : null;
   st.passkeys = passkeys.status === 'fulfilled' ? passkeys.value : null;
   st.imports = imports.status === 'fulfilled' ? imports.value : null;
-  try {
-    const reg = await navigator.serviceWorker?.getRegistration();
-    st.sub = await reg?.pushManager?.getSubscription() ?? null;
-  } catch { st.sub = null; }
+  // A subscription only exists once notifications are allowed; asking
+  // PushManager otherwise can wedge WebKit's later navigations. Bounded too.
+  st.sub = null;
+  if (globalThis.Notification?.permission === 'granted') {
+    try {
+      st.sub = await Promise.race([
+        navigator.serviceWorker?.getRegistration().then(reg => reg?.pushManager?.getSubscription() ?? null),
+        new Promise(resolve => setTimeout(() => resolve(null), 2000)),
+      ]) ?? null;
+    } catch { st.sub = null; }
+  }
   app.redraw();
 }
 

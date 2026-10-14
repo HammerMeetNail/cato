@@ -5,7 +5,9 @@ test('Discover suggests popular games you don\'t have', async ({ page }) => {
   const acc = await account(page);
   await put(acc, G.hades, { status: 'playing' });
   await gotoApp(page, '#discover');
-  const popular = page.locator('.shelf', { hasText: 'Popular' });
+  // Exactly the "Popular" shelf: "Popular on this server" appears once other
+  // people on the shared E2E server have games.
+  const popular = page.getByRole('region', { name: 'Popular', exact: true });
   await expect(popular.locator('.upnext-card').first()).toBeVisible();
   await expect(popular.locator(`.upnext-card[data-game-id="${G.hades}"]`)).toHaveCount(0);
   await popular.locator(`.upnext-card[data-game-id="${G.celeste}"]`).getByRole('button', { name: 'Want to play Celeste' }).click();

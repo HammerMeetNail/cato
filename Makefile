@@ -50,8 +50,11 @@ test-e2e:
 	npm --prefix e2e ci
 	cd e2e && npx playwright install chromium webkit && npm run test:e2e
 
+# Scan with the toolchain go.mod pins (what release images build with), not
+# whatever Go happens to be installed locally.
+GO_TOOLCHAIN := $(shell awk '/^toolchain/ {print $$2}' go.mod)
 security:
-	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+	GOTOOLCHAIN=$(GO_TOOLCHAIN) go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 	npm --prefix e2e audit --audit-level=high
 
 # Keep this sequential, including under make -j: one owner builds/runs tests.

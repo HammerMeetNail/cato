@@ -18,7 +18,6 @@ import { homeView, enterHome, beginHomeVisit } from './features/home.js';
 import { openLogSheet } from './features/log.js';
 import { timerPill, refreshTimer } from './features/timer.js';
 import { searchBox, focusSearch } from './features/search-box.js';
-import { viewTransition } from './features/delight.js';
 
 // Trusted Types (CSP require-trusted-types-for 'script'): registering the
 // service worker needs a TrustedScriptURL, from a policy that allows only it.
@@ -27,6 +26,13 @@ const swURL = window.trustedTypes
     createScriptURL: (u) => { if (u !== '/service-worker.js') throw new TypeError('blocked script URL'); return u; },
   }).createScriptURL('/service-worker.js')
   : '/service-worker.js';
+
+// viewTransition cross-fades a redraw where the browser supports it and
+// motion is welcome (kept here so Home doesn't load delight.js eagerly).
+function viewTransition(fn) {
+  if (!document.startViewTransition || matchMedia('(prefers-reduced-motion: reduce)').matches) return fn();
+  return document.startViewTransition(fn);
+}
 
 // Screens other than Home load on first visit. Each module exports a
 // view(route) and optionally enter(route) (data loading) and init(app).

@@ -205,6 +205,10 @@ func (a *API) home(w http.ResponseWriter, r *http.Request) {
 	if t, err := time.Parse("2006-01-02", r.URL.Query().Get("today")); err == nil {
 		year = t.Year()
 	}
+	// Whether to load the friends feed at all.
+	var following int
+	a.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM follows WHERE follower_id = ? AND status = 'accepted'`, uid).Scan(&following)
+	resp["following"] = following
 	if goals, err := a.Library.Goals(ctx, uid, year); err == nil {
 		resp["goals"] = goals
 	}

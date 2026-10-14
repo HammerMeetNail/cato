@@ -12,8 +12,6 @@ import * as actions from './actions.js';
 import { longPress } from '../ui/menu.js';
 import { openLogSheet } from './log.js';
 import { startTimer } from './timer.js';
-import { feedSection, loadFeed } from './feed.js';
-import { goalCard } from './goals.js';
 
 const state = { data: null, error: null, loading: false, fit: '', mood: '', picks: null, spinning: false };
 
@@ -69,13 +67,20 @@ export function beginHomeVisit() {
   order = [];
 }
 
+// The friends feed and goal rings load after first paint (they're not
+// needed to log time, and keep the initial JS within budget).
+let feed = null;
+let goals = null;
+
 export async function enterHome() {
-  loadFeed();
+  if (feed) feed.loadFeed();
   if (state.loading) return;
   state.loading = true;
   try {
     state.data = await api.get(`/api/v1/home?today=${localDay()}`);
     state.error = null;
+    if (state.data.goals?.length && !goals) import('./goals.js').then(m => { goals = m; app.redraw(); }).catch(() => {});
+    if (state.data.following > 0 && !feed) import('./feed.js').then(m => { feed = m; m.loadFeed(); }).catch(() => {});
   } catch (err) {
     state.error = err;
   } finally {
@@ -202,12 +207,12 @@ export function homeView() {
     ${reviewSeason() ? html`<a class="card yr-teaser section" href=${`#you/year/${reviewSeason()}`}>${icon('sparkles')}
       <span class="grow"><strong>Your ${reviewSeason()} in review</strong><span class="muted"> · hours, favourites and firsts, ready to share</span></span>${icon('chevron-right')}</a>` : nothing}
 
-    ${d?.goals?.length ? html`<section class="section" aria-labelledby="goals-title">
+    ${d?.goals?.length && goals ? html`<section class="section" aria-labelledby="goals-title">
       <div class="section-head"><h2 id="goals-title">Your ${new Date().getFullYear()} goals</h2><a href="#you/goals">Goals</a></div>
-      <div class="goal-row">${d.goals.map(g => goalCard(g))}</div>
+      <div class="goal-row">${d.goals.map(g => goals.goalCard(g))}</div>
     </section>` : nothing}
 
-    ${feedSection()}
+    ${feed ? feed.feedSection() : nothing}
 
     <section class="section" aria-labelledby="recent-title">
       <div class="section-head"><h2 id="recent-title">Recent activity</h2><a href="#you/diary">Diary</a></div>
