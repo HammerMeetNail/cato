@@ -202,7 +202,7 @@ func TestStartQueryCacheRefreshSweepsStaleEntries(t *testing.T) {
 	svc.StartQueryCacheRefresh()
 
 	waitFor(t, 5*time.Second, func() bool {
-		return igdb.searchCalls >= 1
+		return igdb.searchCount() >= 1
 	}, "query cache refresh did not re-fetch the stale query")
 
 	var newExpiry string

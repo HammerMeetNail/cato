@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"cato/internal/db"
@@ -12,6 +13,9 @@ import (
 )
 
 type fakeIGDB struct {
+	// mu guards searchCalls for tests that poll it while a background
+	// worker is calling SearchGames.
+	mu            sync.Mutex
 	searchCalls   int
 	searchFunc    func(ctx context.Context, query string, limit int) ([]Game, error)
 	batchCalls    int
@@ -21,8 +25,16 @@ type fakeIGDB struct {
 	getFunc       func(ctx context.Context, id int64) (*Game, error)
 }
 
+func (f *fakeIGDB) searchCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.searchCalls
+}
+
 func (f *fakeIGDB) SearchGames(ctx context.Context, query string, limit int, includeEditions bool) ([]Game, error) {
+	f.mu.Lock()
 	f.searchCalls++
+	f.mu.Unlock()
 	if f.searchFunc != nil {
 		return f.searchFunc(ctx, query, limit)
 	}
