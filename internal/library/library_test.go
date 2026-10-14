@@ -62,7 +62,7 @@ func (f *fixture) scalar(q string, args ...any) int64 {
 }
 
 func str(v string) *string { return &v }
-func num(v int64) *int64    { return &v }
+func num(v int64) *int64   { return &v }
 
 func (f *fixture) patch(game int64, ch Change) *WriteResult {
 	f.t.Helper()

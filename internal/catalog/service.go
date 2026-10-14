@@ -33,12 +33,12 @@ type Service struct {
 	refreshSlots   chan struct{}
 	refreshTimeout time.Duration
 	// Initial delay before the first query-cache sweep (test seam; see NewService).
-	lifecycleMu            sync.Mutex
-	stopping               bool
-	workers                sync.WaitGroup
-	ctx                    context.Context
-	cancel                 context.CancelFunc
-	stopped                chan struct{}
+	lifecycleMu sync.Mutex
+	stopping    bool
+	workers     sync.WaitGroup
+	ctx         context.Context
+	cancel      context.CancelFunc
+	stopped     chan struct{}
 }
 
 func NewService(store *Store, igdb IGDBClient, db *db.DB) *Service {
