@@ -510,6 +510,19 @@ CREATE INDEX idx_library_user_updated ON library_items(user_id, updated_at DESC)
 - Performance budgets and the axe gate are in CI.
 - AGENTS.md is updated: architecture, the end of the Nabu tab parity, asset versioning replacing manual `CACHE_NAME`, and gzip scope.
 
+### 4.5 P1 implementation notes (2026-10-14)
+
+Where the implementation differs from §4.1–4.4, and why:
+
+- **Packages.** The journal (playthroughs, sessions, the timer) lives in `internal/library`, not a separate `internal/journal`: every library write opens or closes a playthrough or adds a session in the same transaction. `internal/social` and the Steam/ITAD integrations arrive with P4/P5.
+- **Schema (v18).** `playthroughs.platform` is a platform name (ownership is stored by name), not an ID. `play_sessions.source` is `manual`, `timer`, `legacy`, `adjust`, `steam` or `import`; `adjust` entries may be negative, so "set total to 10h" keeps the total equal to the sum of sessions. Sessions also reference their library item, so removing a game removes its journal. Added `undo_log` (server-side undo for 15 minutes), `library_tombstones` (for `?since=` deltas) and a `jobs` table (the runner's schedule).
+- **Library ETags** use `library_rev` as planned, which also replaces the short-term #5 fix: the store re-syncs by revision.
+- **Legacy routes.** `/api/library*` stays until the new screens replace the old ones in P2; its writes already go through `internal/library`.
+- **Frontend.** P1 ships the libraries, design system, store, outbox, service worker and asset versioning; the screens switch over in P2, together with the performance budget and axe gates (they measure the new screens).
+- **Migration test.** Tested against a production-shaped fixture (300k games, 5k-item library, §11) instead of a copy of the production database, which this work may not read. `serve` now snapshots the database before any schema upgrade, so a bad upgrade can be rolled back with the restore procedure.
+- **Typeahead.** The fixture caught typeahead at 216 ms p95. It now ranks a bounded candidate set and drives the page query from the candidates: about 11 ms p95.
+- **Toolchain.** `modernc.org/sqlite` moved to v1.60.1 (SQLite 3.53), which brings `PRAGMA optimize=0x10002`.
+
 ---
 
 ## 5. P2: The core loop
