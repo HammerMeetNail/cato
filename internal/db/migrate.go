@@ -13,6 +13,95 @@ type Migration struct {
 
 var migrations = []Migration{
 	{
+		Version: 22,
+		// Reach (plan §8): import batches (undoable as a whole), Steam and
+		// RetroAchievements links, Web Push subscriptions, alert
+		// de-duplication, IsThereAnyDeal IDs, the barcode cache and passkeys.
+		Up: `CREATE TABLE import_batches (
+		       id TEXT PRIMARY KEY,
+		       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		       source TEXT NOT NULL,
+		       items INTEGER NOT NULL DEFAULT 0,
+		       snapshot_json TEXT NOT NULL,
+		       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+		       undone_at TEXT
+		     );
+		     CREATE INDEX idx_import_batches_user ON import_batches(user_id, created_at DESC);
+
+		     CREATE TABLE steam_links (
+		       user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+		       steam_id TEXT NOT NULL,
+		       persona TEXT NOT NULL DEFAULT '',
+		       sync INTEGER NOT NULL DEFAULT 0,
+		       last_sync_at TEXT,
+		       last_error TEXT NOT NULL DEFAULT ''
+		     );
+		     -- The playtime Steam last reported per app, so a sync logs the change.
+		     CREATE TABLE steam_playtime (
+		       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		       appid INTEGER NOT NULL,
+		       minutes INTEGER NOT NULL,
+		       PRIMARY KEY (user_id, appid)
+		     );
+
+		     CREATE TABLE ra_links (
+		       user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+		       ra_user TEXT NOT NULL,
+		       api_key TEXT NOT NULL
+		     );
+
+		     CREATE TABLE push_subscriptions (
+		       id INTEGER PRIMARY KEY AUTOINCREMENT,
+		       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		       endpoint TEXT NOT NULL UNIQUE,
+		       p256dh TEXT NOT NULL,
+		       auth TEXT NOT NULL,
+		       user_agent TEXT NOT NULL DEFAULT '',
+		       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+		       last_ok_at TEXT,
+		       failures INTEGER NOT NULL DEFAULT 0
+		     );
+		     CREATE INDEX idx_push_user ON push_subscriptions(user_id);
+		     ALTER TABLE notifications ADD COLUMN pushed_at TEXT;
+		     ALTER TABLE notifications ADD COLUMN emailed_at TEXT;
+
+		     -- One alert per (user, game, kind, key): a release day, a deal.
+		     CREATE TABLE alerts_sent (
+		       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		       game_id INTEGER NOT NULL,
+		       kind TEXT NOT NULL,
+		       key TEXT NOT NULL,
+		       sent_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+		       PRIMARY KEY (user_id, game_id, kind, key)
+		     );
+
+		     CREATE TABLE game_itad (
+		       game_id INTEGER PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
+		       itad_id TEXT NOT NULL DEFAULT '',
+		       checked_at TEXT NOT NULL
+		     );
+
+		     CREATE TABLE upc_games (
+		       upc TEXT PRIMARY KEY,
+		       title TEXT NOT NULL DEFAULT '',
+		       game_id INTEGER REFERENCES games(id) ON DELETE SET NULL,
+		       looked_up_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+		     );
+
+		     CREATE TABLE webauthn_credentials (
+		       id TEXT PRIMARY KEY,
+		       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		       public_key BLOB NOT NULL,
+		       algorithm INTEGER NOT NULL,
+		       sign_count INTEGER NOT NULL DEFAULT 0,
+		       name TEXT NOT NULL DEFAULT '',
+		       transports TEXT NOT NULL DEFAULT '',
+		       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+		       last_used_at TEXT
+		     );
+		     CREATE INDEX idx_webauthn_user ON webauthn_credentials(user_id);`,
+	},
+	{
 		Version: 21,
 		// People (plan §7), limited to this server and private by default.
 		// The oldest account becomes the admin. Usernames are generated from

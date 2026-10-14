@@ -26,8 +26,11 @@ import (
 	"cato/internal/config"
 	"cato/internal/db"
 	"cato/internal/discover"
+	"cato/internal/imports"
 	"cato/internal/library"
+	"cato/internal/notify"
 	"cato/internal/social"
+	"cato/internal/webauthn"
 )
 
 // Deps are what the API needs from the server.
@@ -43,6 +46,10 @@ type Deps struct {
 	Discover      *discover.Service
 	CoverDir      string
 	Social        *social.Service
+	Imports       *imports.Service
+	Notify        *notify.Service
+	Barcode       *imports.Barcode
+	Passkeys      *webauthn.Challenges
 	// System reports server health for the admin System page; RunJob
 	// starts a background job now.
 	System func(context.Context) map[string]any
@@ -114,6 +121,8 @@ func Register(mux *http.ServeMux, d Deps) *API {
 	route("GET /api/v1/search", a.search)
 
 	a.registerSocial(route)
+	a.registerImports(route)
+	a.registerReach(route)
 
 	// Anything else under /api/v1 is a JSON 404, not the SPA shell.
 	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"cato/internal/auth"
 	"cato/internal/library"
@@ -276,8 +277,22 @@ func (a *API) exportJSON(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	prefs, _ := a.Library.GetPrefs(r.Context(), user(r))
+	out := map[string]any{"format": "cato-export", "version": 2, "exported_at": time.Now().UTC().Format(time.RFC3339), "prefs": prefs, "library": items}
+	if a.Social != nil {
+		people, err := a.Social.Export(r.Context(), user(r))
+		if err != nil {
+			fail(w, r, err)
+			return
+		}
+		for k, v := range people {
+			out[k] = v
+		}
+		if p, err := a.Social.MyProfile(r.Context(), user(r)); err == nil {
+			out["profile"] = map[string]any{"username": p.Username, "display_name": p.DisplayName, "bio": p.Bio, "visibility": p.Visibility}
+		}
+	}
 	w.Header().Set("Content-Disposition", `attachment; filename="cato-export.json"`)
-	writeJSON(w, http.StatusOK, map[string]any{"format": "cato-export", "version": 1, "prefs": prefs, "library": items})
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (a *API) exportCSV(w http.ResponseWriter, r *http.Request) {

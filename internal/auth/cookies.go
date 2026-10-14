@@ -3,7 +3,6 @@ package auth
 import (
 	"crypto/subtle"
 	"net/http"
-	"time"
 )
 
 const (
@@ -45,7 +44,7 @@ func (c Cookies) SetSession(w http.ResponseWriter, sessionID string) {
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Secure:   c.Secure,
-		MaxAge:   int((30 * 24 * time.Hour).Seconds()),
+		MaxAge:   int(SessionTTL.Seconds()),
 	})
 }
 

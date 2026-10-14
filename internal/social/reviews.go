@@ -215,6 +215,7 @@ func (s *Service) Like(ctx context.Context, userID string, id int64, like bool) 
 		}
 		if n, _ := res.RowsAffected(); n > 0 {
 			notify(ctx, s.db, r.Author.ID, "like", userID, r.Game.ID, id, nil)
+			s.notified()
 		}
 	} else if _, err := s.db.ExecContext(ctx, `DELETE FROM review_likes WHERE review_id = ? AND user_id = ?`, id, userID); err != nil {
 		return nil, err

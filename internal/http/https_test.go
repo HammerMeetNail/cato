@@ -373,3 +373,26 @@ func TestGoogleStateCookieInHTTPSMode(t *testing.T) {
 		}
 	}
 }
+
+func TestShareTarget(t *testing.T) {
+	database := setupAuthTestDB(t)
+	defer database.Close()
+	database.Exec(`INSERT INTO games (id, name, slug, normalized_name) VALUES (620, 'Portal 2', 'portal-2', 'portal 2'), (7, 'Hades', 'hades', 'hades')`)
+	database.Exec(`INSERT INTO game_external_ids (game_id, source, uid) VALUES (620, 1, '620')`)
+	ctx := context.Background()
+	cases := []struct{ title, text, link, want string }{
+		{"Portal 2 on Steam", "", "https://store.steampowered.com/app/620/Portal_2/", "#game/620"},
+		{"", "", "https://store.steampowered.com/app/1145360/Hades/", "#log?q=Hades"},
+		{"", "", "https://www.igdb.com/games/hades", "#game/7"},
+		{"", "", "https://www.nintendo.com/us/store/products/the-legend-of-zelda-tears-of-the-kingdom-switch/", "#log?q=the+legend+of+zelda+tears+of+the+kingdom"},
+		{"Astro Bot | Official Launch Trailer", "", "https://youtu.be/abc", "#log?q=Astro+Bot"},
+		{"", "Check this out https://store.playstation.com/en-us/concept/10002694", "", "#log?q=Check+this+out"},
+		{"", "Balatro", "", "#log?q=Balatro"},
+		{"", "", "", "#log"},
+	}
+	for _, c := range cases {
+		if got := shareTarget(ctx, database, c.title, c.text, c.link); got != c.want {
+			t.Errorf("share(%q, %q, %q) = %q, want %q", c.title, c.text, c.link, got, c.want)
+		}
+	}
+}

@@ -17,8 +17,11 @@ import (
 	"cato/internal/config"
 	"cato/internal/db"
 	"cato/internal/discover"
+	"cato/internal/imports"
 	"cato/internal/library"
+	"cato/internal/notify"
 	"cato/internal/social"
+	"cato/internal/webauthn"
 )
 
 type client struct {
@@ -62,11 +65,19 @@ func newFixture(t *testing.T) *fixture {
 	games := catalog.NewStore(database)
 	lib := library.NewStore(database, games)
 	mux := http.NewServeMux()
+	svc := catalog.NewService(games, noIGDB{}, database)
+	soc := social.New(database, t.TempDir())
+	cfg := &config.Config{}
+	matcher := &imports.Matcher{DB: database, Catalog: svc}
 	api := Register(mux, Deps{
-		DB: database, Cfg: &config.Config{}, Cookies: auth.Cookies{}, Library: lib,
-		Catalog: catalog.NewService(games, noIGDB{}, database), Games: games,
+		DB: database, Cfg: cfg, Cookies: auth.Cookies{}, Library: lib,
+		Catalog: svc, Games: games,
 		Discover: discover.New(database, lib), CoverDir: t.TempDir(),
-		Social: social.New(database, t.TempDir()),
+		Social:   soc,
+		Imports:  &imports.Service{DB: database, Library: lib, Social: soc, Matcher: matcher, Steam: &imports.Steam{}, RA: &imports.RetroAchievements{}},
+		Notify:   &notify.Service{DB: database, Cfg: cfg, Library: lib},
+		Barcode:  &imports.Barcode{DB: database, Matcher: matcher},
+		Passkeys: &webauthn.Challenges{},
 	})
 	return &fixture{db: database, mux: mux, api: api}
 }

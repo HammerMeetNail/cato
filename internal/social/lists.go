@@ -368,3 +368,89 @@ func (s *Service) Reorder(ctx context.Context, userID string, id int64, gameIDs 
 	}
 	return s.List(ctx, userID, id)
 }
+
+// Export is your people data for the JSON export: reviews, lists and who
+// you follow (re-importing restores reviews and lists; follows are a
+// record, since people differ between servers).
+func (s *Service) Export(ctx context.Context, userID string) (map[string]any, error) {
+	type review struct {
+		GameID     int64  `json:"game_id"`
+		GameName   string `json:"game_name"`
+		Body       string `json:"body"`
+		Spoiler    bool   `json:"spoiler"`
+		Visibility string `json:"visibility"`
+		Rating     int64  `json:"rating"`
+		CreatedAt  string `json:"created_at"`
+	}
+	reviews := []review{}
+	rows, err := s.db.QueryContext(ctx, `SELECT r.game_id, g.name, r.body, r.spoiler, r.visibility, r.rating, r.created_at
+		FROM reviews r JOIN games g ON g.id = r.game_id WHERE r.user_id = ? ORDER BY r.id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var r review
+		if err := rows.Scan(&r.GameID, &r.GameName, &r.Body, &r.Spoiler, &r.Visibility, &r.Rating, &r.CreatedAt); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		reviews = append(reviews, r)
+	}
+	rows.Close()
+	type item struct {
+		GameID   int64  `json:"game_id"`
+		GameName string `json:"game_name"`
+		Note     string `json:"note"`
+	}
+	type list struct {
+		ID          int64  `json:"-"`
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Ranked      bool   `json:"ranked"`
+		Visibility  string `json:"visibility"`
+		Items       []item `json:"items"`
+	}
+	lists := []list{}
+	rows, err = s.db.QueryContext(ctx, `SELECT id, title, description, ranked, visibility FROM lists WHERE user_id = ? ORDER BY id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var l list
+		if err := rows.Scan(&l.ID, &l.Title, &l.Description, &l.Ranked, &l.Visibility); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		lists = append(lists, l)
+	}
+	rows.Close()
+	for i := range lists {
+		lists[i].Items = []item{}
+		rs, err := s.db.QueryContext(ctx, `SELECT li.game_id, g.name, li.note FROM list_items li JOIN games g ON g.id = li.game_id
+			WHERE li.list_id = ? ORDER BY li.position, li.added_at`, lists[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		for rs.Next() {
+			var it item
+			rs.Scan(&it.GameID, &it.GameName, &it.Note)
+			lists[i].Items = append(lists[i].Items, it)
+		}
+		rs.Close()
+	}
+	people, err := s.People(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	names := func(cs []Connection) []string {
+		out := []string{}
+		for _, c := range cs {
+			out = append(out, c.Username)
+		}
+		return out
+	}
+	return map[string]any{
+		"reviews": reviews, "lists": lists,
+		"follows": map[string]any{"following": names(people.Following), "followers": names(people.Followers), "blocked": names(people.Blocked)},
+	}, nil
+}

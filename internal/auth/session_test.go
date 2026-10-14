@@ -39,7 +39,9 @@ func setupSessionDB(t *testing.T) *sql.DB {
 		user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		csrf_token TEXT NOT NULL,
 		expires_at TEXT NOT NULL,
-		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		user_agent TEXT NOT NULL DEFAULT '',
+		last_seen_at TEXT
 	)`)
 	if err != nil {
 		t.Fatalf("create sessions table: %v", err)
@@ -325,5 +327,31 @@ func TestPasswordChangeRollsBackWhenRevocationFails(t *testing.T) {
 	}
 	if session, err := GetSession(db, other.ID); err != nil || session == nil {
 		t.Fatalf("session lost on rollback: %v", err)
+	}
+}
+
+func TestSessionsSlide(t *testing.T) {
+	db := setupSessionDB(t)
+	db.Exec(`INSERT INTO users (id, email) VALUES ('slide', 'slide@example.com')`)
+	s, err := CreateSession(db, "slide")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Pretend it was last extended long ago and is about to expire.
+	soon := time.Now().Add(time.Hour).Format(time.RFC3339)
+	db.Exec(`UPDATE sessions SET expires_at = ? WHERE id = ?`, soon, hashToken(s.ID))
+	touched.Delete(hashToken(s.ID))
+	if !TouchSession(db, s.ID) {
+		t.Fatal("first touch should write")
+	}
+	if TouchSession(db, s.ID) {
+		t.Fatal("second touch within the hour should not write")
+	}
+	got, err := GetSession(db, s.ID)
+	if err != nil || got == nil {
+		t.Fatalf("session: %v", err)
+	}
+	if left := time.Until(got.ExpiresAt); left < SessionTTL-time.Minute {
+		t.Fatalf("expiry not slid: %v left", left)
 	}
 }

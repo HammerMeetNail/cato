@@ -73,6 +73,24 @@ type Config struct {
 	// slugs to query.wikidata.org, so it is opt-in: CATO_WIKIDATA_LINKS=1).
 	WikidataLinks bool
 
+	// Integrations (plan §8), each optional: SteamKey enables Steam import
+	// and playtime sync (STEAM_WEB_API_KEY); ITADKey price alerts through
+	// IsThereAnyDeal (ITAD_API_KEY); UPCItemDBKey uses UPCitemdb's paid
+	// tier for barcode lookups (without it the free trial tier is used).
+	SteamKey     string
+	ITADKey      string
+	UPCItemDBKey string
+	// SMTP sends the optional email digest (CATO_SMTP_HOST, _PORT, _USER,
+	// _PASSWORD, _FROM). Without a host, email is off.
+	SMTPHost     string
+	SMTPPort     int
+	SMTPUser     string
+	SMTPPassword string
+	SMTPFrom     string
+	// PushContact is the VAPID subject push services can contact
+	// (CATO_PUSH_CONTACT, a mailto: or https: URL; defaults to the base URL).
+	PushContact string
+
 	// trustedProxiesErr is reported by Validate so a typo in
 	// CATO_TRUSTED_PROXIES fails startup instead of silently trusting nothing.
 	trustedProxiesErr error
@@ -108,6 +126,15 @@ func Load() *Config {
 		MetricsToken:      os.Getenv("CATO_METRICS_TOKEN"),
 		Dev:               boolFromEnv("CATO_DEV"),
 		WikidataLinks:     boolFromEnv("CATO_WIKIDATA_LINKS"),
+		SteamKey:          os.Getenv("STEAM_WEB_API_KEY"),
+		ITADKey:           os.Getenv("ITAD_API_KEY"),
+		UPCItemDBKey:      os.Getenv("UPCITEMDB_KEY"),
+		SMTPHost:          os.Getenv("CATO_SMTP_HOST"),
+		SMTPPort:          intFromEnv("CATO_SMTP_PORT", 587),
+		SMTPUser:          os.Getenv("CATO_SMTP_USER"),
+		SMTPPassword:      os.Getenv("CATO_SMTP_PASSWORD"),
+		SMTPFrom:          os.Getenv("CATO_SMTP_FROM"),
+		PushContact:       os.Getenv("CATO_PUSH_CONTACT"),
 	}
 }
 
@@ -135,6 +162,7 @@ func (c *Config) Summary() []any {
 		"db", c.DBPath, "covers", c.CoverDir, "static", c.StaticDir, "backups", c.BackupDir,
 		"signup", c.SignupMode(), "igdb", set(c.IGDBClientID), "google", set(c.GoogleKey),
 		"metrics_token", set(c.MetricsToken), "dev", c.Dev, "wikidata_links", c.WikidataLinks,
+		"steam", set(c.SteamKey), "itad", set(c.ITADKey), "smtp", set(c.SMTPHost), "upcitemdb", set(c.UPCItemDBKey),
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log"
@@ -17,16 +18,20 @@ import (
 	"sync"
 	"time"
 
+	"cato/internal/alerts"
 	"cato/internal/auth"
 	"cato/internal/config"
 	"cato/internal/covers"
 	"cato/internal/db"
 	"cato/internal/discover"
 	v1 "cato/internal/http/v1"
+	"cato/internal/imports"
 	"cato/internal/jobs"
 	"cato/internal/library"
 	"cato/internal/metrics"
+	"cato/internal/notify"
 	"cato/internal/social"
+	"cato/internal/webauthn"
 )
 
 type Server struct {
@@ -41,6 +46,10 @@ type Server struct {
 	assets         *assetIndex
 	jobs           *jobs.Runner
 	metrics        *metrics.Registry
+	social         *social.Service
+	imports        *imports.Service
+	notify         *notify.Service
+	alerts         *alerts.Service
 
 	// certReloadInterval bounds how often the TLS certificate files are
 	// re-checked for renewal.
@@ -101,6 +110,20 @@ func (s *Server) routes() {
 		return disc.UpNext(ctx, userID, n, "")
 	}
 
+	passkeys := &webauthn.Challenges{}
+	soc := social.New(s.db, avatarDir(s.cfg.CoverDir))
+	s.social = soc
+	s.imports = &imports.Service{
+		DB: s.db, Library: s.library, Social: soc,
+		Matcher: &imports.Matcher{DB: s.db, Catalog: s.catalog.service},
+		Steam:   &imports.Steam{Key: s.cfg.SteamKey},
+		RA:      &imports.RetroAchievements{},
+	}
+	s.notify = &notify.Service{DB: s.db, Cfg: s.cfg, Library: s.library}
+	s.alerts = &alerts.Service{DB: s.db, Library: s.library, Social: soc, ITAD: &alerts.ITAD{Key: s.cfg.ITADKey}, OnSent: s.wakePush}
+	// New inbox entries go out as pushes within seconds.
+	soc.OnNotify = s.wakePush
+	authHandler.passkeys = passkeys
 	v1.Register(s.mux, v1.Deps{
 		DB:            s.db,
 		Cfg:           s.cfg,
@@ -111,13 +134,18 @@ func (s *Server) routes() {
 		SearchLimiter: s.catalog.searchLimiter,
 		Discover:      disc,
 		CoverDir:      s.cfg.CoverDir,
-		Social:        social.New(s.db, avatarDir(s.cfg.CoverDir)),
+		Social:        soc,
+		Imports:       s.imports,
+		Notify:        s.notify,
+		Barcode:       &imports.Barcode{DB: s.db, Matcher: s.imports.Matcher, Key: s.cfg.UPCItemDBKey},
+		Passkeys:      passkeys,
 		System:        s.systemStatus,
 		RunJob:        s.runJob,
 	})
 	s.mux.Handle("/avatars/", serveAvatars(s.db, auth.Cookies{Secure: s.cfg.SecureCookies()}, avatarDir(s.cfg.CoverDir)))
 
 	s.mux.HandleFunc("/covers/", covers.ServeCover(s.cfg.CoverDir))
+	s.mux.HandleFunc("GET /share", s.handleShare)
 
 	// Page routes
 	s.mux.HandleFunc("/login", s.servePage("login.html"))
@@ -329,7 +357,30 @@ func (s *Server) clientMiddleware(next http.Handler) http.Handler {
 
 // Jobs returns the server-owned recurring tasks (catalog refresh and
 // repair) for the shared job runner.
-func (s *Server) Jobs() []jobs.Job { return s.catalog.Jobs(s.cfg) }
+func (s *Server) Jobs() []jobs.Job {
+	js := s.catalog.Jobs(s.cfg)
+	js = append(js,
+		jobs.Job{Name: "push.deliver", Interval: time.Minute, Timeout: 50 * time.Second, Run: s.notify.Deliver},
+		jobs.Job{Name: "alerts.releases", Interval: 24 * time.Hour, Jitter: 30 * time.Minute, FirstRun: 5 * time.Minute, Run: s.alerts.Releases},
+	)
+	if s.cfg.ITADKey != "" {
+		js = append(js, jobs.Job{Name: "alerts.prices", Interval: 12 * time.Hour, Jitter: time.Hour, FirstRun: 10 * time.Minute, Run: s.alerts.Prices})
+	}
+	if s.cfg.SteamKey != "" {
+		js = append(js, jobs.Job{Name: "steam.sync", Interval: 24 * time.Hour, Jitter: time.Hour, FirstRun: 15 * time.Minute, Run: s.imports.SyncSteam})
+	}
+	if s.cfg.SMTPHost != "" {
+		js = append(js, jobs.Job{Name: "email.digest", Interval: 7 * 24 * time.Hour, Jitter: 2 * time.Hour, FirstRun: time.Hour, Run: s.notify.Digest})
+	}
+	return js
+}
+
+// wakePush runs push delivery now (soon after a notification is created).
+func (s *Server) wakePush() {
+	if s.jobs != nil {
+		s.jobs.RunNow("push.deliver")
+	}
+}
 
 // SetJobRunner lets /healthz and the admin pages report job health.
 func (s *Server) SetJobRunner(r *jobs.Runner) { s.jobs = r }
@@ -438,16 +489,31 @@ const maxAPIBodyBytes = 1 << 20
 
 // Read before dispatch so even chunked bodies and trailing bytes are checked
 // before a handler can mutate state or commit a different error response.
+// bodyLimit is maxAPIBodyBytes, except for uploads: imports (CSV and JSON
+// exports) and images (avatars, custom covers) as data URLs.
+func bodyLimit(r *http.Request) int64 {
+	p := r.URL.Path
+	switch {
+	case strings.HasPrefix(p, "/api/v1/import/"):
+		return 24 << 20
+	case p == "/api/v1/me/avatar", p == "/api/v1/games" && r.Method == http.MethodPost,
+		strings.HasPrefix(p, "/api/v1/games/") && strings.HasSuffix(p, "/cover"):
+		return 12 << 20
+	}
+	return maxAPIBodyBytes
+}
+
 func apiBodyLimitMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/") && r.Body != nil {
-			body := http.MaxBytesReader(w, r.Body, maxAPIBodyBytes)
+			limit := bodyLimit(r)
+			body := http.MaxBytesReader(w, r.Body, limit)
 			data, err := io.ReadAll(body)
 			body.Close()
 			if err != nil {
 				var oversized *http.MaxBytesError
 				if errors.As(err, &oversized) {
-					writeJSON(w, http.StatusRequestEntityTooLarge, errResp("request_too_large", "Request body exceeds 1 MiB"))
+					writeJSON(w, http.StatusRequestEntityTooLarge, errResp("request_too_large", fmt.Sprintf("Request body exceeds %d MiB", limit>>20)))
 				} else {
 					writeJSON(w, http.StatusBadRequest, errResp("invalid_body", "Could not read request body"))
 				}

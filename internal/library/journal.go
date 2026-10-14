@@ -141,6 +141,38 @@ func (s *Store) LogSession(ctx context.Context, userID string, gameID int64, min
 	return s.Patch(ctx, userID, gameID, Change{MinutesDelta: &minutes, PlayedOn: playedOn, SessionNote: note})
 }
 
+// LogSynced records play time another service reported (source "steam"):
+// one session on the current playthrough, with no per-entry cap since a
+// sync can cover several days.
+func (s *Store) LogSynced(ctx context.Context, userID string, gameID, minutes int64, playedOn, source string) (*WriteResult, error) {
+	if minutes <= 0 {
+		return nil, invalid("invalid_minutes", "minutes", "Nothing to log")
+	}
+	day, ok := parseDay(playedOn)
+	if !ok {
+		return nil, invalid("invalid_date", "played_on", "played_on must be YYYY-MM-DD")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	snap, err := snapshotItem(ctx, tx, userID, gameID)
+	if err != nil {
+		return nil, err
+	}
+	if snap.Row == nil {
+		return nil, ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO play_sessions (user_id, game_id, playthrough_id, played_on, minutes, source)
+		SELECT user_id, game_id, current_playthrough_id, ?, ?, ? FROM library_items WHERE user_id = ? AND game_id = ?`,
+		day, minutes, source, userID, gameID); err != nil {
+		return nil, err
+	}
+	return s.finishWriteEvents(ctx, tx, userID, gameID, []itemSnapshot{snap},
+		[]Event{{Kind: EventLogged, GameID: gameID, Data: map[string]any{"minutes": minutes, "played_on": day, "source": source}}})
+}
+
 // DeleteSession removes a diary entry (its minutes leave the total).
 func (s *Store) DeleteSession(ctx context.Context, userID string, sessionID int64) (*WriteResult, error) {
 	tx, err := s.db.BeginTx(ctx, nil)

@@ -67,6 +67,8 @@ type Service struct {
 	db *db.DB
 	// AvatarDir holds uploaded avatars (data/avatars).
 	AvatarDir string
+	// OnNotify is called after notifications are added (push delivery).
+	OnNotify func()
 }
 
 func New(database *db.DB, avatarDir string) *Service {

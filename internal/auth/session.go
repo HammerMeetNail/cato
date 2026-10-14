@@ -37,12 +37,16 @@ func CreatePasswordSession(db Querier, userID, verifiedHash string) (*Session, e
 	return createSession(db, userID, &verifiedHash)
 }
 
+// SessionTTL is how long a session lasts without use. Each use (at most
+// hourly) slides it forward, so a device in regular use stays signed in.
+const SessionTTL = 90 * 24 * time.Hour
+
 func createSession(db Querier, userID string, verifiedHash *string) (*Session, error) {
 	id := RandomToken(32)
 	csrf := RandomToken(32)
 	hashedID := hashToken(id)
 
-	expiresAt := time.Now().Add(30 * 24 * time.Hour)
+	expiresAt := time.Now().Add(SessionTTL)
 
 	query := "INSERT INTO sessions (id, user_id, csrf_token, expires_at) SELECT ?, id, ?, ? FROM users WHERE id = ? AND disabled = 0"
 	args := []any{hashedID, csrf, expiresAt.Format(time.RFC3339), userID}

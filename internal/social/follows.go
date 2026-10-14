@@ -52,7 +52,11 @@ func (s *Service) Follow(ctx context.Context, viewer, target string) (string, er
 	if err := notify(ctx, tx, target, kind, viewer, 0, 0, nil); err != nil {
 		return "", err
 	}
-	return status, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	s.notified()
+	return status, nil
 }
 
 // Unfollow stops following (or withdraws a request).
@@ -84,7 +88,11 @@ func (s *Service) Accept(ctx context.Context, viewer, requester string) error {
 	if err := notify(ctx, tx, requester, "follow_accepted", viewer, 0, 0, nil); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.notified()
+	return nil
 }
 
 // RemoveFollower declines a request or removes an existing follower.
@@ -209,6 +217,13 @@ func notify(ctx context.Context, q execer, userID, kind, actor string, gameID, r
 // Notify adds an inbox entry from another package (release alerts etc.).
 func (s *Service) Notify(ctx context.Context, userID, kind string, gameID int64, data map[string]any) error {
 	return notify(ctx, s.db, userID, kind, "", gameID, 0, data)
+}
+
+// notified runs OnNotify (push delivery) after a write that notified.
+func (s *Service) notified() {
+	if s.OnNotify != nil {
+		go s.OnNotify()
+	}
 }
 
 // Notification is one inbox entry.

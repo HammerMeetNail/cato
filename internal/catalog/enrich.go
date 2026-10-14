@@ -222,3 +222,44 @@ func (s *Service) richJobs() []jobs.Job {
 		{Name: "catalog.popularity", Interval: 24 * time.Hour, Jitter: time.Hour, FirstRun: 3 * time.Minute, Run: s.SyncPopularity},
 	}
 }
+
+// EnsureGames stores catalog rows for IGDB games this server hasn't seen
+// (an import matched them by Steam app ID), 500 per request. Without a
+// details-capable IGDB client it does nothing.
+func (s *Service) EnsureGames(ctx context.Context, ids []int64) error {
+	dc, ok := s.details()
+	if !ok || len(ids) == 0 {
+		return nil
+	}
+	var missing []int64
+	for _, id := range ids {
+		var n int
+		s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM games WHERE id = ?`, id).Scan(&n)
+		if n == 0 {
+			missing = append(missing, id)
+		}
+	}
+	for start := 0; start < len(missing); start += 500 {
+		games, err := dc.GetGamesFull(WithLane(ctx, LaneInteractive), missing[start:min(start+500, len(missing))])
+		if err != nil {
+			return err
+		}
+		for _, g := range games {
+			if err := s.store.UpsertIGDBGame(ctx, g); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// ExternalLookup maps other services' IDs to IGDB games (the IGDB client).
+type ExternalLookup interface {
+	GamesByExternal(ctx context.Context, source int, uids []string) (map[string]int64, error)
+}
+
+// External returns the IGDB client's external-ID lookup when it has one.
+func (s *Service) External() (ExternalLookup, bool) {
+	e, ok := s.igdb.(ExternalLookup)
+	return e, ok
+}

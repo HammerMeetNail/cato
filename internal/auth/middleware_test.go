@@ -316,7 +316,7 @@ func TestSessionCookieHelpers(t *testing.T) {
 	if c.Name != "__Host-cato_session" || c.Value != "tok123" || !c.HttpOnly || !c.Secure {
 		t.Errorf("SetSession: %+v", c)
 	}
-	if c.MaxAge != int((30 * 24 * time.Hour).Seconds()) {
+	if c.MaxAge != int((90 * 24 * time.Hour).Seconds()) {
 		t.Errorf("MaxAge = %d", c.MaxAge)
 	}
 

@@ -28,7 +28,9 @@ func AuthRequired(db Querier, cookies Cookies) func(http.Handler) http.Handler {
 				return
 			}
 
-			TouchSession(db, sessionID)
+			if TouchSession(db, sessionID) {
+				cookies.SetSession(w, sessionID)
+			}
 			ctx := context.WithValue(r.Context(), SessionKey, session)
 			ctx = context.WithValue(ctx, UserIDKey, session.UserID)
 			if info := RequestInfoFrom(ctx); info != nil {

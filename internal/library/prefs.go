@@ -37,6 +37,45 @@ type Prefs struct {
 	Confetti bool `json:"confetti"`
 	// SavedViews are named Library filters (shelf, search, sort, layout).
 	SavedViews []SavedView `json:"saved_views"`
+
+	// Notify says which notification kinds also go out as a push or in
+	// the email digest (the in-app inbox always has them). Social kinds are
+	// off by default (plan §8.2).
+	Notify map[string]Channels `json:"notify"`
+	// EmailDigest sends a weekly email of unread notifications (when the
+	// server has SMTP).
+	EmailDigest bool `json:"email_digest"`
+	// ReleaseAlerts notifies on the day a wishlist game comes out on your
+	// platforms; ReleaseWeek also sends a heads-up a week before.
+	ReleaseAlerts bool `json:"release_alerts"`
+	ReleaseWeek   bool `json:"release_week"`
+	// PriceAlerts watches wishlist games on IsThereAnyDeal.
+	PriceAlerts PriceAlerts `json:"price_alerts"`
+}
+
+// Channels are where a notification kind is delivered besides the inbox.
+type Channels struct {
+	Push  bool `json:"push"`
+	Email bool `json:"email"`
+}
+
+// PriceAlerts: a deal of at least MinCut percent, or (LowOnly) only a
+// historical low, in Country's store.
+type PriceAlerts struct {
+	Enabled bool   `json:"enabled"`
+	MinCut  int    `json:"min_cut"`
+	LowOnly bool   `json:"low_only"`
+	Country string `json:"country"`
+}
+
+// NotifyKinds are the notification kinds with delivery settings.
+var NotifyKinds = []string{"release", "release_soon", "price", "follow", "follow_request", "follow_accepted", "like", "invite_used"}
+
+func defaultNotify() map[string]Channels {
+	return map[string]Channels{
+		"release": {Push: true}, "release_soon": {Push: true}, "price": {Push: true},
+		"follow": {}, "follow_request": {}, "follow_accepted": {}, "like": {}, "invite_used": {},
+	}
 }
 
 // SavedView is a named Library route query ("shelf=backlog&q=$co-op").
@@ -55,7 +94,8 @@ const (
 func DefaultPrefs() Prefs {
 	return Prefs{Theme: "system", RatingDisplay: "stars", DefaultPlatforms: []string{}, LibraryLayout: "grid",
 		Density: "comfortable", LibrarySort: "updated", UpNext: []int64{}, Streaks: true, WeekStart: "mon",
-		Haptics: true, Confetti: true, SavedViews: []SavedView{}}
+		Haptics: true, Confetti: true, SavedViews: []SavedView{},
+		Notify: defaultNotify(), ReleaseAlerts: true, PriceAlerts: PriceAlerts{MinCut: 50, Country: "US"}}
 }
 
 const maxUpNext = 5
@@ -112,6 +152,24 @@ func (p *Prefs) validate() error {
 			return invalid("invalid_pref", "saved_views", "A saved view needs a name of at most 40 characters")
 		}
 		p.SavedViews[i] = v
+	}
+	if p.Notify == nil {
+		p.Notify = defaultNotify()
+	}
+	for k := range p.Notify {
+		if !oneOf(k, NotifyKinds...) {
+			return invalid("invalid_pref", "notify", "Unknown notification kind "+k)
+		}
+	}
+	if p.PriceAlerts.MinCut < 0 || p.PriceAlerts.MinCut > 100 {
+		return invalid("invalid_pref", "price_alerts", "The discount is 0 to 100%")
+	}
+	p.PriceAlerts.Country = strings.ToUpper(strings.TrimSpace(p.PriceAlerts.Country))
+	if p.PriceAlerts.Country == "" {
+		p.PriceAlerts.Country = "US"
+	}
+	if len(p.PriceAlerts.Country) != 2 {
+		return invalid("invalid_pref", "price_alerts", "Use a two-letter country code")
 	}
 	return nil
 }

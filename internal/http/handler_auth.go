@@ -16,6 +16,7 @@ import (
 	"cato/internal/config"
 	"cato/internal/db"
 	"cato/internal/social"
+	"cato/internal/webauthn"
 
 	"github.com/google/uuid"
 	"golang.org/x/oauth2"
@@ -31,6 +32,7 @@ type AuthHandler struct {
 	passwordLimiter *auth.RateLimiter
 	loginThrottle   *auth.LoginThrottle
 	social          *social.Service
+	passkeys        *webauthn.Challenges
 	// checkPassword is auth.CheckPassword; tests count calls through it.
 	checkPassword func(password, hash string) bool
 }
@@ -53,6 +55,7 @@ func NewAuthHandler(db *db.DB, cfg *config.Config) *AuthHandler {
 		loginThrottle:   auth.NewLoginThrottle(),
 		checkPassword:   auth.CheckPassword,
 		social:          social.New(db, ""),
+		passkeys:        &webauthn.Challenges{},
 	}
 
 	if cfg.GoogleKey != "" && cfg.GoogleSecret != "" {
@@ -100,6 +103,10 @@ func (h *AuthHandler) Register(mux *http.ServeMux) {
 	// Password reset with an admin-made link: rate limited like sign-in.
 	resetChain := h.passwordLimiter.Middleware(http.HandlerFunc(h.handleReset))
 	mux.Handle("/api/auth/reset", resetChain)
+
+	// Passkey sign-in: rate limited like password sign-in.
+	mux.Handle("/api/auth/passkey/begin", h.loginLimiter.Middleware(http.HandlerFunc(h.handlePasskeyBegin)))
+	mux.Handle("/api/auth/passkey/finish", h.loginLimiter.Middleware(http.HandlerFunc(h.handlePasskeyFinish)))
 
 	mux.HandleFunc("/api/auth/google/start", h.handleGoogleStart)
 	mux.HandleFunc("/api/auth/google/callback", h.handleGoogleCallback)

@@ -361,3 +361,33 @@ func (c *Client) GetPopular(ctx context.Context, popularityType int64, limit int
 }
 
 var _ catalog.DetailsClient = (*Client)(nil)
+
+// GamesByExternal maps other services' IDs (source: IGDB's
+// external_game_source, Steam = 1) to IGDB game IDs, up to 500 at a time.
+func (c *Client) GamesByExternal(ctx context.Context, source int, uids []string) (map[string]int64, error) {
+	out := map[string]int64{}
+	if c.clientID == "" || len(uids) == 0 {
+		return out, nil
+	}
+	for start := 0; start < len(uids); start += maxBatchIDs {
+		end := min(start+maxBatchIDs, len(uids))
+		quoted := make([]string, 0, end-start)
+		for _, u := range uids[start:end] {
+			quoted = append(quoted, strconv.Quote(u))
+		}
+		var rows []struct {
+			Game int64  `json:"game"`
+			UID  string `json:"uid"`
+		}
+		body := fmt.Sprintf(`fields game,uid; where external_game_source = %d & uid = (%s); limit %d;`, source, strings.Join(quoted, ","), maxBatchIDs)
+		if err := c.query(ctx, "external_games", body, &rows); err != nil {
+			return out, err
+		}
+		for _, r := range rows {
+			if r.Game > 0 {
+				out[r.UID] = r.Game
+			}
+		}
+	}
+	return out, nil
+}

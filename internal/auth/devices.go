@@ -32,15 +32,19 @@ const touchInterval = time.Hour
 
 var touched sync.Map // hashed session ID → time.Time
 
-// TouchSession updates the session's last use, at most once per hour.
-func TouchSession(db Querier, sessionID string) {
+// TouchSession records the session's last use and slides its expiry to
+// SessionTTL from now, at most once per hour. It reports whether it did, so
+// the caller can refresh the cookie's lifetime too.
+func TouchSession(db Querier, sessionID string) bool {
 	h := hashToken(sessionID)
 	now := time.Now()
 	if last, ok := touched.Load(h); ok && now.Sub(last.(time.Time)) < touchInterval {
-		return
+		return false
 	}
 	touched.Store(h, now)
-	db.Exec(`UPDATE sessions SET last_seen_at = ? WHERE id = ?`, now.UTC().Format(time.RFC3339), h)
+	_, err := db.Exec(`UPDATE sessions SET last_seen_at = ?, expires_at = ? WHERE id = ?`,
+		now.UTC().Format(time.RFC3339), now.Add(SessionTTL).Format(time.RFC3339), h)
+	return err == nil
 }
 
 // ListDevices returns the user's unexpired sessions, newest use first.
