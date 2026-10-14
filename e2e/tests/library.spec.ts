@@ -1,117 +1,114 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, Page } from '@playwright/test';
+import { account, put, item, eventually, gotoApp, undoButton, G, Account } from './helpers';
 
-// Helpers: create a user + session via the API and return cookies for the
-// browser context.
-async function createUser(request: any, email: string, password: string) {
-  const res = await request.post('/api/auth/signup', {
-    data: { email, password },
-  });
-  expect(res.status()).toBe(201);
-  const body = await res.json();
-  return body; // { user_id, csrf_token, ... }
+async function seedLibrary(page: Page): Promise<Account> {
+  const acc = await account(page);
+  await put(acc, G.hades, { status: 'playing', tags: ['roguelike', 'RPG'], platforms: ['Nintendo Switch'], rating: 90 });
+  await put(acc, G.celeste, { status: 'completed', tags: ['platformer'], rating: 100 });
+  await put(acc, G.hollow, { status: 'backlog', tags: ['metroidvania'], platforms: ['PC (Microsoft Windows)'] });
+  await put(acc, G.disco, { status: 'backlog', tags: ['RPG'], rating: 80 });
+  await put(acc, G.balatro, { status: 'wishlist' });
+  return acc;
 }
 
-async function addLibraryItem(request: any, csrf: string, gameID: number, item: object) {
-  const res = await request.post(`/api/library/${gameID}`, {
-    headers: { 'X-CSRF-Token': csrf },
-    data: item,
-  });
-  expect(res.status()).toBe(200);
-}
+const tiles = (page: Page) => page.locator('.game-tile');
+const tileNames = async (page: Page) => (await page.locator('.game-tile .tile-name').allTextContents()).map(s => s.trim());
 
-test.describe('library', () => {
-  test('library grid shows added games with correct tab counts', async ({ page, request }) => {
-    const email = `lib-${Date.now()}@example.com`;
-    const user = await createUser(request, email, 'correct-password-1');
-    await addLibraryItem(request, user.csrf_token, 1, {
-      status: 'playing', rating: 80, playtime_minutes: 120, tags: ['e2e'],
-    });
-    await addLibraryItem(request, user.csrf_token, 2, {
-      status: 'backlog', rating: 0, playtime_minutes: 0, tags: [],
-    });
+test('shelf chips with counts, instant search and sorting', async ({ page }) => {
+  await seedLibrary(page);
+  await gotoApp(page, '#library');
+  await expect(tiles(page)).toHaveCount(5);
+  await expect(page.getByRole('tab', { name: /^Backlog 2/ })).toBeVisible();
+  await page.getByRole('tab', { name: /^Backlog/ }).click();
+  await expect(tiles(page)).toHaveCount(2);
+  await expect(page).toHaveURL(/shelf=backlog/);
+  await page.getByRole('tab', { name: /^All/ }).click();
 
-    // Seed the browser session by logging in via the page's own fetch path.
-    await page.goto('/login');
-    await page.locator('#email').fill(email);
-    await page.locator('#password').fill('correct-password-1');
-    await page.locator('#submitBtn').click();
-    await page.waitForURL((u) => !u.pathname.includes('/login'));
+  // Real keystrokes: the box must keep focus while the route updates.
+  await page.locator('#lib-search').pressSequentially('hol');
+  await expect(tiles(page)).toHaveCount(1);
+  await expect(tiles(page).first()).toContainText('Hollow Knight');
+  await page.locator('#lib-search').fill('');
 
-    // Post-login landing is the Playing tab (empty hash is its home);
-    // navigate to the Library view before asserting on the grid.
-    await page.goto('/#library');
+  await page.locator('#lib-sort').selectOption('name');
+  await expect.poll(() => tileNames(page)).toEqual(['Balatro', 'Celeste', 'Disco Elysium', 'Hades', 'Hollow Knight']);
+  await page.locator('#lib-sort').selectOption('rating');
+  await expect.poll(async () => (await tileNames(page))[0]).toBe('Celeste');
+});
 
-    // The grid renders the playing item.
-    await expect(page.locator('#gameGrid')).toBeVisible();
-    await expect(page.locator('#gameGrid')).toContainText('Test Game');
-    await expect(page.locator('#gameGrid .game-card')).toHaveCount(2);
+test('$tag and @platform become removable filter chips', async ({ page }) => {
+  await seedLibrary(page);
+  await gotoApp(page, '#library');
+  const search = page.locator('#lib-search');
+  await search.fill('$rp');
+  // Typing a $ token suggests tags.
+  await page.getByRole('option', { name: 'RPG' }).click();
+  await expect(search).toHaveValue('$RPG ');
+  await expect(page.getByRole('button', { name: 'Remove tag filter RPG' })).toBeVisible();
+  await expect(tiles(page)).toHaveCount(2);
+  await search.press('End');
+  await search.pressSequentially('@switch ');
+  await expect(page.getByRole('button', { name: 'Remove platform filter switch' })).toBeVisible();
+  await expect(tiles(page)).toHaveCount(1);
+  await page.getByRole('button', { name: 'Remove tag filter RPG' }).click();
+  // @switch matches owned copies and where the game is available.
+  await expect(tiles(page)).toHaveCount(4);
+  await page.getByRole('button', { name: 'Remove platform filter switch' }).click();
+  await expect(tiles(page)).toHaveCount(5);
+});
 
-    // Status filters live in the floating FAB (the legacy #statusTabs row is
-    // retired and permanently hidden); counts mirror onto its chips.
-    const fab = page.locator('#statusFilterFab');
-    await expect(fab).toBeVisible();
-    await fab.locator('#statusFilterBtn').click();
-    await expect(page.locator('#statusFilterPanel [data-status="playing"]')).toContainText('1');
-    await expect(page.locator('#statusFilterPanel [data-status="backlog"]')).toContainText('1');
-  });
+test('list view and a saved view', async ({ page }) => {
+  await seedLibrary(page);
+  await gotoApp(page, '#library?shelf=backlog');
+  await page.getByRole('radio', { name: 'List' }).click();
+  await expect(page.locator('.lib-list .list-row')).toHaveCount(2);
+  await expect(page).toHaveURL(/view=list/);
 
-  test('search dropdown performs a local search and shows feedback', async ({ page, request }) => {
-    const email = `search-${Date.now()}@example.com`;
-    const user = await createUser(request, email, 'correct-password-1');
-    await addLibraryItem(request, user.csrf_token, 1, { status: 'backlog' });
+  await page.getByRole('button', { name: 'Saved views' }).click();
+  await page.getByRole('menuitem', { name: 'Save this view…' }).click();
+  await page.locator('dialog.sheet').getByLabel('Name').fill('My backlog list');
+  await page.locator('dialog.sheet').getByRole('button', { name: 'Save' }).click();
+  await expect(page.locator('.toast')).toContainText('Saved “My backlog list”');
 
-    await page.goto('/login');
-    await page.locator('#email').fill(email);
-    await page.locator('#password').fill('correct-password-1');
-    await page.locator('#submitBtn').click();
-    await page.waitForURL((u) => !u.pathname.includes('/login'));
+  await page.goto('/#library');
+  await expect(tiles(page)).toHaveCount(5);
+  await page.getByRole('button', { name: 'Saved views' }).click();
+  await page.getByRole('menuitemradio', { name: 'My backlog list' }).click();
+  await expect(page.locator('.lib-list .list-row')).toHaveCount(2);
+});
 
-    // Search lives in the Library view; post-login landing is Playing.
-    await page.goto('/#library');
-    await expect(page.locator('#searchInput')).toBeVisible();
+test('multi-select bulk status change, undone in one tap', async ({ page }) => {
+  const acc = await seedLibrary(page);
+  await gotoApp(page, '#library?shelf=backlog');
+  await page.getByRole('button', { name: 'Select games' }).click();
+  await tiles(page).nth(0).click();
+  await tiles(page).nth(1).click();
+  const bar = page.getByRole('toolbar', { name: 'Selected games' });
+  await expect(bar).toContainText('2 selected');
+  await bar.getByRole('button', { name: 'Status' }).click();
+  await page.getByRole('menuitem', { name: 'Want' }).click();
+  await eventually(() => item(acc, G.hollow), it => it.status === 'wishlist', 'bulk moved');
+  expect((await item(acc, G.disco)).status).toBe('wishlist');
+  await undoButton(page).click();
+  await eventually(() => item(acc, G.hollow), it => it.status === 'backlog', 'bulk undo');
+  expect((await item(acc, G.disco)).status).toBe('backlog');
+});
 
-    // Type a query that matches the seeded catalog (IGDB is unconfigured in
-    // E2E, so results come from the local DB).
-    await page.locator('#searchInput').fill('test game');
-    const results = page.locator('#searchResults');
-    await expect(results).toBeVisible({ timeout: 10_000 });
-    await expect(results).toContainText('Test Game');
-  });
+test('right-click quick actions and keyboard navigation', async ({ page }) => {
+  const acc = await seedLibrary(page);
+  await gotoApp(page, '#library?sort=name');
+  const balatro = page.locator(`.game-tile[data-game-id="${G.balatro}"]`);
+  await balatro.click({ button: 'right' });
+  const menu = page.getByRole('menu', { name: 'Balatro' });
+  await expect(menu).toBeVisible();
+  await menu.getByRole('menuitemradio', { name: 'Backlog' }).click();
+  await eventually(() => item(acc, G.balatro), it => it.status === 'backlog', 'moved via menu');
 
-  test('hash routes render their views', async ({ page, request }) => {
-    const email = `nav-${Date.now()}@example.com`;
-    const user = await createUser(request, email, 'correct-password-1');
-    void user;
-
-    await page.goto('/login');
-    await page.locator('#email').fill(email);
-    await page.locator('#password').fill('correct-password-1');
-    await page.locator('#submitBtn').click();
-    await page.waitForURL((u) => !u.pathname.includes('/login'));
-
-    // Settings tab.
-    await page.goto('/#settings');
-    await expect(page.locator('#accountEmail')).toBeVisible();
-
-    // Library canonical route (#library — empty hash is the Playing tab's
-    // home, so /# renders Playing, not the grid).
-    await page.goto('/#library');
-    await expect(page.locator('#gameGrid')).toBeVisible();
-  });
-
-  test('library item can be deleted via the API with CSRF', async ({ request }) => {
-    const email = `del-${Date.now()}@example.com`;
-    const user = await createUser(request, email, 'correct-password-1');
-    await addLibraryItem(request, user.csrf_token, 1, { status: 'wishlist' });
-
-    const del = await request.delete('/api/library/1', {
-      headers: { 'X-CSRF-Token': user.csrf_token },
-    });
-    expect(del.status()).toBe(200);
-
-    const list = await request.get('/api/library');
-    expect(list.status()).toBe(200);
-    expect(await list.json()).toEqual([]);
-    expect((await request.get('/api/library/1')).status()).toBe(404);
-  });
+  await tiles(page).first().focus();
+  await page.keyboard.press('j');
+  await expect(tiles(page).nth(1)).toBeFocused();
+  await page.keyboard.press('k');
+  await expect(tiles(page).first()).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(new RegExp(`#game/${G.balatro}$`));
 });

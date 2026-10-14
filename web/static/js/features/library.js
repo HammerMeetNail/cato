@@ -96,7 +96,10 @@ function filterChips(route, s, search) {
   if (!search.tags.length && !search.platforms.length) return nothing;
   const remove = (kind, v) => () => {
     const next = { ...search, [kind]: search[kind].filter(x => x !== v) };
-    update(route, { text: formatSearch(next) });
+    // A trailing space keeps the last token a finished chip, not a token
+    // still being typed (which would show suggestions instead).
+    const text = formatSearch(next);
+    update(route, { text: text ? `${text} ` : '' });
   };
   return html`<div class="chips" aria-label="Active filters">
     ${search.tags.map(t => html`<button type="button" class="chip is-on chip-remove" @click=${remove('tags', t)} aria-label=${`Remove tag filter ${t}`}>${icon('tag')}${t}${icon('x')}</button>`)}
@@ -285,8 +288,8 @@ export function libraryView(route) {
         : { iconName: 'gamepad-2', title: 'Your library is empty', body: 'Add the games you’re playing, want to play or have finished.',
           action: html`<a class="btn btn-primary" href="#log">${icon('plus')}Add games</a>` })
       : s.view === 'list'
-        ? html`<div class=${`lib-list ${s.dense ? 'compact' : ''}`} role="list">${repeat(visible, e => e.id, (e, i) => row(e, route, i))}</div>`
-        : html`<div class=${`lib-grid ${s.dense ? 'compact' : ''}`} role="list">${repeat(visible, e => e.id, (e, i) => tile(e, route, i))}</div>`}
+        ? html`<div class=${`lib-list ${s.dense ? 'compact' : ''}`}>${repeat(visible, e => e.id, (e, i) => row(e, route, i))}</div>`
+        : html`<div class=${`lib-grid ${s.dense ? 'compact' : ''}`}>${repeat(visible, e => e.id, (e, i) => tile(e, route, i))}</div>`}
     ${visible.length < results.length ? html`<div ${sentinel(results.length)} class="muted" style="padding:var(--sp-6);text-align:center">Loading more…</div>` : nothing}
 
     ${search.text.length >= 2 ? html`<div class="search-all">

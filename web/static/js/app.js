@@ -5,16 +5,16 @@
 import { html, render, nothing } from './ui/lit.js';
 import { icon } from './ui/icons.js';
 import { skeletonTiles, empty } from './ui/parts.js';
-import { toast } from './ui/toast.js';
+import { toast, prepareToasts } from './ui/toast.js';
 import { anySheetOpen, closeAllSheets } from './ui/sheet.js';
 import { closeMenu } from './ui/menu.js';
-import { api, request, setCSRF, ApiError } from './core/api.js';
+import { api, request, setCSRF, getCSRF, ApiError } from './core/api.js';
 import { openKV } from './core/idb.js';
 import { Store } from './core/store.js';
 import { start as startRouter, tab, go } from './core/router.js';
 import { initials, plural } from './core/format.js';
 import { app, applyTheme } from './features/app-state.js';
-import { homeView, enterHome } from './features/home.js';
+import { homeView, enterHome, beginHomeVisit } from './features/home.js';
 import { openLogSheet } from './features/log.js';
 import { timerPill, refreshTimer } from './features/timer.js';
 import { searchBox, focusSearch } from './features/search-box.js';
@@ -62,7 +62,10 @@ function navItem(name, label, iconName) {
 
 function statusLine() {
   const pending = app.store?.pending ?? 0;
-  if (app.online && !pending) return nothing;
+  // Online, a write normally lands within a request: only say "Saving"
+  // once one had to be retried, instead of flashing it on every tap.
+  const retrying = (app.store?.retryDelay ?? 0) > 2000;
+  if (app.online && (!pending || !retrying)) return nothing;
   return html`<span class="timer-pill" style="background:var(--surface-2);color:var(--text-muted)" role="status">
     ${icon(app.online ? 'refresh-cw' : 'wifi-off')}${app.online ? `Saving ${plural(pending, 'change')}` : pending ? `Offline · ${plural(pending, 'change')} waiting` : 'Offline'}</span>`;
 }
@@ -122,14 +125,17 @@ async function onRoute(next) {
   if (main) scroll.set(route.name + JSON.stringify(route.query) + (route.id ?? ''), main.scrollTop);
   closeMenu();
   if (!anySheetOpen() || next.name !== route.name) closeAllSheets();
+  // A filter change (same screen, new query) is not a navigation: focus
+  // stays where it is, e.g. in the Library search box while typing.
+  const navigated = next.name !== route.name || next.id !== route.id;
   route = next;
+  if (navigated && next.name === 'home') beginHomeVisit();
   document.title = `${TITLES[next.name] ?? 'Cato'} · Cato`;
   if (next.name === 'log') {
     openLogSheet(next.query.q || '');
     go('#home', { replace: true });
     return;
   }
-  if (next.focusSearch) requestAnimationFrame(() => focusSearch());
   if (!screenFor(next) && SCREENS[next.name]) {
     draw();
     try {
@@ -145,11 +151,13 @@ async function onRoute(next) {
   draw();
   const key = next.name + JSON.stringify(next.query) + (next.id ?? '');
   const m = document.getElementById('main');
-  if (m) {
+  if (m && navigated) {
     m.scrollTop = scroll.get(key) ?? 0;
     if (!firstRoute) m.focus({ preventScroll: true });
   }
   firstRoute = false;
+  // After the (possibly lazily loaded) screen has rendered its search box.
+  if (next.focusSearch) focusSearch();
   if (next.name === 'home') enterHome();
   else screenFor(next)?.enter?.(next);
 }
@@ -202,8 +210,22 @@ function offlineScreen(message) {
   </div></div>`, document.getElementById('app'));
 }
 
+// sendWithSession is the store's transport. After an offline start there is
+// no CSRF token yet: fetch it before the first queued write goes out (a
+// failure stays retryable, so nothing queued is lost).
+async function sendWithSession(method, path, opts) {
+  if (method !== 'GET' && !getCSRF()) {
+    const me = await api.get('/api/v1/me');
+    setCSRF(me.csrf_token);
+    app.me = me.user;
+    app.prefs = me.prefs || app.prefs;
+  }
+  return request(method, path, opts);
+}
+
 async function boot() {
   registerServiceWorker();
+  prepareToasts();
   const kv = await openKV();
   let me;
   try {
@@ -230,14 +252,16 @@ async function boot() {
   try { app.config = await api.get('/api/config'); } catch { app.config = {}; }
 
   app.store = new Store({
-    api: { request },
+    api: { request: sendWithSession },
     kv,
     lock: navigator.locks ? (name, fn) => navigator.locks.request(name, fn) : null,
   });
   await app.store.init(app.me.id);
   app.store.addEventListener('change', () => app.redraw());
   app.store.addEventListener('rejected', e => toast(e.detail.error.message || 'That change was rejected', { kind: 'error' }));
-  app.store.addEventListener('offline', () => { app.online = navigator.onLine; app.redraw(); });
+  // A write that couldn't reach the server means offline, whatever
+  // navigator.onLine says (it reports a network interface, not a route).
+  app.store.addEventListener('offline', () => { app.online = false; app.redraw(); });
   app.store.addEventListener('sent', () => { if (!app.online) { app.online = true; app.redraw(); } });
 
   addEventListener('cato:unauthorized', () => { location.href = '/login'; });

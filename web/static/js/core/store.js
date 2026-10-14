@@ -131,7 +131,10 @@ export class Store extends EventTarget {
   async init(userId) {
     const meta = await this.kv.get('meta', 'library');
     if (!meta || meta.userId !== userId) {
-      await this.kv.clearAll();
+      // Only the library's own stores: other meta keys (the signed-in
+      // user kept for offline start) belong to the app.
+      await this.kv.clear('items');
+      await this.kv.clear('outbox');
       await this.kv.put('meta', 'library', { userId, rev: 0, platformNames: {} });
       this.rev = 0;
     } else {

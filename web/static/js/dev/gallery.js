@@ -23,7 +23,7 @@ export function galleryView() {
     <p class="muted">Every component in each state. Only served with CATO_DEV=1.</p>
 
     <section aria-labelledby="g-tokens"><h2 id="g-tokens">Colour tokens</h2>
-      <div class="swatches">${TOKENS.map(t => html`<div class="swatch" style=${`background:var(${t});color:${t.includes('text') || t === '--accent' || t === '--danger' || t === '--success' || t === '--warning' ? 'var(--bg)' : 'var(--text)'}`}>${t}</div>`)}</div></section>
+      <div class="swatches">${TOKENS.map(t => html`<div class="swatch"><span class="swatch-color" style=${`background:var(${t})`}></span>${t}</div>`)}</div></section>
 
     <section aria-labelledby="g-buttons"><h2 id="g-buttons">Buttons</h2>
       <div class="row row-wrap">
