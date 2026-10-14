@@ -96,7 +96,10 @@ function filterChips(route, s, search) {
   if (!search.tags.length && !search.platforms.length) return nothing;
   const remove = (kind, v) => () => {
     const next = { ...search, [kind]: search[kind].filter(x => x !== v) };
-    update(route, { text: formatSearch(next) });
+    // A trailing space keeps the last token a finished chip, not a token
+    // still being typed (which would show suggestions instead).
+    const text = formatSearch(next);
+    update(route, { text: text ? `${text} ` : '' });
   };
   return html`<div class="chips" aria-label="Active filters">
     ${search.tags.map(t => html`<button type="button" class="chip is-on chip-remove" @click=${remove('tags', t)} aria-label=${`Remove tag filter ${t}`}>${icon('tag')}${t}${icon('x')}</button>`)}

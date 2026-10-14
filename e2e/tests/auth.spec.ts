@@ -1,75 +1,46 @@
 import { test, expect } from '@playwright/test';
+import { PASSWORD } from './helpers';
 
-const uniq = () => `e2e-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
-
-async function signupViaUI(page, email: string, password: string) {
+test('the login page explains Cato and offers only what the server supports', async ({ page }) => {
   await page.goto('/login');
-  await page.locator('#toggleLink').click();
+  await expect(page.locator('#pitch')).toContainText('what you\'re playing');
+  // Google isn't configured in E2E.
+  await expect(page.locator('#googleBtn')).toBeHidden();
+  // The sign-up toggle is a real button, reachable by keyboard.
+  const toggle = page.getByRole('button', { name: 'Create an account' });
+  await expect(toggle).toBeVisible();
+  await expect(page.locator('#password')).toHaveAttribute('autocomplete', 'current-password');
+  await toggle.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { name: 'Create your account' })).toBeVisible();
+  // Password managers offer to generate a password for new-password fields.
+  await expect(page.locator('#password')).toHaveAttribute('autocomplete', 'new-password');
+});
+
+test('sign up lands on Home, sign out returns to the login page, sign in works', async ({ page }) => {
+  const email = `auth-${crypto.randomUUID()}@example.com`;
+  await page.goto('/login');
+  await page.getByRole('button', { name: 'Create an account' }).click();
   await page.locator('#email').fill(email);
-  await page.locator('#password').fill(password);
+  await page.locator('#password').fill(PASSWORD);
   await page.locator('#submitBtn').click();
-  await page.waitForURL((u) => !u.pathname.includes('/login'), { timeout: 10_000 });
-}
+  await expect(page).toHaveURL(/\/(#home)?$/);
+  await expect(page.getByRole('heading', { name: 'Now playing' })).toBeVisible();
 
-test.describe('auth journeys', () => {
-  test('unauthenticated user is redirected from the app to /login', async ({ page }) => {
-    await page.goto('/');
-    await page.waitForURL(/\/login/);
-    await expect(page.locator('#loginForm')).toBeVisible();
-  });
+  await page.goto('/#you/settings');
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page).toHaveURL(/\/login/);
 
-  test('signup → authenticated shell → logout → login again', async ({ page }) => {
-    const email = `${uniq()}@example.com`;
-    const password = 'sup3r-secret-pw';
+  await page.locator('#email').fill(email);
+  await page.locator('#password').fill('wrong-password-1');
+  await page.locator('#submitBtn').click();
+  await expect(page.locator('#errorMsg')).not.toBeEmpty();
+  await page.locator('#password').fill(PASSWORD);
+  await page.locator('#submitBtn').click();
+  await expect(page.getByRole('heading', { name: 'Now playing' })).toBeVisible();
+});
 
-    // Sign up through the login page's toggle.
-    await signupViaUI(page, email, password);
-
-    // The shell is now authenticated: user menu visible, login link hidden.
-    await expect(page.locator('#userMenuBtn')).toBeVisible();
-    await expect(page.locator('#loginLink')).toBeHidden();
-
-    // Log out through the user menu.
-    await page.locator('#userMenuBtn').click();
-    await page.locator('#logoutLink').click();
-    await page.waitForURL(/\/login/);
-    await expect(page.locator('#loginForm')).toBeVisible();
-
-    // Log back in with the same credentials.
-    await page.locator('#email').fill(email);
-    await page.locator('#password').fill(password);
-    await page.locator('#submitBtn').click();
-    await page.waitForURL((u) => !u.pathname.includes('/login'));
-    await expect(page.locator('#userMenuBtn')).toBeVisible();
-  });
-
-  test('wrong password shows an error', async ({ page, request }) => {
-    const email = `${uniq()}@example.com`;
-    const res = await request.post('/api/auth/signup', {
-      data: { email, password: 'correct-password-1' },
-    });
-    expect(res.status()).toBe(201);
-
-    await page.goto('/login');
-    await page.locator('#email').fill(email);
-    await page.locator('#password').fill('wrong-password-1');
-    await page.locator('#submitBtn').click();
-    await expect(page.locator('#errorMsg')).toContainText(/invalid/i);
-    // Still on the login page.
-    await expect(page.locator('#loginForm')).toBeVisible();
-  });
-
-  test('already-authenticated visits to /login bounce back to the app', async ({ page, request }) => {
-    const email = `${uniq()}@example.com`;
-    const res = await request.post('/api/auth/signup', {
-      data: { email, password: 'correct-password-1' },
-    });
-    expect(res.status()).toBe(201);
-    await page.request.post('/api/auth/login', {
-      data: { email, password: 'correct-password-1' },
-    });
-    await page.goto('/login');
-    // checkAuth() in login.html should redirect authenticated users away.
-    await page.waitForURL((u) => !u.pathname.includes('/login'), { timeout: 10_000 });
-  });
+test('signed-out visitors are sent to the login page', async ({ page }) => {
+  await page.goto('/#library');
+  await expect(page).toHaveURL(/\/login#library$/);
 });

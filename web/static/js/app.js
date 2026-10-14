@@ -8,7 +8,7 @@ import { skeletonTiles, empty } from './ui/parts.js';
 import { toast } from './ui/toast.js';
 import { anySheetOpen, closeAllSheets } from './ui/sheet.js';
 import { closeMenu } from './ui/menu.js';
-import { api, request, setCSRF, ApiError } from './core/api.js';
+import { api, request, setCSRF, getCSRF, ApiError } from './core/api.js';
 import { openKV } from './core/idb.js';
 import { Store } from './core/store.js';
 import { start as startRouter, tab, go } from './core/router.js';
@@ -122,6 +122,9 @@ async function onRoute(next) {
   if (main) scroll.set(route.name + JSON.stringify(route.query) + (route.id ?? ''), main.scrollTop);
   closeMenu();
   if (!anySheetOpen() || next.name !== route.name) closeAllSheets();
+  // A filter change (same screen, new query) is not a navigation: focus
+  // stays where it is, e.g. in the Library search box while typing.
+  const navigated = next.name !== route.name || next.id !== route.id;
   route = next;
   document.title = `${TITLES[next.name] ?? 'Cato'} · Cato`;
   if (next.name === 'log') {
@@ -129,7 +132,6 @@ async function onRoute(next) {
     go('#home', { replace: true });
     return;
   }
-  if (next.focusSearch) requestAnimationFrame(() => focusSearch());
   if (!screenFor(next) && SCREENS[next.name]) {
     draw();
     try {
@@ -145,11 +147,13 @@ async function onRoute(next) {
   draw();
   const key = next.name + JSON.stringify(next.query) + (next.id ?? '');
   const m = document.getElementById('main');
-  if (m) {
+  if (m && navigated) {
     m.scrollTop = scroll.get(key) ?? 0;
     if (!firstRoute) m.focus({ preventScroll: true });
   }
   firstRoute = false;
+  // After the (possibly lazily loaded) screen has rendered its search box.
+  if (next.focusSearch) focusSearch();
   if (next.name === 'home') enterHome();
   else screenFor(next)?.enter?.(next);
 }
@@ -202,6 +206,19 @@ function offlineScreen(message) {
   </div></div>`, document.getElementById('app'));
 }
 
+// sendWithSession is the store's transport. After an offline start there is
+// no CSRF token yet: fetch it before the first queued write goes out (a
+// failure stays retryable, so nothing queued is lost).
+async function sendWithSession(method, path, opts) {
+  if (method !== 'GET' && !getCSRF()) {
+    const me = await api.get('/api/v1/me');
+    setCSRF(me.csrf_token);
+    app.me = me.user;
+    app.prefs = me.prefs || app.prefs;
+  }
+  return request(method, path, opts);
+}
+
 async function boot() {
   registerServiceWorker();
   const kv = await openKV();
@@ -230,14 +247,16 @@ async function boot() {
   try { app.config = await api.get('/api/config'); } catch { app.config = {}; }
 
   app.store = new Store({
-    api: { request },
+    api: { request: sendWithSession },
     kv,
     lock: navigator.locks ? (name, fn) => navigator.locks.request(name, fn) : null,
   });
   await app.store.init(app.me.id);
   app.store.addEventListener('change', () => app.redraw());
   app.store.addEventListener('rejected', e => toast(e.detail.error.message || 'That change was rejected', { kind: 'error' }));
-  app.store.addEventListener('offline', () => { app.online = navigator.onLine; app.redraw(); });
+  // A write that couldn't reach the server means offline, whatever
+  // navigator.onLine says (it reports a network interface, not a route).
+  app.store.addEventListener('offline', () => { app.online = false; app.redraw(); });
   app.store.addEventListener('sent', () => { if (!app.online) { app.online = true; app.redraw(); } });
 
   addEventListener('cato:unauthorized', () => { location.href = '/login'; });
