@@ -12,6 +12,7 @@ import * as actions from './actions.js';
 import { longPress } from '../ui/menu.js';
 import { openLogSheet } from './log.js';
 import { startTimer } from './timer.js';
+import { feedSection, loadFeed } from './feed.js';
 
 const state = { data: null, error: null, loading: false, fit: '', picks: null, spinning: false };
 
@@ -56,6 +57,7 @@ async function surprise() {
 }
 
 export async function enterHome() {
+  loadFeed();
   if (state.loading) return;
   state.loading = true;
   try {
@@ -164,6 +166,8 @@ export function homeView() {
       <div class="shelf-row">${d.coming_soon.map(g => html`<a class="upnext-card" href=${`#game/${g.id}`}>
         ${cover(g)}<span class="title">${g.name}</span><span class="reason">${formatRelease(g.release_date)}</span></a>`)}</div>
     </section>` : nothing}
+
+    ${feedSection()}
 
     <section class="section" aria-labelledby="recent-title">
       <div class="section-head"><h2 id="recent-title">Recent activity</h2><a href="#you/diary">Diary</a></div>

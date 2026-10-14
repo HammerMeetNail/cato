@@ -11,6 +11,9 @@ import { app } from './app-state.js';
 export const youSections = [
   { hash: '#you/stats', icon: 'chart-column', label: 'Stats', sub: 'Hours, finishes, ratings and your backlog' },
   { hash: '#you/diary', icon: 'calendar-days', label: 'Diary', sub: 'Every session, day by day' },
+  { hash: '#you/lists', icon: 'list', label: 'Lists', sub: 'Favourites, rankings and collections to share' },
+  { hash: '#you/people', icon: 'users', label: 'People', sub: 'Follow friends, requests, invites and blocks' },
+  { hash: '#you/inbox', icon: 'inbox', label: 'Inbox', sub: 'Follows, likes and alerts', badge: () => app.unread },
   { hash: '#you/settings', icon: 'settings', label: 'Settings', sub: 'Theme, ratings, platforms, devices, account' },
   { hash: '#you/help', icon: 'circle-question-mark', label: 'Help', sub: 'How Cato works and keyboard shortcuts' },
 ];
@@ -28,15 +31,19 @@ export function youView() {
     minutes += e.minutes;
   }
   const name = app.me?.display_name || app.me?.email || 'You';
+  const sections = app.me?.role === 'admin'
+    ? [...youSections, { hash: '#admin', icon: 'shield', label: 'Admin', sub: 'People, sign-up, reports and server health' }] : youSections;
   return html`<div class="page">
     <header class="you-head">
-      <span class="avatar avatar-lg" aria-hidden="true">${app.me?.avatar_url ? html`<img src=${app.me.avatar_url} alt="">` : initials(name)}</span>
+      <span class="avatar avatar-lg" aria-hidden="true">${app.me?.avatar ? html`<img src=${app.me.avatar} alt="" referrerpolicy="no-referrer">` : initials(name)}</span>
       <div><h1>${name}</h1>
-        <p class="muted num">${plural(app.store.entries().length, 'game')} · ${formatHoursLong(minutes)} · ${plural(counts.completed || 0, 'finish', 'finishes')}</p></div>
+        <p class="muted num">${plural(app.store.entries().length, 'game')} · ${formatHoursLong(minutes)} · ${plural(counts.completed || 0, 'finish', 'finishes')}</p>
+        ${app.me?.username ? html`<p class="row row-wrap" style="margin-top:var(--sp-2)"><a class="btn btn-sm btn-secondary" href=${`#u/${encodeURIComponent(app.me.username)}`}>${icon('user')}Your profile</a>
+          <button type="button" class="btn btn-sm btn-ghost" @click=${() => import('./people.js').then(m => m.editProfile())}>${icon('pencil')}Edit profile</button></p>` : nothing}</div>
     </header>
     <nav class="section" aria-label="You">
-      <ul class="settings-list">${youSections.map(s => html`<li style="padding:0"><a class="list-row" href=${s.hash} style="padding:var(--sp-3) var(--sp-4)">
-        ${icon(s.icon)}<div class="grow"><div class="title">${s.label}</div><div class="sub">${s.sub}</div></div>${s.badge ? html`<span class="badge">${s.badge}</span>` : nothing}${icon('chevron-right')}</a></li>`)}</ul>
+      <ul class="settings-list">${sections.map(s => html`<li style="padding:0"><a class="list-row" href=${s.hash} style="padding:var(--sp-3) var(--sp-4)">
+        ${icon(s.icon)}<div class="grow"><div class="title">${s.label}</div><div class="sub">${s.sub}</div></div>${(typeof s.badge === 'function' ? s.badge() : s.badge) ? html`<span class="badge">${typeof s.badge === 'function' ? s.badge() : s.badge}</span>` : nothing}${icon('chevron-right')}</a></li>`)}</ul>
     </nav>
   </div>`;
 }

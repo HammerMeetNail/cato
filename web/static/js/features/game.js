@@ -17,6 +17,7 @@ import * as actions from './actions.js';
 import { timeChips, openFinishSheet } from './sheets.js';
 import { startTimer } from './timer.js';
 import { gameExtras } from './game-extras.js';
+import { gameSocialSection, loadGameSocial, addToList } from './people.js';
 
 const state = { id: null, data: null, error: null, loading: false, aboutOpen: false, seq: 0 };
 
@@ -27,6 +28,7 @@ export async function enterGame(route) {
     state.error = null;
     state.aboutOpen = false;
   }
+  loadGameSocial(route.id);
   await reload();
 }
 
@@ -74,6 +76,7 @@ function addButtons(game) {
     <div class="chips">
       ${STATUSES.filter(s => s.value !== 'paused' && s.value !== 'abandoned').map(s => html`<button type="button" class="chip" data-add-status=${s.value}
         @click=${add(s.value)}>${icon(s.icon)}${s.label}</button>`)}
+      <button type="button" class="chip" @click=${() => addToList(game)}>${icon('list')}Add to a list</button>
     </div></div>`;
 }
 
@@ -93,6 +96,7 @@ function yourRow(e, item) {
     <div class="row row-wrap">
       ${app.timer?.game_id === e.id ? html`<span class="muted">Session running…</span>`
         : html`<button type="button" class="btn btn-sm btn-secondary" @click=${() => startTimer(e.id)}>${icon('play')}Start session timer</button>`}
+      <button type="button" class="btn btn-sm btn-ghost" @click=${() => addToList({ id: e.id, name: e.name })}>${icon('list')}Add to list</button>
       ${item?.completed_at && e.status === 'completed' ? html`<span class="muted">Finished ${formatDay(item.completed_at.slice(0, 10))}</span>` : nothing}
     </div>
   </section>`;
@@ -255,6 +259,7 @@ export function gameView(route) {
         ${e ? yourRow(e, d.item) : addButtons(game)}
         ${e ? playthroughList(d.playthroughs) : nothing}
         ${about(game)}
+        ${gameSocialSection(game)}
         ${gameExtras(d)}
         ${e ? sessionList(d.sessions) : nothing}
       </div>

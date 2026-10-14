@@ -9,6 +9,7 @@ export const app = {
   config: {},
   store: null,
   timer: null,
+  unread: 0,
   serverSkew: 0,
   online: typeof navigator === 'undefined' ? true : navigator.onLine,
   redraw: () => {},

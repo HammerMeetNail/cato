@@ -39,6 +39,12 @@ const SCREENS = {
   'you/diary': () => import('./features/you.js').then(m => ({ view: m.diaryView, enter: m.enterDiary })),
   'you/settings': () => import('./features/settings.js').then(m => ({ view: m.settingsView, enter: m.enterSettings })),
   'you/help': () => import('./features/help.js').then(m => ({ view: m.helpView })),
+  profile: () => import('./features/people.js').then(m => ({ view: m.profileView, enter: m.enterProfile })),
+  list: () => import('./features/people.js').then(m => ({ view: m.listView, enter: m.enterList })),
+  'you/lists': () => import('./features/people.js').then(m => ({ view: m.myListsView, enter: m.enterMyLists })),
+  'you/people': () => import('./features/people.js').then(m => ({ view: m.peopleView, enter: m.enterPeople })),
+  'you/inbox': () => import('./features/people.js').then(m => ({ view: m.inboxView, enter: m.enterInbox })),
+  admin: () => import('./features/admin.js').then(m => ({ view: m.adminView, enter: m.enterAdmin })),
   'dev/ui': () => import('./dev/gallery.js').then(m => ({ view: m.galleryView })),
 };
 
@@ -51,6 +57,7 @@ const loaded = new Map();
 const TITLES = {
   home: 'Home', library: 'Library', game: 'Game', discover: 'Discover', 'discover/search': 'Search', you: 'You',
   'you/stats': 'Stats', 'you/diary': 'Diary', 'you/settings': 'Settings', 'you/help': 'Help', 'dev/ui': 'Gallery',
+  profile: 'Profile', list: 'List', 'you/lists': 'Lists', 'you/people': 'People', 'you/inbox': 'Inbox', admin: 'Admin',
 };
 
 let route = { name: 'home', query: {} };
@@ -62,10 +69,11 @@ function screenFor(r) {
   return loaded.get(r.name) ?? null;
 }
 
-function navItem(name, label, iconName) {
+function navItem(name, label, iconName, badge = 0) {
   const current = tab(route.name) === name;
-  return html`<a class="nav-item" href=${`#${name}`} aria-current=${current ? 'page' : nothing} data-nav=${name}>
-    ${icon(iconName)}<span>${label}</span></a>`;
+  return html`<a class="nav-item" href=${`#${name}`} aria-current=${current ? 'page' : nothing} data-nav=${name}
+    aria-label=${badge ? `${label}, ${plural(badge, 'new notification')}` : nothing}>
+    ${icon(iconName)}<span>${label}</span>${badge ? html`<span class="badge num" aria-hidden="true">${badge > 99 ? '99+' : badge}</span>` : nothing}</a>`;
 }
 
 function statusLine() {
@@ -83,7 +91,7 @@ function shell(content) {
       ${searchBox(route)}
       ${statusLine()}
       ${timerPill()}
-      <a class="avatar" href="#you" aria-label="You" title=${name}>${app.me?.avatar_url ? html`<img src=${app.me.avatar_url} alt="">` : initials(name)}</a>
+      <a class="avatar" href="#you" aria-label="You" title=${name}>${app.me?.avatar ? html`<img src=${app.me.avatar} alt="" referrerpolicy="no-referrer">` : initials(name)}</a>
     </header>
     <main id="main" class="main" tabindex="-1">${content}</main>
     <nav class="nav" aria-label="Main">
@@ -93,7 +101,7 @@ function shell(content) {
       <button type="button" class="nav-item nav-log" aria-label="Log a game" @click=${() => openLogSheet()}>
         <span class="log-disc">${icon('plus')}</span><span class="nav-label-desktop">Log a game</span></button>
       ${navItem('discover', 'Discover', 'compass')}
-      ${navItem('you', 'You', 'user')}
+      ${navItem('you', 'You', 'user', app.unread)}
     </nav>
   </div>`;
 }
@@ -201,6 +209,18 @@ function registerServiceWorker() {
   });
 }
 
+// refreshUnread updates the inbox badge (on You and the app icon).
+async function refreshUnread() {
+  try {
+    const res = await api.get('/api/v1/notifications?limit=1');
+    if (res.unread !== app.unread) {
+      app.unread = res.unread;
+      try { res.unread ? navigator.setAppBadge?.(res.unread)?.catch(() => {}) : navigator.clearAppBadge?.()?.catch(() => {}); } catch { /* unsupported */ }
+      app.redraw();
+    }
+  } catch { /* offline */ }
+}
+
 function offlineScreen(message) {
   render(html`<div class="login-page"><div class="login-card">
     <div class="brand"><img src="/favicon.svg" alt="">Cato</div>
@@ -234,6 +254,7 @@ async function boot() {
   }
   app.me = me.user;
   app.prefs = me.prefs || {};
+  app.unread = me.unread || 0;
   applyTheme(app.prefs.theme);
   try { app.config = await api.get('/api/config'); } catch { app.config = {}; }
 
@@ -255,6 +276,7 @@ async function boot() {
     if (document.visibilityState !== 'visible') return;
     app.store.sync().catch(() => {});
     refreshTimer();
+    refreshUnread();
   });
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyTheme(app.prefs.theme));
   document.addEventListener('keydown', onKey);
@@ -264,6 +286,7 @@ async function boot() {
   if (app.online) {
     app.store.sync().then(() => app.store.flush()).catch(() => {});
     refreshTimer();
+    refreshUnread();
   } else {
     app.store.synced = true;
     app.redraw();
