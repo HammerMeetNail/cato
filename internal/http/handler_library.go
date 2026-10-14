@@ -527,7 +527,7 @@ func (h *LibraryHandler) upsertLibraryItem(w http.ResponseWriter, r *http.Reques
 	// writing 200 on top of it would append a second JSON document to the
 	// error body (malformed JSON the client then reports as a generic HTTP
 	// error instead of the specific validation message).
-	if !h.writeLibraryItem(w, userID, gameID, req) {
+	if !h.writeLibraryItem(r.Context(), w, h.db, userID, gameID, req, nil) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
@@ -552,7 +552,20 @@ func (h *LibraryHandler) patchLibraryItem(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	existing, err := h.fetchLibraryItem(userID, gameID, h.platformNames(r.Context()))
+	// Read, merge and write on one IMMEDIATE writer transaction: the single
+	// writer connection serializes concurrent PATCHes, so a "+30m" tap can't
+	// be lost between another request's read and its write.
+	ctx := r.Context()
+	names := h.platformNames(ctx)
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		log.Printf("library patch: begin failed for user %s game %d: %v", userID, gameID, err)
+		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to update library item"))
+		return
+	}
+	defer tx.Rollback()
+
+	existing, err := fetchLibraryItem(ctx, tx, userID, gameID, names)
 	if err == sql.ErrNoRows {
 		writeJSON(w, http.StatusNotFound, errResp("not_found", "Game is not in your library"))
 		return
@@ -626,24 +639,36 @@ func (h *LibraryHandler) patchLibraryItem(w http.ResponseWriter, r *http.Request
 	merged.StartedAt = req.StartedAt
 	merged.CompletedAt = req.CompletedAt
 
-	if !h.writeLibraryItem(w, userID, gameID, merged) {
+	if !h.writeLibraryItem(ctx, w, tx, userID, gameID, merged, req.PlaytimeDeltaMinutes) {
 		return
 	}
-
-	updated, err := h.fetchLibraryItem(userID, gameID, h.platformNames(r.Context()))
+	updated, err := fetchLibraryItem(ctx, tx, userID, gameID, names)
 	if err != nil {
-		// The row was just written by us through the writer pool; a read
-		// hiccup shouldn't turn a successful patch into an error response.
-		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+		log.Printf("library patch: reload failed for user %s game %d: %v", userID, gameID, err)
+		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to update library item"))
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		log.Printf("library patch: commit failed for user %s game %d: %v", userID, gameID, err)
+		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to update library item"))
 		return
 	}
 	writeJSON(w, http.StatusOK, updated)
 }
 
+// libraryExecer is what writing a library item needs: *db.DB for a plain
+// upsert, or the *sql.Tx of a PATCH so its read-merge-write is atomic. Never
+// mix the two inside a transaction — the writer has a single connection, so
+// h.db.Exec while holding the transaction would deadlock.
+type libraryExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 // fetchLibraryItem loads one library item via libraryItemSelect, returning the
 // same JSON shape as the list endpoint (scanLibraryItem).
-func (h *LibraryHandler) fetchLibraryItem(userID string, gameID int64, platformNames map[int64]string) (map[string]interface{}, error) {
-	row := h.db.QueryRow(`SELECT `+libraryItemSelect+`
+func fetchLibraryItem(ctx context.Context, q libraryExecer, userID string, gameID int64, platformNames map[int64]string) (map[string]interface{}, error) {
+	row := q.QueryRowContext(ctx, `SELECT `+libraryItemSelect+`
 		FROM library_items li
 		JOIN games g ON g.id = li.game_id
 		WHERE li.user_id = ? AND li.game_id = ?`, userID, gameID)
@@ -670,9 +695,10 @@ func toInt64(v interface{}) int64 {
 
 // writeLibraryItem validates and persists a full library item state. Both the
 // POST upsert and the PATCH merge funnel through here so validation and
-// timestamp semantics can never diverge. Returns false if it already wrote an
-// error response.
-func (h *LibraryHandler) writeLibraryItem(w http.ResponseWriter, userID string, gameID int64, req libraryUpsertRequest) bool {
+// timestamp semantics can never diverge. A non-nil playtimeDelta is applied
+// with SQL arithmetic against the stored value. Returns false if it already
+// wrote an error response.
+func (h *LibraryHandler) writeLibraryItem(ctx context.Context, w http.ResponseWriter, ex libraryExecer, userID string, gameID int64, req libraryUpsertRequest, playtimeDelta *int64) bool {
 	if !isValidStatus(req.Status) {
 		writeJSON(w, http.StatusBadRequest, errResp("invalid_status",
 			"Status must be wishlist, backlog, playing, completed, or abandoned"))
@@ -741,7 +767,7 @@ func (h *LibraryHandler) writeLibraryItem(w http.ResponseWriter, userID string, 
 
 	// Verify game exists
 	var exists int
-	err := h.db.QueryRow("SELECT 1 FROM games WHERE id = ?", gameID).Scan(&exists)
+	err := ex.QueryRowContext(ctx, "SELECT 1 FROM games WHERE id = ?", gameID).Scan(&exists)
 	if err == sql.ErrNoRows {
 		writeJSON(w, http.StatusNotFound, errResp("game_not_found", "Game not found"))
 		return false
@@ -808,12 +834,18 @@ func (h *LibraryHandler) writeLibraryItem(w http.ResponseWriter, userID string, 
 	// The ON CONFLICT DO UPDATE never writes NULL for an unspecified timestamp
 	// — that's the fix for the data-loss bug where a UI edit (which sends no
 	// timestamps) wiped started_at/completed_at via excluded.<col>.
-	_, err = h.db.Exec(`INSERT INTO library_items (user_id, game_id, status, rating, playtime_minutes, tags_json, notes, started_at, completed_at, platform, owned_platforms_json, medium, updated_at)
+	var deltaSet bool
+	var delta int64
+	if playtimeDelta != nil {
+		deltaSet, delta = true, *playtimeDelta
+	}
+	_, err = ex.ExecContext(ctx, `INSERT INTO library_items (user_id, game_id, status, rating, playtime_minutes, tags_json, notes, started_at, completed_at, platform, owned_platforms_json, medium, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(user_id, game_id) DO UPDATE SET
 			status = excluded.status,
 			rating = excluded.rating,
-			playtime_minutes = excluded.playtime_minutes,
+			playtime_minutes = CASE WHEN ? THEN MAX(0, library_items.playtime_minutes + ?)
+				ELSE excluded.playtime_minutes END,
 			tags_json = excluded.tags_json,
 			notes = excluded.notes,
 			started_at = CASE
@@ -836,6 +868,7 @@ func (h *LibraryHandler) writeLibraryItem(w http.ResponseWriter, userID string, 
 			updated_at = excluded.updated_at`,
 		userID, gameID, req.Status, req.Rating, req.PlaytimeMinutes,
 		tagsJSON, req.Notes, insertStarted, insertCompleted, platformPrimary, ownedPlatformsJSON, req.Medium, now,
+		deltaSet, delta,
 		startClear, startVal != "", nullStrOr(startVal),
 		endClear, endVal != "", nullStrOr(endVal))
 	if err != nil {
@@ -845,7 +878,7 @@ func (h *LibraryHandler) writeLibraryItem(w http.ResponseWriter, userID string, 
 	}
 
 	// Enqueue a cover job for this game (best-effort, ignore errors).
-	h.db.Exec(`INSERT INTO cover_jobs (game_id, source_url)
+	ex.ExecContext(ctx, `INSERT INTO cover_jobs (game_id, source_url)
 		SELECT id, cover_url FROM games WHERE id = ? AND cover_url != ''
 		ON CONFLICT(game_id) DO NOTHING`, gameID)
 

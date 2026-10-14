@@ -32,16 +32,24 @@ type DB struct {
 // DSN used the mattn syntax, so every PRAGMA was silently ignored and the DB
 // ran in rollback-journal mode with no busy timeout — the root cause of the
 // lock contention this change fixes.
-func dsn(path string) string {
-	return fmt.Sprintf(
+//
+// The writer also uses _txlock=immediate: every writer transaction takes the
+// write lock at BEGIN, so a read-modify-write transaction can't fail late
+// with SQLITE_BUSY_SNAPSHOT when another process wrote after its first read.
+func dsn(path string, writer bool) string {
+	d := fmt.Sprintf(
 		"file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"+
 			"&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)",
 		path,
 	)
+	if writer {
+		d += "&_txlock=immediate"
+	}
+	return d
 }
 
 func Open(path string) (*DB, error) {
-	read, err := sql.Open("sqlite", dsn(path))
+	read, err := sql.Open("sqlite", dsn(path, false))
 	if err != nil {
 		return nil, fmt.Errorf("open read pool: %w", err)
 	}
@@ -51,7 +59,7 @@ func Open(path string) (*DB, error) {
 	}
 	read.SetMaxOpenConns(readConns)
 
-	write, err := sql.Open("sqlite", dsn(path))
+	write, err := sql.Open("sqlite", dsn(path, true))
 	if err != nil {
 		read.Close()
 		return nil, fmt.Errorf("open writer: %w", err)
