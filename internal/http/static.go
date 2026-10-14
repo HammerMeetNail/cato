@@ -33,6 +33,11 @@ var compressibleTypes = map[string]bool{
 type gzipStatic struct {
 	root string
 	next http.Handler
+	// transform, when set, rewrites a file's bytes before serving (asset
+	// versioning of HTML and the service worker). variant names the input
+	// the result depends on, so a changed asset version rebuilds the entry.
+	transform func(urlPath string, raw []byte) []byte
+	variant   func(urlPath string) string
 
 	mu    sync.Mutex
 	cache map[string]*gzEntry
@@ -41,6 +46,8 @@ type gzipStatic struct {
 type gzEntry struct {
 	size    int64
 	modTime time.Time
+	variant string
+	raw     []byte // identity bytes after transform (nil: serve the file)
 	gz      []byte
 	etag    string // of the identity bytes; the gzip ETag adds a suffix
 }
@@ -74,7 +81,7 @@ func (g *gzipStatic) serve(w http.ResponseWriter, r *http.Request, urlPath strin
 		g.next.ServeHTTP(w, r)
 		return
 	}
-	entry, err := g.entry(file, info)
+	entry, err := g.entry(clean, file, info)
 	if err != nil {
 		g.next.ServeHTTP(w, r)
 		return
@@ -87,6 +94,10 @@ func (g *gzipStatic) serve(w http.ResponseWriter, r *http.Request, urlPath strin
 	}
 	if !acceptsGzip(r) {
 		w.Header().Set("ETag", `"`+entry.etag+`"`)
+		if entry.raw != nil {
+			http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(entry.raw))
+			return
+		}
 		http.ServeFile(w, r, file)
 		return
 	}
@@ -97,19 +108,35 @@ func (g *gzipStatic) serve(w http.ResponseWriter, r *http.Request, urlPath strin
 	if r.Header.Get("Range") == "" {
 		w.Header().Set("Content-Length", strconv.Itoa(len(entry.gz)))
 	}
-	http.ServeContent(w, r, "", entry.modTime, bytes.NewReader(entry.gz))
+	// A transformed file also changes when other assets do, so its
+	// modification time says nothing: validate by ETag only.
+	modTime := entry.modTime
+	if entry.raw != nil {
+		modTime = time.Time{}
+	}
+	http.ServeContent(w, r, "", modTime, bytes.NewReader(entry.gz))
 }
 
-func (g *gzipStatic) entry(file string, info os.FileInfo) (*gzEntry, error) {
+func (g *gzipStatic) entry(urlPath, file string, info os.FileInfo) (*gzEntry, error) {
+	variant := ""
+	if g.variant != nil {
+		variant = g.variant(urlPath)
+	}
 	g.mu.Lock()
 	cached := g.cache[file]
 	g.mu.Unlock()
-	if cached != nil && cached.size == info.Size() && cached.modTime.Equal(info.ModTime()) {
+	if cached != nil && cached.size == info.Size() && cached.modTime.Equal(info.ModTime()) && cached.variant == variant {
 		return cached, nil
 	}
 	raw, err := os.ReadFile(file)
 	if err != nil {
 		return nil, err
+	}
+	var transformed []byte
+	if g.transform != nil {
+		if out := g.transform(urlPath, raw); !bytes.Equal(out, raw) {
+			transformed, raw = out, out
+		}
 	}
 	var buf bytes.Buffer
 	zw, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
@@ -118,7 +145,7 @@ func (g *gzipStatic) entry(file string, info os.FileInfo) (*gzEntry, error) {
 		return nil, err
 	}
 	sum := sha256.Sum256(raw)
-	e := &gzEntry{size: info.Size(), modTime: info.ModTime(), gz: buf.Bytes(), etag: hex.EncodeToString(sum[:8])}
+	e := &gzEntry{size: info.Size(), modTime: info.ModTime(), variant: variant, raw: transformed, gz: buf.Bytes(), etag: hex.EncodeToString(sum[:8])}
 	g.mu.Lock()
 	g.cache[file] = e
 	g.mu.Unlock()

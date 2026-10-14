@@ -132,9 +132,14 @@ Before each deployment:
 1. Save a verified database snapshot and retain the previous binary, static
    assets, Dockerfile and Compose file as a versioned release bundle.
 2. Run the release gate and verify the exact commit's CI result.
-3. If shipped web assets changed, bump `CACHE_NAME` in the service worker.
-4. Deploy, check `/healthz`, then exercise login, search, library editing,
+3. Deploy, check `/healthz`, then exercise login, search, library editing,
    Playing time logging, Stats and Settings. Test Google/IGDB if configured.
+
+Shipped web assets are versioned automatically (content hashes in URLs and in the
+service worker), so there is no cache name to bump. Cato snapshots the database
+into `CATO_BACKUP_DIR` (default `data/backups`, five kept) before applying a schema
+upgrade; restore one with the stopped-service procedure below if an upgrade goes
+wrong.
 
 The container has a 30-second stop grace period; the application budgets 20
 seconds to drain HTTP and stop workers. A shutdown error requires checking logs

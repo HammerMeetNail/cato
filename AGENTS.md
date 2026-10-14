@@ -11,8 +11,8 @@ make vet     # go vet ./...
 make release-check # unit/race, vet, builds, JS, backups, security, desktop/mobile E2E
 ```
 
-There is no formatter target. `make vet` runs `go vet ./...` and is expected to
-be clean. Go 1.26.9 is selected by go.mod. Release checks also need Node 24+,
+`make fmt-check` fails on unformatted Go files (part of `make release-check`).
+`make vet` runs `go vet ./...` and is expected to be clean. Go 1.26.9 is selected by go.mod. Release checks also need Node 24+,
 Python 3.10+, sqlite3 and Playwright Chromium/WebKit dependencies; see
 `docs/production-runbook.md`. Keep generated logs/traces outside the repository.
 
@@ -21,17 +21,24 @@ Python 3.10+, sqlite3 and Playwright Chromium/WebKit dependencies; see
 Single Go module (`cato`), single SQLite database, vanilla JS frontend (no build step).
 
 ```
-cmd/cato/        Main entrypoint. Also has an `import-games` subcommand (Postgres COPY import).
+cmd/cato/        Entrypoint: run(args) with subcommands serve (default), dev-cert, import-games,
+                 backfill <aliases|popularity|covers|editions|categories>.
 internal/auth/   Passwords (bcrypt cost 12), sessions (SHA-256 hashed in DB), CSRF, rate limiting (in-memory)
 internal/config/ Env-based config (CATO_* prefix)
 internal/covers/ Background cover downloader (IGDB images → data/covers/{id}.jpg) + /covers/ handler
 internal/devtls/ Self-signed dev certificates (crypto/x509) + SPKI pins; `cato dev-cert --out DIR`
-internal/db/     SQLite open (two-pool), migration runner
-internal/catalog/ Search, types, store, service, IGDB rate limiter. Defines IGDBClient interface.
-internal/http/   HTTP server, handlers, middleware. All JSON responses via writeJSON/errResp.
+internal/db/     SQLite open (two-pool), migration runner, pre-migration snapshots
+internal/catalog/ Game search, store, service, IGDB rate limiter (two lanes), backfills, catalog jobs.
+internal/library/ The library domain: typed items, filters/sorts, writes with the journal
+                 (playthroughs, sessions), undo, compact index, bulk, timer, stats, prefs, export.
+internal/jobs/   Background job runner (persisted schedule, jitter, cancellation).
+internal/metrics/ In-process counters/histograms in Prometheus text format.
+internal/http/   HTTP server, legacy /api handlers, middleware, static/asset versioning.
+internal/http/v1/ /api/v1 handlers (docs/api-v1.md): thin, over internal/library and catalog.
 internal/integrations/igdb/ IGDB API v4 client (Twitch OAuth token auth)
 internal/importer/ Postgres COPY parser for game seed imports (opens its own *sql.DB)
-web/static/      HTML, CSS, JS (vanilla, no bundler)
+web/static/      HTML, CSS, JS (vanilla ES modules, no bundler; lit-html vendored)
+tests/js/        node --test suites for the pure frontend modules
 ```
 
 ## Database (read this before touching `internal/db`)
@@ -59,6 +66,18 @@ web/static/      HTML, CSS, JS (vanilla, no bundler)
 - **Migrations** are versioned in `internal/db/migrate.go` (`migrations` slice, highest-first
   in source, applied lowest-first). Add a new `{Version: N, Up: "..."}` entry; never edit an
   applied migration. `Migrate(*db.DB)` runs them on the writer.
+- **Journal (v18)**: `library_items.playtime_minutes` always equals the sum of the item's
+  `play_sessions` (triggers keep it so; adjustments are `source='adjust'` sessions, legacy
+  totals one `source='legacy'` session). Status changes open/close `playthroughs` in
+  `internal/library`. Every change to a library row (and to a game's name/cover/release date)
+  bumps the owner's `user_state.library_rev` and stamps `library_items.rev`; deletions leave
+  `library_tombstones`. Triggers must not use `INSERT OR IGNORE/REPLACE`: an outer UPSERT's
+  conflict handling overrides the trigger's. Rebuilding `library_items` again needs
+  `foreign_keys=OFF` (DROP TABLE would cascade into the journal).
+- **Library writes** go through `library.Store` (one IMMEDIATE transaction, journal
+  bookkeeping, an undo snapshot in `undo_log`). Don't write `library_items` from handlers.
+- **Before a schema upgrade** `serve` snapshots the database with `VACUUM INTO`
+  (`CATO_BACKUP_DIR`, default `data/backups`, newest 5 kept).
 - **Tests use real SQLite**: no DB mocks. Pattern: `db.Open(t.TempDir()+"/test.db")` →
   `db.Migrate(database)` → use. Helpers return `*db.DB`.
 
@@ -98,11 +117,37 @@ web/static/      HTML, CSS, JS (vanilla, no bundler)
     refresh results never queue jobs). Library writes call `Worker.Wake()`; the idle worker
     otherwise re-checks every 30 s. `covers.PruneJobs` drops orphaned jobs in the daily
     sweep. Do not reintroduce a catalog-wide `EnqueueMissingCovers` at startup.
+- **API v1** (`internal/http/v1`, docs/api-v1.md) is what the app uses: Go 1.22 method
+  patterns, `{items, next_cursor, total}` collections, `{error, message, fields}` errors,
+  mutations return the item + `library_rev` + `undo_id`, ETags on every GET (library ones from
+  `library_rev`), and a per-account write rate limit. The legacy `/api/library*` routes below
+  remain until the old frontend is gone; their writes also go through `library.Store`.
+- **Background work** runs on `internal/jobs` (registered in `cmd/cato/main.go`: catalog
+  jobs from `catalog.Service.Jobs`, the daily `maintenance` sweep). `/healthz` reports the
+  most overdue job. Don't start ad-hoc goroutine loops. IGDB requests pass the two-lane
+  limiter (4 req/s): tag user-facing calls with `catalog.WithLane(ctx, LaneInteractive)`.
+- **Observability**: slog (`CATO_LOG_FORMAT=text|json`, `CATO_LOG_LEVEL`); one request log
+  line per request (request ID, hashed user ID, route pattern, status, duration); statements
+  over 50 ms are logged as slow; `/metrics` (Prometheus text) needs `CATO_METRICS_TOKEN`
+  as a bearer token, or a loopback/private-network client when unset.
 - **Library API is paginated**: `GET /api/library?status=&limit=&offset=` (default limit 60,
   max 200). The default order (`updated`) pages by keyset: follow the opaque `X-Next-Cursor`
   header with `?cursor=` (index-backed, stable when edits reorder items); other sorts use
   `offset`. `X-Total-Count` is only sent with the first page. The frontend
   (`web/static/js/library.js`) does infinite scroll and appends pages.
+- **Asset versioning is automatic** (internal/http/assets.go): the server hashes every
+  file under `web/static`, rewrites local `src`/`href` in HTML to `?v=<hash>` (served
+  `immutable`), injects an import map pinning every `/js/**.js` module plus modulepreload
+  hints for the entry module's static imports at the `<!-- assets -->` marker, allows that
+  import map in the CSP by hash, stamps `__CATO_ASSET_VERSION__` into the service worker and
+  serves its precache list at `/asset-manifest.json`. There is no `CACHE_NAME` to bump. Keep
+  the marker in `<head>` of every app page, and import modules with relative or absolute
+  `/js/...` paths (both are mapped).
+- **Frontend guardrails**: `make test-js` runs `scripts/lint-js.cjs` (no `innerHTML`,
+  `insertAdjacentHTML`, `document.write`, `unsafeHTML`, `eval` outside `js/vendor/` and the
+  legacy screens it lists), `node --test tests/js`, and the service worker regression.
+  Vendored files change only via `scripts/vendor-update.sh`; a Go test checks them against
+  `js/vendor/CHECKSUMS`.
 - **HTTP middleware**: `gzipMiddleware` wraps the mux via `Server.Handler()` but only
   compresses `/api/` JSON. Static text assets (`.js .css .html .svg .json .webmanifest`)
   are served gzipped by `gzipStatic` (compressed once per file version, kept in memory,
@@ -151,11 +196,11 @@ web/static/      HTML, CSS, JS (vanilla, no bundler)
 - **PWA installability**: `web/static/manifest.webmanifest` (`name: Cato — Game
   Library`, `display: standalone`, `theme_color: #1a1a2e`, icons in
   `web/static/icons/*`, shortcuts to Library/Stats/Search), `web/static/offline.html`
-  (dark, shows when `fetch` for a navigation fails), `web/static/service-worker.js`
-  (`CACHE_NAME=cato-static-*` — versioned, see the file for the current value;
-  pre-caches `css/app.css`, `js/*`, manifest,
-  icons, offline; cache-first for `/css/ /js/ /icons/ /covers/`, navigate
-  fallback to `offline.html`), and `web/static/js/head-init.js` (sets `--app-h`
+  (shows when a navigation fails), `web/static/service-worker.js` (cache
+  `cato-shell-<asset version>`, precaches `/asset-manifest.json`; versioned assets
+  cache-first, unversioned stale-while-revalidate; navigations network-first with the
+  cached shell `/` as the offline fallback for app routes and `offline.html` otherwise;
+  covers cache-first in an LRU of 2,000; never touches `/api/`), and `web/static/js/head-init.js` (sets `--app-h`
   before first paint). `login.html` also links the manifest and registers the SW.
   `staticCacheMiddleware` sends `no-cache` for `/js/ /css/ /icons/ /manifest*`,
   and `no-store` for `/service-worker.js`. Keep all four files and the
@@ -192,10 +237,9 @@ production runbook for image/SSH configuration. Never create/push a release tag
 when the user has excluded deployment.
 
 `make deploy-nas` runs the cross-compiled binary into a fresh image and recreates the container.
-When changing any shipped asset under `web/static`, increment the versioned
-`CACHE_NAME` in `web/static/service-worker.js` before deploying (for example,
-`cato-static-v8` to `cato-static-v9`). The new service worker purges the old
-cache on activation; an already-open client may need one reload to activate it.
+Shipped assets are versioned automatically (see Asset versioning): a changed file gets a new
+URL and a new service worker version, which purges the old shell cache on activation; an
+already-open client shows "Update available" and reloads when asked.
 WAL conversion of an existing DB happens automatically on first open. Back up the prod DB
 with SQLite `.backup` (never copy a live WAL database) before any manual DB surgery;
 see `docs/production-runbook.md` for verified backup and stopped-service restore.

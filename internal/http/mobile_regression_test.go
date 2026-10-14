@@ -108,13 +108,13 @@ func TestTagChipEllipsis(t *testing.T) {
 	}
 }
 
-// TestServiceWorkerCacheBumped ensures shipped asset changes bump the
-// service worker cache version so clients don't serve stale JS/CSS.
-// Update the pinned version whenever CACHE_NAME is bumped for a release.
-func TestServiceWorkerCacheBumped(t *testing.T) {
+// TestServiceWorkerVersionIsAutomatic: the worker's cache is named from
+// the server-stamped asset version (internal/http/assets.go), so shipped
+// asset changes never depend on a hand-bumped CACHE_NAME again.
+func TestServiceWorkerVersionIsAutomatic(t *testing.T) {
 	content := readStaticFile(t, "web/static/service-worker.js")
-	if !strings.Contains(content, `CACHE_NAME = "cato-static-v27"`) {
-		t.Fatalf("service-worker.js must have CACHE_NAME v27; got: %s", snippet(content, "CACHE_NAME", 60))
+	if !strings.Contains(content, `const VERSION = "__CATO_ASSET_VERSION__";`) || strings.Contains(content, "CACHE_NAME") {
+		t.Fatalf("service-worker.js must use the stamped VERSION, not a manual CACHE_NAME")
 	}
 }
 

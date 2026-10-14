@@ -1,0 +1,171 @@
+/* Design tokens (docs/cato_smooth.md §4.3). Every colour, size, radius,
+   shadow and duration in the other stylesheets comes from here. Light is the
+   base; dark applies for prefers-color-scheme unless the user picked light,
+   or always when they picked dark (theme-init.js sets data-theme). Every
+   text/background pair below meets 4.5:1. */
+:root {
+  color-scheme: light;
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-num: ui-rounded, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --fs-12: 0.75rem;
+  --fs-14: 0.875rem;
+  --fs-16: 1rem;
+  --fs-18: 1.125rem;
+  --fs-22: 1.375rem;
+  --fs-28: 1.75rem;
+  --fs-36: 2.25rem;
+  --lh-tight: 1.2;
+  --lh: 1.45;
+
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
+  --r-full: 999px;
+
+  --dur-1: 120ms;
+  --dur-2: 200ms;
+  --dur-3: 320ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+
+  --tap: 44px;
+  --nav-h: 64px;
+  --sidebar-w: 232px;
+  --content-max: 1280px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  --bg: #f4f5f8;
+  --surface-1: #ffffff;
+  --surface-2: #eceef3;
+  --surface-3: #e0e3ea;
+  --text: #14171d;
+  --text-muted: #535b69;
+  --border: #d3d7df;
+  --border-strong: #a9afbb;
+  --focus: #4a37e0;
+
+  --accent: #4f3fe0;
+  --accent-hover: #4334cc;
+  --accent-contrast: #ffffff;
+  --accent-soft: #ebe8fd;
+  --on-accent-soft: #3a2bb3;
+
+  --success: #17734a;
+  --warning: #8a5300;
+  --danger: #c0272d;
+  --danger-soft: #fbe6e6;
+  --star: #d68c00;
+  --star-empty: #c4c9d3;
+
+  --status-wishlist: #a5226f;
+  --status-wishlist-bg: #fbe8f3;
+  --status-backlog: #44505f;
+  --status-backlog-bg: #e8ecf1;
+  --status-playing: #15703f;
+  --status-playing-bg: #e0f4e8;
+  --status-paused: #845000;
+  --status-paused-bg: #fcefd6;
+  --status-completed: #1a57b8;
+  --status-completed-bg: #e2ecfb;
+  --status-abandoned: #a32b24;
+  --status-abandoned-bg: #fae4e2;
+
+  --scrim: rgb(10 12 16 / 0.45);
+  --shadow-1: 0 1px 2px rgb(15 20 30 / 0.06), 0 1px 3px rgb(15 20 30 / 0.08);
+  --shadow-2: 0 4px 14px rgb(15 20 30 / 0.10);
+  --shadow-3: 0 16px 40px rgb(15 20 30 / 0.20);
+  --cover-ratio: 3 / 4;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0d0f14;
+    --surface-1: #161920;
+    --surface-2: #1d2129;
+    --surface-3: #272c37;
+    --text: #e9ecf2;
+    --text-muted: #a3abb9;
+    --border: #2d333f;
+    --border-strong: #4a5262;
+    --focus: #a99fff;
+    --accent: #8d80ff;
+    --accent-hover: #a198ff;
+    --accent-contrast: #0d0f14;
+    --accent-soft: #26214a;
+    --on-accent-soft: #cbc4ff;
+    --success: #5ccf92;
+    --warning: #f0b14a;
+    --danger: #ff7b78;
+    --danger-soft: #3a1a1c;
+    --star: #f5b83d;
+    --star-empty: #444b59;
+    --status-wishlist: #ff94cf;
+    --status-wishlist-bg: #3a1830;
+    --status-backlog: #c3ccd8;
+    --status-backlog-bg: #262c36;
+    --status-playing: #6ee0a0;
+    --status-playing-bg: #12301f;
+    --status-paused: #f5bf62;
+    --status-paused-bg: #36270c;
+    --status-completed: #8fb8ff;
+    --status-completed-bg: #172a47;
+    --status-abandoned: #ff9a91;
+    --status-abandoned-bg: #3b1917;
+    --scrim: rgb(0 0 0 / 0.6);
+    --shadow-1: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-2: 0 4px 14px rgb(0 0 0 / 0.45);
+    --shadow-3: 0 16px 40px rgb(0 0 0 / 0.6);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0d0f14;
+  --surface-1: #161920;
+  --surface-2: #1d2129;
+  --surface-3: #272c37;
+  --text: #e9ecf2;
+  --text-muted: #a3abb9;
+  --border: #2d333f;
+  --border-strong: #4a5262;
+  --focus: #a99fff;
+  --accent: #8d80ff;
+  --accent-hover: #a198ff;
+  --accent-contrast: #0d0f14;
+  --accent-soft: #26214a;
+  --on-accent-soft: #cbc4ff;
+  --success: #5ccf92;
+  --warning: #f0b14a;
+  --danger: #ff7b78;
+  --danger-soft: #3a1a1c;
+  --star: #f5b83d;
+  --star-empty: #444b59;
+  --status-wishlist: #ff94cf;
+  --status-wishlist-bg: #3a1830;
+  --status-backlog: #c3ccd8;
+  --status-backlog-bg: #262c36;
+  --status-playing: #6ee0a0;
+  --status-playing-bg: #12301f;
+  --status-paused: #f5bf62;
+  --status-paused-bg: #36270c;
+  --status-completed: #8fb8ff;
+  --status-completed-bg: #172a47;
+  --status-abandoned: #ff9a91;
+  --status-abandoned-bg: #3b1917;
+  --scrim: rgb(0 0 0 / 0.6);
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-2: 0 4px 14px rgb(0 0 0 / 0.45);
+  --shadow-3: 0 16px 40px rgb(0 0 0 / 0.6);
+}

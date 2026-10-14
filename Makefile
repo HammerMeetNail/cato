@@ -1,4 +1,4 @@
-.PHONY: build run stop clean test test-race test-js test-backup test-release test-e2e vet security release-check db-backup db-restore deploy deploy-nas deploy-build deploy-push deploy-db deploy-up deploy-down deploy-full deploy-logs
+.PHONY: fmt-check build run stop clean test test-race test-js test-backup test-release test-e2e vet security release-check db-backup db-restore deploy deploy-nas deploy-build deploy-push deploy-db deploy-up deploy-down deploy-full deploy-logs
 
 DB_PATH ?= data/cato.db
 BACKUP_DIR ?= backup
@@ -30,7 +30,12 @@ test-race:
 vet:
 	go vet ./...
 
+fmt-check:
+	@out=$$(gofmt -l cmd internal); if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
+
 test-js:
+	node scripts/lint-js.cjs
+	node --test tests/js/*.test.mjs
 	node scripts/cache-regression.cjs
 	node scripts/rendering-regression.cjs
 	node scripts/view-cache-regression.cjs
@@ -53,6 +58,7 @@ security:
 
 # Keep this sequential, including under make -j: one owner builds/runs tests.
 release-check:
+	$(MAKE) fmt-check
 	$(MAKE) test
 	$(MAKE) test-race
 	$(MAKE) vet

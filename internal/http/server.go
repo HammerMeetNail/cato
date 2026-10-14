@@ -35,6 +35,7 @@ type Server struct {
 	gameHandler    *GameHandler
 	libraryHandler *LibraryHandler
 	static         *gzipStatic
+	assets         *assetIndex
 	jobs           *jobs.Runner
 	metrics        *metrics.Registry
 
@@ -66,7 +67,24 @@ func NewServer(cfg *config.Config, db *db.DB) *Server {
 }
 
 func (s *Server) routes() {
+	s.assets = newAssetIndex(s.cfg.StaticDir)
 	s.static = newGzipStatic(s.cfg.StaticDir, http.FileServer(noListingFS{http.Dir(s.cfg.StaticDir)}))
+	s.static.transform = func(urlPath string, raw []byte) []byte {
+		switch {
+		case strings.HasSuffix(urlPath, ".html"):
+			return s.assets.rewriteHTML(raw)
+		case urlPath == "/service-worker.js":
+			return s.assets.rewriteServiceWorker(raw)
+		}
+		return raw
+	}
+	s.static.variant = func(urlPath string) string {
+		if strings.HasSuffix(urlPath, ".html") || urlPath == "/service-worker.js" {
+			return s.assets.Version()
+		}
+		return ""
+	}
+	s.mux.HandleFunc("GET /asset-manifest.json", s.assets.handleManifest)
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
 
@@ -103,7 +121,7 @@ func (s *Server) routes() {
 	})
 
 	// Static files with cache headers; text assets are served gzipped.
-	s.mux.Handle("/", staticCacheMiddleware(s.static))
+	s.mux.Handle("/", s.staticCacheMiddleware(s.static))
 }
 
 // noListingFS hides directories that have no index.html, so http.FileServer
@@ -145,8 +163,14 @@ func (n noListingFS) Open(name string) (http.File, error) {
 // PWA assets (manifest, service-worker, offline.html, icons) are also no-cache
 // so installs and updates are not stuck on stale versions. Icons could be long-
 // cached, but they are tiny and change rarely; no-cache keeps the logic simple.
-func staticCacheMiddleware(next http.Handler) http.Handler {
+func (s *Server) staticCacheMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A URL carrying the file's current content hash never changes.
+		if s.assets.versioned(r) {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			next.ServeHTTP(w, r)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/js/") ||
 			strings.HasPrefix(r.URL.Path, "/css/") ||
 			strings.HasPrefix(r.URL.Path, "/icons/") ||
@@ -282,7 +306,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) Handler() http.Handler {
-	return s.clientMiddleware(s.observeMiddleware(securityMiddleware(s.cfg, gzipMiddleware(apiBodyLimitMiddleware(muxRoute(s.mux))))))
+	return s.clientMiddleware(s.observeMiddleware(securityMiddleware(s.cfg, s.assets.ScriptHash, gzipMiddleware(apiBodyLimitMiddleware(muxRoute(s.mux))))))
 }
 
 // clientMiddleware resolves the client IP and scheme once per request,
@@ -430,13 +454,15 @@ func apiBodyLimitMiddleware(next http.Handler) http.Handler {
 const permissionsPolicy = "accelerometer=(), camera=(self), display-capture=(), geolocation=(), " +
 	"gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), usb=()"
 
-func securityMiddleware(cfg *config.Config, next http.Handler) http.Handler {
-	csp := "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-		"img-src 'self' https://images.igdb.com data:; connect-src 'self'; " +
+// securityMiddleware sets the security headers. scriptHash is the CSP
+// source of the injected import map (the only inline script).
+func securityMiddleware(cfg *config.Config, scriptHash func() string, next http.Handler) http.Handler {
+	cspTail := "; style-src 'self' 'unsafe-inline'; " +
+		"img-src 'self' https://images.igdb.com data: blob:; connect-src 'self'; " +
 		"frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
 	https := cfg.HTTPS()
 	if https {
-		csp += "; upgrade-insecure-requests"
+		cspTail += "; upgrade-insecure-requests"
 	}
 	// HSTS is per host, not per port: on a self-signed dev certificate it
 	// would pin every other localhost project to https, so dev TLS skips it.
@@ -452,7 +478,7 @@ func securityMiddleware(cfg *config.Config, next http.Handler) http.Handler {
 		// a script-execution one. img-src covers same-origin covers plus the
 		// IGDB image CDN; covers from dead legacy hosts fail to load and the
 		// frontend's delegated error fallback swaps in the local placeholder.
-		w.Header().Set("Content-Security-Policy", csp)
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' "+scriptHash()+cspTail)
 		w.Header().Set("Permissions-Policy", permissionsPolicy)
 		if hsts {
 			w.Header().Set("Strict-Transport-Security", "max-age=31536000")

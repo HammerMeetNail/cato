@@ -1,0 +1,14 @@
+3c57143f22dac950efebf84002e360bba5458c7b90fe583b0667aaaef1a7256e  ./LUCIDE-LICENSE
+2af98a69ded898713813b34a12db9358e08019db6679ad349b5e2d3713bb50ab  ./VERSIONS
+2b66f9390afde29edfe4314daff93f01fb182e1178053e228120178987e5db75  ./lit-html/LICENSE
+53f58e79132655fc3fc4f8fbd0ac21dbac8ed5ad74556c2c51d2648e8efa9aa2  ./lit-html/async-directive.js
+f7fb1154b8f72ed2cc08b05eaeed71c99270e9ad2d48620ed24688a1af4c2b62  ./lit-html/directive-helpers.js
+3344c4f41c69cd0701d3937e8f9ef90bd845614bf6456d0b8314b7c51d415b9d  ./lit-html/directive.js
+3b5db19e9f8b2a974ea3a4685184bd02cdd38809e4f105ce06253da0c1092a4f  ./lit-html/directives/class-map.js
+1d6754369e4e471f9d3b1b106b1b17b201908cd7e370d4694eb83bde6c630c5a  ./lit-html/directives/if-defined.js
+0c5ba1cb7890b36b30b841d2496e517d3eeb4d131cdd9abdce40fd50d7824514  ./lit-html/directives/keyed.js
+b305f9066319d838db797abd5a4d871537277e25f35332702bfce4452c020ecf  ./lit-html/directives/live.js
+0b9ddde79172b1bf38adc6d7ee7bc0d9e10330a88d6a758832e2cdfce3c0f3ca  ./lit-html/directives/ref.js
+083140026ecd8665fedd15b17769f9d516252a9f1502f1e91e6967686ee82626  ./lit-html/directives/repeat.js
+3a7a07effa80f3fb042179863ed830c1cce23bbd4741a46d2ea3df61219c785e  ./lit-html/directives/style-map.js
+b878e7f95dec8a9b6e9b217faca6b6a11bad82ebc44c0caa77419ed83edd81f2  ./lit-html/lit-html.js
