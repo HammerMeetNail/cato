@@ -152,7 +152,7 @@ Every item below was checked against the code or reproduced in the running app. 
 **P0 exit criteria:**
 - Every item above has a test.
 - `make release-check` is green.
-- Cold load is under 120 KB transferred.
+- Cold load of the app shell (HTML, JS, CSS and API calls) is under 120 KB transferred. Cover images are measured separately: on a phone the grid lazy-loads about 30 covers (~130 KB), which only smaller cover sizes (P3 `srcset`) can reduce. *(Clarified during P0: F1's own estimate, 406 KB − 300 KB + 75 KB ≈ 180 KB, could not reach 120 KB including images.)*
 - The service-worker `CACHE_NAME` is bumped.
 - `make run` and every Playwright project run over HTTPS, and the HTTPS-only features (service worker, WebAuthn) work in tests with no setup on the machine (§2.4).
 
@@ -210,6 +210,28 @@ Web Push needs the service worker. WebAuthn also refuses IP addresses as the rel
 - **Interim (optional, owner's choice):** `tailscale serve` to try the PWA on real phones before the domain exists.
 
 **Offline away from home.** With HTTPS, the service worker plus the IndexedDB library (P1) let the installed app **open without a connection**. You can browse your library and **log sessions, which are queued and sync when you're back online.** This becomes a headline feature, not a fallback.
+
+### 2.5 P0 implementation notes (2026-10-14)
+
+Where the implementation differs from the tables above, and why:
+
+- **HTTPS (§2.4).** HSTS is skipped for `CATO_DEV_TLS` certificates: HSTS applies per host, not per port, so it would force HTTPS on every other `localhost` project. `Permissions-Policy` is sent in every mode. Certificate files are reloaded when they change, so an ACME client can renew them without a restart. Serving TLS and HTTP/2 makes the Go 1.26.8 `net/http`/`crypto/tls` advisories reachable, so the toolchain moved to 1.26.9. The legacy plain-HTTP NAS instance needs `CATO_ALLOW_INSECURE=1` to keep starting.
+- **#3** also opens writer transactions with `_txlock=immediate`, so a read-modify-write can't fail late with `SQLITE_BUSY_SNAPSHOT`.
+- **Extra bugs found while fixing §2.1:** on desktop, the toolbar's Status control painted over the open search dropdown (a flex item's `z-index`), blocking quick-add. Picking a Filters tag suggestion also closed the panel (the option removes itself, so the outside-click check missed it). On WebKit the suggestion list rendered under the sticky footer and hid itself on scroll.
+- **S3.** The default is `closed`, but every mode allows the first account on an empty server, so fresh installs can bootstrap. `invite` behaves like `closed` until P4 adds invites. Google sign-up follows the same rule.
+- **S10.** The token race was invisible to the race detector with a real `http.Transport` (its connection-pool mutex adds a happens-before edge). The regression test uses an in-process `RoundTripper` without shared state.
+- **F5.** Suggestions use a partial index that matches their `ORDER BY` (`WHERE local_cover_path != ''`) instead of a precomputed table. It is an index walk with an early stop, just as cheap, always current, and needs no refresh job.
+- **F7.** The bundled SQLite is 3.41, which predates `PRAGMA optimize=0x10000`. `db.Optimize` runs a bounded `ANALYZE` (`analysis_limit=400`) when no statistics exist, then `PRAGMA optimize`.
+- **F8.** Queries under 3 characters now match name and alias prefixes only (index range scans), so `ha` no longer finds "Shadow of the Colossus".
+- **F10.** Catalog responses (`/api/games/{id}`, `/api/platforms`) have ETags and a short public max-age. Library ETags wait for P1's `library_rev`.
+- **Test harness.** Headless Chromium intermittently crashes (SIGSEGV) when closing a context that used a CDP virtual authenticator, so the WebAuthn test runs in its own browser.
+
+**Measured cold load** (iPhone 13 emulation, Chromium, empty cache, service worker blocked, 53-item library, 70 seeded titles with generated covers):
+
+| Route | Before (baseline `fe09adb`, HTTP) | After P0 (HTTPS, HTTP/2) |
+|---|---|---|
+| `#library`, total | 35 requests, 488.6 KB (shell 348.5 KB, covers 140.1 KB) | 35 requests, 219.5 KB (shell 91.9 KB, covers 127.6 KB) |
+| `/` (Playing), total | 22 requests, 404.5 KB (shell 345.7 KB) | 22 requests, 144.4 KB (shell 89.7 KB) |
 
 ---
 
