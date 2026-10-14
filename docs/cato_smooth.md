@@ -736,7 +736,7 @@ For a household or friends server. **Decided:** social features are limited to t
   - Each deal is announced once.
   - The response fields are unverified beyond the documentation: if IsThereAnyDeal changes them, alerts stop and the job reports the error on the System page.
 - **Barcodes:** the camera uses BarcodeDetector where it exists. Elsewhere, including iOS, you type the number. **Deferred:** the vendored ZXing-WASM fallback; typing the number covers iOS without adding a large WASM blob.
-- **Share target:** a Steam or IGDB link to a game Cato knows opens that game's page; anything else opens the ⊕ sheet with the search filled in. iOS gets a bookmarklet in Help. Building this exposed a bug where `#log` closed its own sheet (which also broke the "Log time" shortcut); it is fixed.
+- **Share target:** a Steam or IGDB link to a game Cato knows opens that game's page; anything else opens the ⊕ sheet with the search filled in. On iOS, pasting a link into the ⊕ search does the same, and Help describes a one-action Apple Shortcut. A bookmarklet was dropped because it would be a `javascript:` URL, which the CSP rules out. Building this exposed a bug where `#log` closed its own sheet (which also broke the "Log time" shortcut); it is fixed.
 - **Not built:** OAuth "waitlist" sync with IsThereAnyDeal, because polling covers the need; and PriceCharting, which is paid.
 
 ---

@@ -90,6 +90,10 @@ test('share target: a shared store link opens the ⊕ sheet searched for the gam
   const sheet = page.locator('dialog.sheet[aria-label="Log"]');
   await expect(sheet.getByRole('searchbox')).toHaveValue('Hollow Knight');
   await expect(sheet.locator('.log-row', { hasText: 'Hollow Knight' }).first()).toBeVisible();
+
+  // iOS has no share target: pasting a link into the ⊕ search does the same.
+  await sheet.getByRole('searchbox').fill('https://www.nintendo.com/us/store/products/metroid-dread-switch/');
+  await expect(page.locator('dialog.sheet[aria-label="Log"]').getByRole('searchbox')).toHaveValue('metroid dread');
 });
 
 test('a reset link from an admin sets a new password', async ({ browser, baseURL }) => {

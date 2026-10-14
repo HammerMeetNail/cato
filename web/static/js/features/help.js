@@ -37,8 +37,7 @@ export function helpView() {
     <section class="card form-grid">
       <h2 style="font-size:var(--fs-18)">${icon('share-2')} Adding games from anywhere</h2>
       <p><strong>Android:</strong> install Cato, then use Share → Cato on a Steam, eShop, PlayStation Store, IGDB or YouTube page. Cato opens the ⊕ sheet already searched for that game.</p>
-      <p><strong>iPhone, iPad and computers:</strong> make a bookmark (or a Shortcuts “Open URL” action) with this address, and use it on a game's page:</p>
-      <p class="mono" style="user-select:all">javascript:location.href='${location.origin}/share?url='+encodeURIComponent(location.href)+'&amp;title='+encodeURIComponent(document.title)</p>
+      <p><strong>iPhone, iPad and computers:</strong> copy the page's link and paste it into the ⊕ search; Cato reads the game from it. With Apple Shortcuts, a share-sheet shortcut whose one action is “Open URLs” with <span class="mono">${location.origin}/share?url=</span> followed by the Shortcut Input does the same in one tap.</p>
       <p><strong>Barcodes:</strong> the barcode button in the ⊕ sheet reads the box of a physical game with your camera (Android and desktop Chrome) or lets you type the number.</p>
       <p><strong>Imports:</strong> You → Import brings in Steam, Grouvee, HowLongToBeat, RetroAchievements, any spreadsheet, or another Cato's export. You check the matches before anything is saved, and can undo an import later.</p>
     </section>

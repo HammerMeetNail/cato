@@ -128,7 +128,11 @@ export function openLogSheet(initial = '') {
       ${icon('search', 'icon-search')}
       <input type="search" aria-label="Search your library and all games" placeholder="Log a game…" enterkeyhint="search"
         autocomplete="off" autocapitalize="none" spellcheck="false" .value=${live(state.q)}
-        @input=${e => { state.q = e.target.value; search(s); s.update(); }}
+        @input=${e => {
+          // A pasted store or video link: let the share target read it.
+          if (/^https?:\/\/\S+$/.test(e.target.value.trim())) { s.close(); location.assign(`/share?url=${encodeURIComponent(e.target.value.trim())}`); return; }
+          state.q = e.target.value; search(s); s.update();
+        }}
         @keydown=${e => {
           if (e.key === 'Enter' && state.q.trim()) { s.close(); go(`#discover/search?q=${encodeURIComponent(state.q.trim())}`); }
           // A search field's Escape would only clear the text: close the sheet.
