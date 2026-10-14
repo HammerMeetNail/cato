@@ -33,12 +33,18 @@ export default defineConfig({
   use: {
     trace: 'retain-on-failure',
   },
+  // Visual baselines are per platform (fonts render differently); a
+  // platform without baselines records them instead of failing.
+  snapshotPathTemplate: '{testDir}/__screenshots__/{testFilePath}/{arg}-{projectName}-{platform}{ext}',
+  updateSnapshots: 'missing',
   projects: [
+    // Desktop Chromium runs everything.
     { name: 'chromium', use: { ...devices['Desktop Chrome'], ...chromiumHTTPS } },
-    // Offline SW emulation is verified in Chromium; see e2e/README.md.
-    { name: 'webkit', testIgnore: /offline\.spec\.ts/, use: { ...devices['Desktop Safari'], ...webkitHTTPS } },
-    { name: 'mobile-chromium', testMatch: /(release|journeys|pwa|resilience|offline|https|regressions|perf)\.spec\.ts/, use: { ...devices['Pixel 7'], ...chromiumHTTPS } },
-    { name: 'mobile-webkit', testMatch: /(release|journeys|pwa|resilience|https|regressions|perf)\.spec\.ts/, use: { ...devices['iPhone 13'], ...webkitHTTPS } },
+    // Offline SW emulation, CDP performance budgets and visual baselines
+    // are Chromium-only; see e2e/README.md.
+    { name: 'webkit', testIgnore: /(offline|perf|visual)\.spec\.ts/, use: { ...devices['Desktop Safari'], ...webkitHTTPS } },
+    { name: 'mobile-chromium', testMatch: /(journeys|home|game|offline|regressions|a11y|pwa|https|perf|visual)\.spec\.ts/, use: { ...devices['Pixel 7'], ...chromiumHTTPS } },
+    { name: 'mobile-webkit', testMatch: /(journeys|home|game|regressions|a11y|pwa|https)\.spec\.ts/, use: { ...devices['iPhone 13'], ...webkitHTTPS } },
   ],
   webServer: {
     command: 'bash scripts/e2e-server.sh',

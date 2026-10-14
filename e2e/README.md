@@ -20,34 +20,35 @@ serves those files on `127.0.0.1:7180`.
   gives a secure context and a working service worker.
 
 Contexts a test creates itself (`browser.newContext`, `playwright.request.newContext`)
-must pass `ignoreHTTPSErrors: true`. Catalog
-IDs 1–2 support common workflows; 100–164 exercise pagination. Each test creates
-its own user, and separate browser contexts have independent cookies/storage.
-Artifacts default to `/tmp/cato-e2e-results` (override with `CATO_E2E_RESULTS`).
+must pass `ignoreHTTPSErrors: true`. The harness seeds catalog IDs 1–2, 100–164
+and named games 200–215 (`tests/helpers.ts` `G`), and runs with `CATO_DEV=1` so
+the component gallery (`#dev/ui`) is available. Each test creates its own user
+through `/api/auth/signup` and seeds through `/api/v1`; the behaviour under test
+is driven through the UI. Artifacts default to `/tmp/cato-e2e-results`
+(override with `CATO_E2E_RESULTS`).
 
-| Spec | Regression contract |
+| Spec | Contract |
 | --- | --- |
-| `auth.spec.ts` | Unauthenticated redirect; UI signup, logout and login; wrong password; authenticated login redirect |
-| `library.spec.ts` | Seeded grid and status counts; real local search dropdown; hash navigation; authenticated deletion removes persisted item |
-| `filters.spec.ts` | Transactional advanced filters discard on close/backdrop/Escape; Apply commits; search filter staging; immediate status filtering |
-| `journeys.spec.ts` | UI library creation and autosave; rating, hours, literal notes, tags, platform, format and corrected completion date after reload; remove/undo/permanent remove |
-| `journeys.spec.ts` | 65-item infinite scroll, unique appended IDs, filter reset and subsequent pagination |
-| `journeys.spec.ts` | Playing time and finish update previously visited Stats and Settings; totals, average rating, tags and platforms |
-| `journeys.spec.ts` | Profile/theme persistence; mismatched/incorrect password rejection; typed deletion, cancel/reset, deletion and subsequent authentication denial |
-| `journeys.spec.ts` | Native required/email/password length validation; separate real browser sessions, private library reads and writes, foreign/missing CSRF rejection |
-| `resilience.spec.ts` | Failed autosave retains the draft/route, close retries persistence; Stats error/retry and recent-item route; actual CSV download filename and contents |
-| `release.spec.ts` | Tab/history consistency after logged time; password change retains current session, revokes another session and rejects old credentials |
-| `platform.spec.ts` | Auth/CSRF API boundaries, `__Host-`/`Secure` cookie attributes, failed login semantics, health/database, missing covers/game, PWA headers, search injection |
-| `regressions.spec.ts` | Plan §2.1 bugs: Filters tag suggestion completes the tag (and stays tappable above the panel footer); autosave PATCHes only edited fields with hours as a delta; `$tag` lists tagged games; quick-add after removal; Finish undo with no second-tap finish; edit-sheet close keeps loaded pages; malformed `%` hash; offline copy; `#search` shortcut focuses search |
+| `auth.spec.ts` | Login page explains Cato and hides Google when unconfigured; keyboard-reachable sign-up toggle; `new-password` on sign-up; sign up → Home; sign out; wrong password; signed-out redirect |
+| `journeys.spec.ts` | Tap budgets (plan §5): log time to a playing game in 2 taps (⊕ → +1h) or 1 from Home; finish and rate in 3 (Finish → star → Done); want a new game in 3 plus typing; find a library game in 1 plus typing; change status on the game page in 1; undo in 1, checked on the server |
+| `home.spec.ts` | First-run onboarding; now-playing chips and Resume; Up Next and recent activity; the server-side session timer survives a reload and Stop & log records a session; the ⊕ sheet's Playing and Recent groups |
+| `game.spec.ts` | Adding from the game page; status, keyboard half-star rating, time chips; a replay creates a second playthrough; session delete and undo; notes and tags; remove and undo |
+| `library.spec.ts` | Shelf chips with counts; instant search with real keystrokes; sorting; `$tag`/`@platform` suggestions and removable chips; list view; saved views; multi-select bulk status with undo; right-click menu; j/k/Enter |
+| `you.spec.ts` | Stats numbers and heatmap; Diary; theme and rating display persist; devices list and signing out another device; Help |
+| `discover.spec.ts` | Popular shelf excludes your games; faceted search results; Want from results |
+| `offline.spec.ts` | (Chromium) worker-served versioned assets and offline fallback; the app opens offline from the cached shell and IndexedDB, queues a write, survives a reload and sends it on reconnect |
+| `regressions.spec.ts` | Plan §2.1 bugs that still apply: re-adding after removal (#5), Finish can't be double-tapped onto the next game and undo restores (#6), malformed `%` hash (#8), offline copy (#9), `#search` shortcut focuses the Library search (#10) |
+| `a11y.spec.ts` | axe-core: no serious or critical violations on login, Home, Library (grid and list), game pages, Discover, search results, You, Stats, Diary, Settings, Help, the gallery and the Log and Finish sheets, light and dark |
+| `visual.spec.ts` | (Chromium) gallery and Home screenshots, light and dark, desktop and phone; baselines per platform under `tests/__screenshots__`, recorded on a platform's first run |
+| `perf.spec.ts` | (Chromium) cold Home load: render-blocking requests ≤ 12, no module waterfall (every eager module requested from the HTML), initial JS ≤ 60 KB and CSS ≤ 20 KB gzipped, LCP < 1 s; INP < 100 ms (median of three visits) with 4× CPU throttling |
 | `https.spec.ts` | Secure context on `cato.test`/`127.0.0.1`, service worker registration, WebAuthn passkey creation (Chromium virtual authenticator), HSTS/CSP upgrade/Permissions-Policy headers, `__Host-` session cookie |
-| `pwa.spec.ts` | Real service worker install/control, precache, activation removes old static caches and retains covers/unrelated caches, online worker interception |
-| `offline.spec.ts` | Chromium offline asset and navigation fallback, online retry |
+| `pwa.spec.ts` | Real service worker install/control, precache of the asset manifest, activation removes old shell caches and keeps covers and unrelated caches |
 
 Browser actions wait on observable DOM state, network responses registered before
 the triggering action, or persisted API state. There are no fixed sleeps. API
 setup creates prerequisites without substituting for the UI behavior under test.
-The resilience spec blocks service workers so Playwright owns deliberate API
-failure injection; the PWA spec runs the actual shipped worker.
+The performance spec blocks service workers to measure a true cold load; the PWA
+and offline specs run the actual shipped worker.
 
 The PWA activation test seeds an old cache then installs the shipped worker; it
 verifies the actual activation cleanup contract, not a two-deployment update or
@@ -62,5 +63,5 @@ responsive rendering and touch/browser behavior, not physical iOS standalone
 cold launches. OAuth provider interaction, real IGDB/download availability,
 production restore/deployment, and rate-limit saturation are outside this local
 browser suite; rate-limit behavior and service-worker edge cases have focused
-server/JavaScript tests. This suite does not claim exhaustive visual or WCAG
-conformance coverage.
+server/JavaScript tests. The axe gate catches what automated rules can; it is not
+a full WCAG audit.
