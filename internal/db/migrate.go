@@ -13,6 +13,209 @@ type Migration struct {
 
 var migrations = []Migration{
 	{
+		Version: 18,
+		// Journal foundations (Cato Smooth plan §4.1):
+		// - library_items is rebuilt to add the 'paused' status (a CHECK
+		//   constraint can't be altered in place), current_playthrough_id and
+		//   rev (the library_rev at which the row last changed).
+		// - user_state holds the per-user library_rev counter that drives
+		//   ETags and the ?since= delta index, plus preferences and the
+		//   running session timer. library_tombstones records deletions for
+		//   delta sync.
+		// - playthroughs and play_sessions record replays and per-day play.
+		//   Triggers keep library_items.playtime_minutes equal to the sum of
+		//   the item's sessions; legacy totals become one 'legacy' session so
+		//   no total changes.
+		// Rebuilding library_items later needs foreign_keys=OFF: DROP TABLE
+		// would cascade into playthroughs and play_sessions.
+		Up: `CREATE TABLE library_items_v18 (
+		       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		       game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+		       status TEXT NOT NULL CHECK (status IN ('wishlist', 'backlog', 'playing', 'paused', 'completed', 'abandoned')),
+		       rating INTEGER NOT NULL DEFAULT 0 CHECK (rating >= 0 AND rating <= 100),
+		       playtime_minutes INTEGER NOT NULL DEFAULT 0 CHECK (playtime_minutes >= 0),
+		       tags_json TEXT NOT NULL DEFAULT '[]',
+		       notes TEXT NOT NULL DEFAULT '',
+		       started_at TEXT,
+		       completed_at TEXT,
+		       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		       platform TEXT NOT NULL DEFAULT '',
+		       medium TEXT NOT NULL DEFAULT '',
+		       owned_platforms_json TEXT NOT NULL DEFAULT '[]',
+		       current_playthrough_id INTEGER,
+		       rev INTEGER NOT NULL DEFAULT 0,
+		       PRIMARY KEY (user_id, game_id)
+		     );
+		     INSERT INTO library_items_v18 (user_id, game_id, status, rating, playtime_minutes, tags_json, notes,
+		         started_at, completed_at, created_at, updated_at, platform, medium, owned_platforms_json, rev)
+		       SELECT user_id, game_id, status, rating, playtime_minutes, tags_json, notes,
+		         started_at, completed_at, created_at, updated_at, platform, medium, owned_platforms_json, 1
+		       FROM library_items;
+		     DROP TABLE library_items;
+		     ALTER TABLE library_items_v18 RENAME TO library_items;
+		     CREATE INDEX idx_library_user_status ON library_items(user_id, status);
+		     CREATE INDEX idx_library_game ON library_items(game_id);
+		     CREATE INDEX idx_library_user_updated ON library_items(user_id, updated_at DESC, game_id DESC);
+		     CREATE INDEX idx_library_user_rev ON library_items(user_id, rev);
+
+		     CREATE TABLE user_state (
+		       user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+		       library_rev INTEGER NOT NULL DEFAULT 0,
+		       prefs_json TEXT NOT NULL DEFAULT '{}',
+		       timer_game_id INTEGER,
+		       timer_started_at TEXT
+		     );
+		     INSERT INTO user_state (user_id, library_rev)
+		       SELECT u.id, CASE WHEN EXISTS (SELECT 1 FROM library_items li WHERE li.user_id = u.id) THEN 1 ELSE 0 END
+		       FROM users u;
+
+		     -- No foreign key: a tombstone outlives the row it records, and
+		     -- users_ad_tombstones cleans up after account deletion.
+		     CREATE TABLE library_tombstones (
+		       user_id TEXT NOT NULL,
+		       game_id INTEGER NOT NULL,
+		       rev INTEGER NOT NULL,
+		       PRIMARY KEY (user_id, game_id)
+		     );
+		     CREATE INDEX idx_library_tombstones_rev ON library_tombstones(user_id, rev);
+
+		     CREATE TABLE playthroughs (
+		       id INTEGER PRIMARY KEY AUTOINCREMENT,
+		       user_id TEXT NOT NULL,
+		       game_id INTEGER NOT NULL,
+		       platform TEXT NOT NULL DEFAULT '',
+		       started_on TEXT,
+		       finished_on TEXT,
+		       completion TEXT CHECK (completion IS NULL OR completion IN ('main', 'main_extras', 'completionist', 'endless', 'dropped')),
+		       minutes INTEGER NOT NULL DEFAULT 0 CHECK (minutes >= 0),
+		       rating INTEGER CHECK (rating IS NULL OR (rating >= 0 AND rating <= 100)),
+		       note TEXT NOT NULL DEFAULT '',
+		       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		       FOREIGN KEY (user_id, game_id) REFERENCES library_items(user_id, game_id) ON DELETE CASCADE
+		     );
+		     CREATE INDEX idx_pt_user_finished ON playthroughs(user_id, finished_on DESC);
+		     CREATE INDEX idx_pt_item ON playthroughs(user_id, game_id);
+
+		     CREATE TABLE play_sessions (
+		       id INTEGER PRIMARY KEY AUTOINCREMENT,
+		       user_id TEXT NOT NULL,
+		       game_id INTEGER NOT NULL,
+		       playthrough_id INTEGER REFERENCES playthroughs(id) ON DELETE CASCADE,
+		       played_on TEXT NOT NULL,
+		       minutes INTEGER NOT NULL CHECK (minutes != 0
+		         AND (minutes > 0 OR source = 'adjust')
+		         AND (minutes <= 1440 OR source IN ('legacy', 'adjust', 'steam', 'import'))),
+		       note TEXT NOT NULL DEFAULT '',
+		       source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'timer', 'legacy', 'adjust', 'steam', 'import')),
+		       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		       FOREIGN KEY (user_id, game_id) REFERENCES library_items(user_id, game_id) ON DELETE CASCADE
+		     );
+		     CREATE INDEX idx_sessions_user_day ON play_sessions(user_id, played_on DESC);
+		     CREATE INDEX idx_sessions_item ON play_sessions(user_id, game_id, played_on DESC);
+		     CREATE INDEX idx_sessions_playthrough ON play_sessions(playthrough_id);
+
+		     -- Undo: the rows a write replaced, restorable for a short while.
+		     -- AUTOINCREMENT above keeps restored journal IDs from colliding.
+		     CREATE TABLE undo_log (
+		       id TEXT PRIMARY KEY,
+		       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		       snapshot_json TEXT NOT NULL,
+		       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+		     );
+		     CREATE INDEX idx_undo_log_user ON undo_log(user_id, created_at);
+
+		     -- Backfill: one playthrough per item with dates, one legacy session
+		     -- per item with time, so totals are unchanged.
+		     INSERT INTO playthroughs (user_id, game_id, platform, started_on, finished_on, completion, rating)
+		       SELECT user_id, game_id, platform, substr(started_at, 1, 10),
+		              CASE WHEN status IN ('completed', 'abandoned') THEN substr(completed_at, 1, 10) END,
+		              CASE WHEN status = 'abandoned' THEN 'dropped' END,
+		              NULLIF(rating, 0)
+		       FROM library_items
+		       WHERE started_at IS NOT NULL OR completed_at IS NOT NULL;
+		     UPDATE library_items SET current_playthrough_id = (
+		       SELECT p.id FROM playthroughs p WHERE p.user_id = library_items.user_id AND p.game_id = library_items.game_id);
+		     INSERT INTO play_sessions (user_id, game_id, playthrough_id, played_on, minutes, source)
+		       SELECT user_id, game_id, current_playthrough_id,
+		              substr(COALESCE(completed_at, started_at, updated_at, created_at), 1, 10), playtime_minutes, 'legacy'
+		       FROM library_items WHERE playtime_minutes > 0;
+		     UPDATE playthroughs SET minutes = (
+		       SELECT COALESCE(SUM(s.minutes), 0) FROM play_sessions s WHERE s.playthrough_id = playthroughs.id);
+
+		     -- library_items triggers went with the old table.
+		     CREATE TRIGGER library_tags_ai AFTER INSERT ON library_items BEGIN
+		       INSERT OR IGNORE INTO library_tags (user_id, game_id, tag)
+		         SELECT new.user_id, new.game_id, CAST(j.value AS TEXT)
+		           FROM json_each(CASE WHEN json_valid(new.tags_json) THEN new.tags_json ELSE '[]' END) j
+		          WHERE j.type != 'null';
+		     END;
+		     CREATE TRIGGER library_tags_au AFTER UPDATE OF user_id, game_id, tags_json ON library_items BEGIN
+		       DELETE FROM library_tags WHERE user_id = old.user_id AND game_id = old.game_id;
+		       INSERT OR IGNORE INTO library_tags (user_id, game_id, tag)
+		         SELECT new.user_id, new.game_id, CAST(j.value AS TEXT)
+		           FROM json_each(CASE WHEN json_valid(new.tags_json) THEN new.tags_json ELSE '[]' END) j
+		          WHERE j.type != 'null';
+		     END;
+		     CREATE TRIGGER library_tags_ad AFTER DELETE ON library_items BEGIN
+		       DELETE FROM library_tags WHERE user_id = old.user_id AND game_id = old.game_id;
+		     END;
+
+		     -- library_rev: every change to a library row (including the
+		     -- playtime aggregate kept by the session triggers) bumps the
+		     -- owner's counter and stamps the row. The WHEN guard skips the
+		     -- stamping UPDATE itself. No OR IGNORE/OR REPLACE here: an outer
+		     -- UPSERT's conflict handling overrides a trigger's.
+		     CREATE TRIGGER library_rev_ai AFTER INSERT ON library_items BEGIN
+		       INSERT INTO user_state (user_id) SELECT new.user_id
+		         WHERE NOT EXISTS (SELECT 1 FROM user_state WHERE user_id = new.user_id);
+		       UPDATE user_state SET library_rev = library_rev + 1 WHERE user_id = new.user_id;
+		       UPDATE library_items SET rev = (SELECT library_rev FROM user_state WHERE user_id = new.user_id)
+		         WHERE user_id = new.user_id AND game_id = new.game_id;
+		       DELETE FROM library_tombstones WHERE user_id = new.user_id AND game_id = new.game_id;
+		     END;
+		     CREATE TRIGGER library_rev_au AFTER UPDATE ON library_items WHEN old.rev IS new.rev BEGIN
+		       INSERT INTO user_state (user_id) SELECT new.user_id
+		         WHERE NOT EXISTS (SELECT 1 FROM user_state WHERE user_id = new.user_id);
+		       UPDATE user_state SET library_rev = library_rev + 1 WHERE user_id = new.user_id;
+		       UPDATE library_items SET rev = (SELECT library_rev FROM user_state WHERE user_id = new.user_id)
+		         WHERE user_id = new.user_id AND game_id = new.game_id;
+		     END;
+		     CREATE TRIGGER library_rev_ad AFTER DELETE ON library_items BEGIN
+		       UPDATE user_state SET library_rev = library_rev + 1 WHERE user_id = old.user_id;
+		       DELETE FROM library_tombstones WHERE user_id = old.user_id AND game_id = old.game_id;
+		       INSERT INTO library_tombstones (user_id, game_id, rev)
+		         SELECT old.user_id, old.game_id, library_rev FROM user_state WHERE user_id = old.user_id;
+		     END;
+		     CREATE TRIGGER users_ad_tombstones AFTER DELETE ON users BEGIN
+		       DELETE FROM library_tombstones WHERE user_id = old.id;
+		     END;
+		     -- Index entries carry the game's name, cover and release date.
+		     CREATE TRIGGER games_library_rev_au AFTER UPDATE OF name, cover_url, local_cover_path, first_release_date ON games
+		       WHEN old.name IS NOT new.name OR old.cover_url IS NOT new.cover_url
+		         OR old.local_cover_path IS NOT new.local_cover_path OR old.first_release_date IS NOT new.first_release_date BEGIN
+		       UPDATE library_items SET rev = rev WHERE game_id = new.id;
+		     END;
+
+		     CREATE TRIGGER play_sessions_ai AFTER INSERT ON play_sessions BEGIN
+		       UPDATE library_items SET playtime_minutes = MAX(0, playtime_minutes + new.minutes),
+		              updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+		        WHERE user_id = new.user_id AND game_id = new.game_id;
+		       UPDATE playthroughs SET minutes = MAX(0, minutes + new.minutes) WHERE id = new.playthrough_id;
+		     END;
+		     CREATE TRIGGER play_sessions_ad AFTER DELETE ON play_sessions BEGIN
+		       UPDATE library_items SET playtime_minutes = MAX(0, playtime_minutes - old.minutes)
+		        WHERE user_id = old.user_id AND game_id = old.game_id;
+		       UPDATE playthroughs SET minutes = MAX(0, minutes - old.minutes) WHERE id = old.playthrough_id;
+		     END;
+		     CREATE TRIGGER play_sessions_au AFTER UPDATE OF minutes, playthrough_id ON play_sessions BEGIN
+		       UPDATE library_items SET playtime_minutes = MAX(0, playtime_minutes - old.minutes + new.minutes)
+		        WHERE user_id = new.user_id AND game_id = new.game_id;
+		       UPDATE playthroughs SET minutes = MAX(0, minutes - old.minutes) WHERE id = old.playthrough_id;
+		       UPDATE playthroughs SET minutes = minutes + new.minutes WHERE id = new.playthrough_id;
+		     END;`,
+	},
+	{
 		Version: 17,
 		// Performance (Cato Smooth plan §2.3):
 		// - F2: library rows by game, for the cover worker's join and the
@@ -467,6 +670,29 @@ CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);`,
 // Migrate runs pending migrations on the writer connection. All DDL/writes go
 // through the single writer pool to avoid contending with the read pool.
 func Migrate(database *DB) error {
+	return migrateTo(database, int(^uint(0)>>1))
+}
+
+// LatestVersion is the highest schema version this binary knows.
+func LatestVersion() int {
+	latest := 0
+	for _, m := range migrations {
+		latest = max(latest, m.Version)
+	}
+	return latest
+}
+
+// SchemaVersion reports the applied schema version (0 for a new database).
+func SchemaVersion(database *DB) (int, error) {
+	if err := createMigrationsTable(database.Write); err != nil {
+		return 0, err
+	}
+	return getCurrentVersion(database.Write)
+}
+
+// migrateTo applies pending migrations up to and including version target.
+// Tests use it to build a database at an older schema.
+func migrateTo(database *DB, target int) error {
 	w := database.Write
 
 	if err := createMigrationsTable(w); err != nil {
@@ -483,7 +709,7 @@ func Migrate(database *DB) error {
 	})
 
 	for _, m := range migrations {
-		if m.Version <= currentVersion {
+		if m.Version <= currentVersion || m.Version > target {
 			continue
 		}
 

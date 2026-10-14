@@ -114,29 +114,16 @@ func TestNormalizedTablesBackfillLegacyJSON(t *testing.T) {
 	}
 	defer database.Close()
 
-	// Start from the current schema, then remove only v15's objects and marker.
-	// This gives the test a complete v14-compatible schema while exercising the
-	// actual migration backfill rather than only its live triggers.
-	if err := Migrate(database); err != nil {
-		t.Fatalf("initial migrate: %v", err)
+	// Build the v14 schema, write rows the way v14 did, then migrate so the
+	// v15 backfill (not only its live triggers) is exercised.
+	if err := migrateTo(database, 14); err != nil {
+		t.Fatalf("migrate to v14: %v", err)
 	}
 	if _, err := database.Exec(`INSERT INTO users (id, email) VALUES ('u1', 'u1@example.com');
 		INSERT INTO games (id, name, slug, normalized_name, platforms_json)
 			VALUES (1, 'Legacy', 'legacy', 'legacy', '[6,"PC (Microsoft Windows)"]');
 		INSERT INTO library_items (user_id, game_id, status, tags_json)
-			VALUES ('u1', 1, 'backlog', '["rpg","rpg"]');
-		DROP TRIGGER IF EXISTS game_platforms_ai;
-		DROP TRIGGER IF EXISTS game_platforms_au;
-		DROP TRIGGER IF EXISTS library_tags_ai;
-		DROP TRIGGER IF EXISTS library_tags_au;
-		DROP TRIGGER IF EXISTS library_tags_ad;
-		DROP TABLE IF EXISTS game_platforms;
-		DROP TABLE IF EXISTS library_tags;
-		DROP INDEX IF EXISTS idx_library_tags_user_ltag;
-		DROP INDEX IF EXISTS idx_library_tags_user_ltag_game;
-		DROP INDEX IF EXISTS idx_library_tags_game_user_ltag;
-		DROP INDEX IF EXISTS idx_library_tags_user_game_ltag;
-		DELETE FROM schema_migrations WHERE version >= 15;`); err != nil {
+			VALUES ('u1', 1, 'backlog', '["rpg","rpg"]');`); err != nil {
 		t.Fatalf("prepare legacy schema: %v", err)
 	}
 	if err := Migrate(database); err != nil {

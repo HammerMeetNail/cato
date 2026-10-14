@@ -13,13 +13,13 @@ import (
 	"time"
 
 	"cato/internal/auth"
+	"cato/internal/catalog"
 	"cato/internal/config"
 	"cato/internal/covers"
 	"cato/internal/db"
-	"cato/internal/catalog"
 	"cato/internal/http"
-	"cato/internal/integrations/igdb"
 	"cato/internal/importer"
+	"cato/internal/integrations/igdb"
 )
 
 func main() {

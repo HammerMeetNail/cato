@@ -6,13 +6,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"cato/internal/db"
 )
 
 type Store struct {
-	db *db.DB
+	db            *db.DB
+	platformNames atomic.Pointer[platformNamesCache]
 }
 
 func NewStore(db *db.DB) *Store {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"cato/internal/db"
 )
@@ -173,6 +174,7 @@ func firstOrEmpty(s []string) string {
 // UpsertPlatforms replaces-or-inserts reference rows in one statement.
 // Called once at startup from IGDB's /platforms endpoint (~230 rows).
 func (s *Store) UpsertPlatforms(ctx context.Context, plats []Platform) error {
+	defer s.platformNames.Store(nil)
 	if len(plats) == 0 {
 		return nil
 	}
@@ -205,7 +207,23 @@ func (s *Store) CountPlatforms(ctx context.Context) (int64, error) {
 
 // PlatformNames loads the ID → display-name map. The table is tiny (~230
 // rows), so callers may load it per request rather than cache it.
+// platformNamesTTL bounds how stale the cached ID→name map may get; the
+// table changes only when the IGDB platform sync runs (which invalidates).
+const platformNamesTTL = 5 * time.Minute
+
+type platformNamesCache struct {
+	names  map[int64]string
+	loaded time.Time
+}
+
+// PlatformNames returns the platform ID→name lookup, cached in memory: every
+// library row resolves its game's platforms through it, and the table holds
+// a few hundred rows that change only on sync. Callers must not modify the
+// returned map.
 func (s *Store) PlatformNames(ctx context.Context) (map[int64]string, error) {
+	if c := s.platformNames.Load(); c != nil && time.Since(c.loaded) < platformNamesTTL {
+		return c.names, nil
+	}
 	rows, err := s.db.QueryContext(ctx, "SELECT id, name FROM platforms")
 	if err != nil {
 		return nil, fmt.Errorf("load platforms: %w", err)
@@ -221,7 +239,11 @@ func (s *Store) PlatformNames(ctx context.Context) (map[int64]string, error) {
 		}
 		names[id] = name
 	}
-	return names, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	s.platformNames.Store(&platformNamesCache{names: names, loaded: time.Now()})
+	return names, nil
 }
 
 // PlatformFilter returns a WHERE fragment (no leading AND/OR) matching games

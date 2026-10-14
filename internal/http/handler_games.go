@@ -9,9 +9,9 @@ import (
 	"unicode/utf8"
 
 	"cato/internal/auth"
+	"cato/internal/catalog"
 	"cato/internal/config"
 	"cato/internal/db"
-	"cato/internal/catalog"
 	"cato/internal/integrations/igdb"
 )
 

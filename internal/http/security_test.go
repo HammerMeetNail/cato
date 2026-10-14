@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"cato/internal/auth"
+	"cato/internal/catalog"
 	"cato/internal/config"
 	"cato/internal/db"
-	"cato/internal/catalog"
 )
 
 // --- S2: public search must not drive IGDB or grow the database -----------
@@ -26,9 +26,11 @@ func (c *countingIGDB) SearchGames(ctx context.Context, q string, limit int, edi
 	c.searches.Add(1)
 	return []catalog.Game{{ID: 777, Name: "Remote " + q, Slug: "remote", CoverURL: "https://images.igdb.com/x.jpg"}}, nil
 }
-func (c *countingIGDB) GetGame(context.Context, int64) (*catalog.Game, error)          { return nil, nil }
-func (c *countingIGDB) GetGamesBatch(context.Context, []int64) ([]catalog.Game, error) { return nil, nil }
-func (c *countingIGDB) GetPlatforms(context.Context) ([]catalog.Platform, error)       { return nil, nil }
+func (c *countingIGDB) GetGame(context.Context, int64) (*catalog.Game, error) { return nil, nil }
+func (c *countingIGDB) GetGamesBatch(context.Context, []int64) ([]catalog.Game, error) {
+	return nil, nil
+}
+func (c *countingIGDB) GetPlatforms(context.Context) ([]catalog.Platform, error) { return nil, nil }
 
 func newSearchMux(t *testing.T, database *db.DB, cfg *config.Config, client catalog.IGDBClient) *http.ServeMux {
 	t.Helper()

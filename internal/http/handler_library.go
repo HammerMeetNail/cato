@@ -13,11 +13,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"cato/internal/auth"
-	"cato/internal/db"
 	"cato/internal/catalog"
+	"cato/internal/db"
+	"cato/internal/library"
 )
 
 // maxLibraryPageSize caps the per-page limit for GET /api/library.
@@ -26,6 +26,7 @@ const maxLibraryPageSize = 200
 type LibraryHandler struct {
 	db      *db.DB
 	games   *catalog.Store
+	lib     *library.Store
 	cookies auth.Cookies
 	// coverQueued wakes the cover worker after a write that may have queued
 	// a cover job (nil in tests that don't care).
@@ -39,7 +40,10 @@ func (h *LibraryHandler) notifyCoverQueued() {
 }
 
 func NewLibraryHandler(db *db.DB, cookies auth.Cookies) *LibraryHandler {
-	return &LibraryHandler{db: db, games: catalog.NewStore(db), cookies: cookies}
+	games := catalog.NewStore(db)
+	h := &LibraryHandler{db: db, games: games, lib: library.NewStore(db, games), cookies: cookies}
+	h.lib.OnWrite = h.notifyCoverQueued
+	return h
 }
 
 // platformNames loads the IGDB ID→name lookup once per request; callers pass
@@ -601,25 +605,52 @@ func (h *LibraryHandler) upsertLibraryItem(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusBadRequest, errResp("invalid_body", "Invalid request body"))
 		return
 	}
-
-	// writeLibraryItem already wrote an error response when it returns false;
-	// writing 200 on top of it would append a second JSON document to the
-	// error body (malformed JSON the client then reports as a generic HTTP
-	// error instead of the specific validation message).
-	if !h.writeLibraryItem(r.Context(), w, h.db, userID, gameID, req, nil) {
+	ch := library.Change{
+		Status:      &req.Status,
+		Rating:      &req.Rating,
+		Minutes:     &req.PlaytimeMinutes,
+		Tags:        &req.Tags,
+		Notes:       &req.Notes,
+		StartedAt:   req.StartedAt,
+		CompletedAt: req.CompletedAt,
+		Medium:      &req.Medium,
+	}
+	if req.Tags == nil {
+		ch.Tags = nil
+	}
+	switch {
+	case req.Platforms != nil:
+		ch.Platforms = &req.Platforms
+	default:
+		ch.Platform = &req.Platform
+	}
+	if _, err := h.lib.Replace(r.Context(), userID, gameID, ch); err != nil {
+		writeLibraryError(w, err, userID, gameID)
 		return
 	}
-	h.notifyCoverQueued()
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
 
+// writeLibraryError maps library errors onto the legacy error responses.
+func writeLibraryError(w http.ResponseWriter, err error, userID string, gameID int64) {
+	var ve *library.ValidationError
+	switch {
+	case errors.As(err, &ve):
+		writeJSON(w, http.StatusBadRequest, errResp(ve.Code, ve.Message))
+	case errors.Is(err, library.ErrNotFound):
+		writeJSON(w, http.StatusNotFound, errResp("not_found", "Game is not in your library"))
+	case errors.Is(err, library.ErrGameNotFound):
+		writeJSON(w, http.StatusNotFound, errResp("game_not_found", "Game not found"))
+	default:
+		log.Printf("library write failed for user %s game %d: %v", userID, gameID, err)
+		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to save library item"))
+	}
+}
+
 // patchLibraryItem handles PATCH /api/library/{gameID} — a partial update
-// used by quick actions (mark playing/finished, +time buttons). Unlike the
-// POST upsert (which zeroes omitted fields), absent fields preserve their
-// stored values, so a one-tap status change can never wipe rating/tags/notes.
-// Returns the updated item JSON so clients can refresh cache without a
-// refetch. 404 when the game isn't in the caller's library — adding games
-// still goes through POST.
+// used by quick actions. Absent fields keep their stored values; the write
+// is one transaction in internal/library. Returns the updated item JSON.
+// 404 when the game isn't in the caller's library.
 func (h *LibraryHandler) patchLibraryItem(w http.ResponseWriter, r *http.Request, userID string, gameID int64) {
 	var req libraryPatchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -631,109 +662,33 @@ func (h *LibraryHandler) patchLibraryItem(w http.ResponseWriter, r *http.Request
 			"Use either playtime_minutes or playtime_delta_minutes, not both"))
 		return
 	}
-
-	// Read, merge and write on one IMMEDIATE writer transaction: the single
-	// writer connection serializes concurrent PATCHes, so a "+30m" tap can't
-	// be lost between another request's read and its write.
-	ctx := r.Context()
-	names := h.platformNames(ctx)
-	tx, err := h.db.BeginTx(ctx, nil)
-	if err != nil {
-		log.Printf("library patch: begin failed for user %s game %d: %v", userID, gameID, err)
-		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to update library item"))
+	if req.PlaytimeMinutes != nil && *req.PlaytimeMinutes < 0 {
+		writeJSON(w, http.StatusBadRequest, errResp("invalid_playtime", "Playtime must be non-negative"))
 		return
 	}
-	defer tx.Rollback()
-
-	existing, err := fetchLibraryItem(ctx, tx, userID, gameID, names)
-	if err == sql.ErrNoRows {
-		writeJSON(w, http.StatusNotFound, errResp("not_found", "Game is not in your library"))
+	ch := library.Change{
+		Status:       req.Status,
+		Rating:       req.Rating,
+		Minutes:      req.PlaytimeMinutes,
+		MinutesDelta: req.PlaytimeDeltaMinutes,
+		Tags:         req.Tags,
+		Notes:        req.Notes,
+		StartedAt:    req.StartedAt,
+		CompletedAt:  req.CompletedAt,
+		Platforms:    req.Platforms,
+		Platform:     req.Platform,
+		Medium:       req.Medium,
+	}
+	if _, err := h.lib.Patch(r.Context(), userID, gameID, ch); err != nil {
+		writeLibraryError(w, err, userID, gameID)
 		return
 	}
-	if err != nil {
-		log.Printf("library patch: fetch failed for user %s game %d: %v", userID, gameID, err)
-		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to fetch library item"))
-		return
-	}
-
-	// Start from the stored state, overlay whatever the client sent.
-	existingOwned, _ := existing["owned_platforms"].([]string)
-	merged := libraryUpsertRequest{
-		Status:          existing["status"].(string),
-		Rating:          toInt64(existing["rating"]),
-		PlaytimeMinutes: toInt64(existing["playtime_minutes"]),
-		Notes:           existing["notes"].(string),
-		Tags:            existing["tags"].([]string),
-		Platforms:       existingOwned,
-		Platform:        existing["platform"].(string),
-		Medium:          existing["medium"].(string),
-	}
-
-	if req.Status != nil {
-		merged.Status = *req.Status
-	}
-	if req.Rating != nil {
-		merged.Rating = *req.Rating
-	}
-	switch {
-	case req.PlaytimeDeltaMinutes != nil:
-		delta := *req.PlaytimeDeltaMinutes
-		merged.PlaytimeMinutes += delta
-		if merged.PlaytimeMinutes < 0 {
-			merged.PlaytimeMinutes = 0
-		}
-	case req.PlaytimeMinutes != nil:
-		merged.PlaytimeMinutes = *req.PlaytimeMinutes
-	}
-	if req.Tags != nil {
-		merged.Tags = *req.Tags
-	}
-	if req.Notes != nil {
-		merged.Notes = *req.Notes
-	}
-	switch {
-	case req.Platforms != nil:
-		merged.Platforms = *req.Platforms
-	case req.Platform != nil:
-		// Legacy singular setter — empty clears, a value replaces the list.
-		p := strings.TrimSpace(*req.Platform)
-		if p == "" {
-			merged.Platforms = []string{}
-		} else {
-			merged.Platforms = []string{p}
-		}
-	}
-	if req.Medium != nil {
-		merged.Medium = *req.Medium
-	}
-	// Keep the legacy singular column in step with the authoritative list.
-	if merged.Platforms != nil {
-		if len(merged.Platforms) > 0 {
-			merged.Platform = strings.TrimSpace(merged.Platforms[0])
-		} else {
-			merged.Platform = ""
-		}
-	}
-	// Timestamps keep POST semantics: nil preserves/auto-tracks, "" clears,
-	// a value sets. parseTimestampInput in writeLibraryItem handles all three.
-	merged.StartedAt = req.StartedAt
-	merged.CompletedAt = req.CompletedAt
-
-	if !h.writeLibraryItem(ctx, w, tx, userID, gameID, merged, req.PlaytimeDeltaMinutes) {
-		return
-	}
-	updated, err := fetchLibraryItem(ctx, tx, userID, gameID, names)
+	updated, err := fetchLibraryItem(r.Context(), h.db, userID, gameID, h.platformNames(r.Context()))
 	if err != nil {
 		log.Printf("library patch: reload failed for user %s game %d: %v", userID, gameID, err)
 		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to update library item"))
 		return
 	}
-	if err := tx.Commit(); err != nil {
-		log.Printf("library patch: commit failed for user %s game %d: %v", userID, gameID, err)
-		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to update library item"))
-		return
-	}
-	h.notifyCoverQueued()
 	writeJSON(w, http.StatusOK, updated)
 }
 
@@ -774,233 +729,15 @@ func toInt64(v interface{}) int64 {
 	}
 }
 
-// Size limits for user-supplied library text (characters, not bytes).
-const (
-	maxNotesChars = 10000
-	maxTags       = 32
-	maxTagChars   = 40
-)
-
-// writeLibraryItem validates and persists a full library item state. Both the
-// POST upsert and the PATCH merge funnel through here so validation and
-// timestamp semantics can never diverge. A non-nil playtimeDelta is applied
-// with SQL arithmetic against the stored value. Returns false if it already
-// wrote an error response.
-func (h *LibraryHandler) writeLibraryItem(ctx context.Context, w http.ResponseWriter, ex libraryExecer, userID string, gameID int64, req libraryUpsertRequest, playtimeDelta *int64) bool {
-	if !isValidStatus(req.Status) {
-		writeJSON(w, http.StatusBadRequest, errResp("invalid_status",
-			"Status must be wishlist, backlog, playing, completed, or abandoned"))
-		return false
-	}
-
-	// Validate rating
-	if req.Rating < 0 || req.Rating > 100 {
-		writeJSON(w, http.StatusBadRequest, errResp("invalid_rating", "Rating must be between 0 and 100"))
-		return false
-	}
-
-	// Validate playtime
-	if req.PlaytimeMinutes < 0 {
-		writeJSON(w, http.StatusBadRequest, errResp("invalid_playtime", "Playtime must be non-negative"))
-		return false
-	}
-
-	if utf8.RuneCountInString(req.Notes) > maxNotesChars {
-		writeJSON(w, http.StatusBadRequest, errResp("invalid_notes", "Notes must be at most 10,000 characters"))
-		return false
-	}
-	if len(req.Tags) > maxTags {
-		writeJSON(w, http.StatusBadRequest, errResp("invalid_tags", "At most 32 tags per game"))
-		return false
-	}
-	for _, t := range req.Tags {
-		if utf8.RuneCountInString(strings.TrimSpace(t)) > maxTagChars {
-			writeJSON(w, http.StatusBadRequest, errResp("invalid_tags", "Tags must be at most 40 characters"))
-			return false
-		}
-	}
-
-	// Validate ownership fields
-	req.Medium = strings.TrimSpace(req.Medium)
-	if req.Medium != "" && req.Medium != "physical" && req.Medium != "digital" {
-		writeJSON(w, http.StatusBadRequest, errResp("invalid_medium", "Medium must be empty, physical, or digital"))
-		return false
-	}
-	req.Platform = strings.TrimSpace(req.Platform)
-	if len(req.Platform) > 64 {
-		writeJSON(w, http.StatusBadRequest, errResp("invalid_platform", "Platform must be at most 64 characters"))
-		return false
-	}
-
-	// Normalize multi-ownership: Platforms is authoritative when present;
-	// otherwise the legacy singular platform acts as a one-element list.
-	// Trimmed, de-duplicated (case-insensitive), capped at 32 entries.
-	ownedPlatforms := make([]string, 0, len(req.Platforms))
-	if req.Platforms != nil || req.Platform != "" {
-		seen := map[string]bool{}
-		list := req.Platforms
-		if req.Platforms == nil {
-			list = []string{req.Platform}
-		}
-		for _, p := range list {
-			p = strings.TrimSpace(p)
-			if p == "" {
-				continue
-			}
-			if len(p) > 64 {
-				writeJSON(w, http.StatusBadRequest, errResp("invalid_platform", "Platform must be at most 64 characters"))
-				return false
-			}
-			key := strings.ToLower(p)
-			if seen[key] {
-				continue
-			}
-			if len(ownedPlatforms) >= 32 {
-				writeJSON(w, http.StatusBadRequest, errResp("invalid_platform", "At most 32 platforms per game"))
-				return false
-			}
-			seen[key] = true
-			ownedPlatforms = append(ownedPlatforms, p)
-		}
-	}
-	platformPrimary := ""
-	if len(ownedPlatforms) > 0 {
-		platformPrimary = ownedPlatforms[0]
-	}
-
-	// Verify game exists
-	var exists int
-	err := ex.QueryRowContext(ctx, "SELECT 1 FROM games WHERE id = ?", gameID).Scan(&exists)
-	if err == sql.ErrNoRows {
-		writeJSON(w, http.StatusNotFound, errResp("game_not_found", "Game not found"))
-		return false
-	}
-	if err != nil {
-		// Previously a transient error here fell through to the INSERT and
-		// surfaced as a confusing FK 500.
-		log.Printf("library upsert: game existence check failed: %v", err)
-		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to save library item"))
-		return false
-	}
-
-	tagsJSON := "[]"
-	if req.Tags != nil {
-		// Deduplicate tags case-insensitively ("RPG" and "rpg" are the same).
-		seenLower := map[string]bool{}
-		uniq := make([]string, 0, len(req.Tags))
-		for _, t := range req.Tags {
-			trimmed := strings.TrimSpace(t)
-			if trimmed == "" {
-				continue
-			}
-			lt := strings.ToLower(trimmed)
-			if seenLower[lt] {
-				continue
-			}
-			seenLower[lt] = true
-			uniq = append(uniq, trimmed)
-		}
-		b, _ := json.Marshal(uniq)
-		tagsJSON = string(b)
-	}
-
-	// Timestamp semantics:
-	//   absent/null -> preserve the existing value; auto-set on status
-	//                  transition into playing/completed if still unset
-	//   ""          -> explicit clear
-	//   value       -> validated RFC3339 or YYYY-MM-DD, normalized to UTC
-	startClear, startVal, err := parseTimestampInput(req.StartedAt)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, errResp("invalid_timestamp", err.Error()))
-		return false
-	}
-	endClear, endVal, err := parseTimestampInput(req.CompletedAt)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, errResp("invalid_timestamp", err.Error()))
-		return false
-	}
-
-	now := time.Now().UTC().Format(time.RFC3339)
-
-	// VALUES-side timestamp: what a brand-new row gets. An unspecified value
-	// auto-tracks when the initial status is playing/completed; the CASE in
-	// the ON CONFLICT branch handles updates (preserving existing values).
-	insertStarted := insertTimestamp(startClear, startVal, req.Status == "playing", now)
-	insertCompleted := insertTimestamp(endClear, endVal, req.Status == "completed", now)
-
-	ownedPlatformsJSON := "[]"
-	if len(ownedPlatforms) > 0 {
-		b, _ := json.Marshal(ownedPlatforms)
-		ownedPlatformsJSON = string(b)
-	}
-
-	// The ON CONFLICT DO UPDATE never writes NULL for an unspecified timestamp
-	// — that's the fix for the data-loss bug where a UI edit (which sends no
-	// timestamps) wiped started_at/completed_at via excluded.<col>.
-	var deltaSet bool
-	var delta int64
-	if playtimeDelta != nil {
-		deltaSet, delta = true, *playtimeDelta
-	}
-	_, err = ex.ExecContext(ctx, `INSERT INTO library_items (user_id, game_id, status, rating, playtime_minutes, tags_json, notes, started_at, completed_at, platform, owned_platforms_json, medium, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(user_id, game_id) DO UPDATE SET
-			status = excluded.status,
-			rating = excluded.rating,
-			playtime_minutes = CASE WHEN ? THEN MAX(0, library_items.playtime_minutes + ?)
-				ELSE excluded.playtime_minutes END,
-			tags_json = excluded.tags_json,
-			notes = excluded.notes,
-			started_at = CASE
-				WHEN ? THEN NULL
-				WHEN ? THEN ?
-				WHEN library_items.started_at IS NOT NULL THEN library_items.started_at
-				WHEN excluded.status = 'playing' THEN excluded.updated_at
-				ELSE NULL
-			END,
-			completed_at = CASE
-				WHEN ? THEN NULL
-				WHEN ? THEN ?
-				WHEN library_items.completed_at IS NOT NULL THEN library_items.completed_at
-				WHEN excluded.status = 'completed' THEN excluded.updated_at
-				ELSE NULL
-			END,
-			platform = excluded.platform,
-			owned_platforms_json = excluded.owned_platforms_json,
-			medium = excluded.medium,
-			updated_at = excluded.updated_at`,
-		userID, gameID, req.Status, req.Rating, req.PlaytimeMinutes,
-		tagsJSON, req.Notes, insertStarted, insertCompleted, platformPrimary, ownedPlatformsJSON, req.Medium, now,
-		deltaSet, delta,
-		startClear, startVal != "", nullStrOr(startVal),
-		endClear, endVal != "", nullStrOr(endVal))
-	if err != nil {
-		log.Printf("library upsert failed for user %s game %d: %v", userID, gameID, err)
-		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to save library item"))
-		return false
-	}
-
-	// Enqueue a cover job for this game (best-effort, ignore errors).
-	ex.ExecContext(ctx, `INSERT INTO cover_jobs (game_id, source_url)
-		SELECT id, cover_url FROM games WHERE id = ? AND cover_url != ''
-		ON CONFLICT(game_id) DO NOTHING`, gameID)
-
-	return true
-}
-
 func (h *LibraryHandler) deleteLibraryItem(w http.ResponseWriter, r *http.Request, userID string, gameID int64) {
-	result, err := h.db.Exec("DELETE FROM library_items WHERE user_id = ? AND game_id = ?", userID, gameID)
-	if err != nil {
+	if _, err := h.lib.Delete(r.Context(), userID, gameID); err != nil {
+		if errors.Is(err, library.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, errResp("not_found", "Library item not found"))
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to remove library item"))
 		return
 	}
-
-	affected, _ := result.RowsAffected()
-	if affected == 0 {
-		writeJSON(w, http.StatusNotFound, errResp("not_found", "Library item not found"))
-		return
-	}
-
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
 
@@ -1557,13 +1294,7 @@ func extractGameID(path string) (int64, error) {
 	return strconv.ParseInt(idStr, 10, 64)
 }
 
-func isValidStatus(status string) bool {
-	switch status {
-	case "wishlist", "backlog", "playing", "completed", "abandoned":
-		return true
-	}
-	return false
-}
+func isValidStatus(status string) bool { return library.ValidStatus(status) }
 
 // parseLibraryYearParam mirrors handler_games.parseYearParam for library filtering.
 func parseLibraryYearParam(raw string, end bool) int64 {

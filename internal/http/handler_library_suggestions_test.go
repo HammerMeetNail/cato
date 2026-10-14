@@ -26,8 +26,8 @@ func TestSuggestionsExcludeOwnedAndPreferPopular(t *testing.T) {
 
 	// Three candidates with covers; game 1 is owned so must be excluded.
 	for _, g := range []struct {
-		id   string
-		pop  int
+		id    string
+		pop   int
 		cover string
 	}{
 		{"1", 500, "/covers/1.jpg"},

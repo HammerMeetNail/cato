@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"cato/internal/catalog"
 	"cato/internal/config"
 	"cato/internal/db"
-	"cato/internal/catalog"
 
 	_ "modernc.org/sqlite"
 )
