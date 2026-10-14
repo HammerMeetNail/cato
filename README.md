@@ -83,7 +83,7 @@ Requires a Twitch client ID and secret for the IGDB API.
 
 ## Cover Images
 
-Covers from IGDB are downloaded to `data/covers/{id}.jpg` (up to 5 in parallel). Downloads are validated (HTTP 200, size cap, image magic bytes) and written atomically. Failures retry with exponential backoff (2m → 16m); after 5 attempts a job is exhausted but is revived automatically if the game's cover URL changes or it is re-enqueued (e.g. after a metadata refresh). Only games in someone's library are downloaded.
+Covers from IGDB are downloaded to `data/covers/{id}.jpg` (up to 5 in parallel), only for games in someone's library: adding a game queues its cover and wakes the downloader, and jobs for games no longer in any library are pruned daily. Downloads are validated (HTTP 200, size cap, image magic bytes) and written atomically. Failures retry with exponential backoff (2m → 16m); after 5 attempts a job is exhausted but is revived automatically if the game's cover URL changes or it is re-enqueued (e.g. after a metadata refresh). Only games in someone's library are downloaded.
 
 At startup Cato also repairs cover data poisoned by earlier bugs: URLs pointing at the defunct `images.cato.com` host are cleared, and exhausted jobs are re-fetched with corrected URLs.
 
@@ -113,8 +113,8 @@ Google OAuth needs `CATO_BASE_URL` set to the `https://` address users type into
 | `GET` | `/api/auth/google/start` | No | Google OAuth start |
 | `GET` | `/api/auth/google/callback` | No | Google OAuth callback |
 | `GET` | `/api/games/search?q=zelda` | No | Search games (`full=1` enables paginated results with `limit`/`offset`). Anonymous: local catalog only. 120/min per IP. |
-| `GET` | `/api/games/{id}` | No | Get game detail |
-| `GET` | `/api/library?status=backlog&limit=&offset=&tag=` | Session | List library (paginated; returns `X-Total-Count` / `X-Has-More` headers) |
+| `GET` | `/api/games/{id}` | No | Get game detail (ETag, `Cache-Control: public, max-age=300`) |
+| `GET` | `/api/library?status=backlog&limit=&offset=&tag=` | Session | List library. The default order pages by `cursor=` (from the `X-Next-Cursor` header); other sorts by `offset`. `X-Has-More` on every page, `X-Total-Count` on the first. |
 | `GET` | `/api/library/{gameID}` | Session | Get one library item (404 if not owned) |
 | `PATCH` | `/api/library/{gameID}` | Session+CSRF | Update only the fields sent; `playtime_delta_minutes` adds time atomically. Returns the item. |
 | `POST`/`PUT` | `/api/library/{gameID}` | Session+CSRF | Add/update item. Omitted timestamps are preserved and auto-tracked on status changes; `""` clears them. Timestamps accept RFC3339 or `YYYY-MM-DD`. |

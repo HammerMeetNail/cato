@@ -66,6 +66,16 @@ func (f *fakeIGDB) GetPlatforms(ctx context.Context) ([]Platform, error) {
 	}, nil
 }
 
+// putInLibrary adds the game to a user's library; cover jobs are only kept
+// for library games.
+func putInLibrary(t *testing.T, database *db.DB, gameID int64) {
+	t.Helper()
+	database.Exec(`INSERT OR IGNORE INTO users (id, email) VALUES ('lib-user', 'lib@example.com')`)
+	if _, err := database.Exec(`INSERT INTO library_items (user_id, game_id, status) VALUES ('lib-user', ?, 'backlog')`, gameID); err != nil {
+		t.Fatalf("put game %d in library: %v", gameID, err)
+	}
+}
+
 func setupGameDB(t *testing.T) (*db.DB, *Store) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "test.db")

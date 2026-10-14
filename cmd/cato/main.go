@@ -301,6 +301,7 @@ func main() {
 	}
 
 	coverWorker := covers.NewWorker(database, cfg.CoverDir)
+	srv.SetCoverNotifier(coverWorker.Wake)
 	coverWorker.Start()
 
 	// One-time cleanup of cover URLs pointing at the defunct
@@ -358,6 +359,14 @@ func main() {
 		} else if n > 0 {
 			log.Printf("maintenance: purged %d expired cache entries", n)
 		}
+		if n, err := covers.PruneJobs(ctx, database); err != nil {
+			log.Printf("maintenance: cover job prune failed: %v", err)
+		} else if n > 0 {
+			log.Printf("maintenance: pruned %d cover jobs for games in no library", n)
+		}
+		if err := database.Optimize(ctx); err != nil && ctx.Err() == nil {
+			log.Printf("maintenance: optimize failed: %v", err)
+		}
 	}
 	maintenanceCtx, cancelMaintenance := context.WithCancel(context.Background())
 	maintenanceDone := runMaintenance(maintenanceCtx, 24*time.Hour, maintenance)
@@ -395,6 +404,12 @@ func main() {
 		log.Printf("shutdown failed: HTTP/catalog=%v covers=%v", shutdownErr, coverErr)
 		os.Exit(1)
 	}
+	// Refresh planner statistics on the way out (cheap; see db.Optimize).
+	optimizeCtx, cancelOptimize := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := database.Optimize(optimizeCtx); err != nil {
+		log.Printf("shutdown: optimize failed: %v", err)
+	}
+	cancelOptimize()
 	if serverFailed {
 		_ = database.Close()
 		os.Exit(1)

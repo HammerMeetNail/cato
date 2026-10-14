@@ -13,7 +13,6 @@ import (
 	"net"
 	"net/http"
 	"path"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +30,8 @@ type Server struct {
 	httpServer     *http.Server
 	redirectServer *http.Server
 	gameHandler    *GameHandler
+	libraryHandler *LibraryHandler
+	static         *gzipStatic
 
 	// certReloadInterval bounds how often the TLS certificate files are
 	// re-checked for renewal.
@@ -57,6 +58,7 @@ func NewServer(cfg *config.Config, db *db.DB) *Server {
 }
 
 func (s *Server) routes() {
+	s.static = newGzipStatic(s.cfg.StaticDir, http.FileServer(noListingFS{http.Dir(s.cfg.StaticDir)}))
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
 
 	authHandler := NewAuthHandler(s.db, s.cfg)
@@ -68,6 +70,7 @@ func (s *Server) routes() {
 
 	libraryHandler := NewLibraryHandler(s.db, auth.Cookies{Secure: s.cfg.SecureCookies()})
 	libraryHandler.Register(s.mux)
+	s.libraryHandler = libraryHandler
 
 	s.mux.HandleFunc("/covers/", covers.ServeCover(s.cfg.CoverDir))
 
@@ -80,9 +83,8 @@ func (s *Server) routes() {
 		http.Redirect(w, r, "/#settings", http.StatusFound)
 	})
 
-	// Static files with cache headers
-	fs := http.FileServer(noListingFS{http.Dir(s.cfg.StaticDir)})
-	s.mux.Handle("/", staticCacheMiddleware(fs))
+	// Static files with cache headers; text assets are served gzipped.
+	s.mux.Handle("/", staticCacheMiddleware(s.static))
 }
 
 // noListingFS hides directories that have no index.html, so http.FileServer
@@ -148,12 +150,11 @@ func staticCacheMiddleware(next http.Handler) http.Handler {
 }
 
 // gzipMiddleware gzips JSON API responses when the client accepts gzip.
-// Static files and covers are excluded: they are served via
-// http.ServeFile/http.FileServer, which implement Range requests — wrapping
-// them produced corrupt responses (206 Partial Content with
-// Content-Encoding: gzip but raw uncompressed bytes). Vary is set whenever
-// content negotiation happens so caches never serve an encoded variant to a
-// client that can't decode it.
+// Static text assets are compressed separately (gzipStatic: precompressed,
+// Range-safe); covers are already-compressed images. Wrapping Range-capable
+// file responses here produced corrupt 206s (gzip-labelled raw bytes). Vary is
+// set whenever content negotiation happens so caches never serve an encoded
+// variant to a client that can't decode it.
 func gzipMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		isAPI := strings.HasPrefix(r.URL.Path, "/api/")
@@ -214,12 +215,11 @@ func (w *gzipResponseWriter) Close() {
 }
 
 func (s *Server) servePage(filename string) http.HandlerFunc {
-	path := filepath.Join(s.cfg.StaticDir, filename)
 	return func(w http.ResponseWriter, r *http.Request) {
 		// The named page routes bypass staticCacheMiddleware; keep HTML
 		// revalidated so deploys reach clients immediately.
 		w.Header().Set("Cache-Control", "no-cache")
-		http.ServeFile(w, r, path)
+		s.static.serve(w, r, "/"+filename)
 	}
 }
 
@@ -264,6 +264,10 @@ func (s *Server) clientMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(w, auth.ResolveClient(r, s.cfg.TrustedProxies))
 	})
 }
+
+// SetCoverNotifier registers a callback (the cover worker's Wake) run after
+// library writes that may have queued a cover job.
+func (s *Server) SetCoverNotifier(fn func()) { s.libraryHandler.coverQueued = fn }
 
 // Listen binds the application listener (TLS when configured) and the
 // optional HTTP→HTTPS redirect listener. Start calls it when needed;

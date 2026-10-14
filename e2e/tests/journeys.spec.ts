@@ -74,7 +74,8 @@ test('infinite scroll appends the second page exactly once and filters reset pag
   await expect(cards).toHaveCount(60);
   const nextPage = page.waitForResponse(r => {
     const url = new URL(r.url());
-    return url.pathname === '/api/library' && url.searchParams.get('offset') === '60';
+    // The default order pages by keyset cursor (X-Next-Cursor), not offset.
+    return url.pathname === '/api/library' && url.searchParams.has('cursor') && !url.searchParams.has('offset');
   });
   await cards.last().scrollIntoViewIfNeeded();
   expect((await nextPage).ok()).toBeTruthy();

@@ -1981,7 +1981,7 @@ export async function loadLibrary(status, tag, platform, ownedPlatform, extraOpt
   grid.innerHTML = '<div class="loading">Loading library...</div>';
 
   try {
-    const { items, total, hasMore } = await library.list(normStatuses, PAGE_SIZE, 0, tag || '', platform || '', {
+    const { items, total, hasMore, nextCursor } = await library.list(normStatuses, PAGE_SIZE, 0, tag || '', platform || '', {
       yearFrom: libraryFilters.yearFrom || null,
       yearTo: libraryFilters.yearTo || null,
       releaseFrom: libraryFilters.releaseFrom || null,
@@ -1992,6 +1992,7 @@ export async function loadLibrary(status, tag, platform, ownedPlatform, extraOpt
     });
     if (loadVersion !== libraryLoadVersion || paginationState.mode !== 'library') return;
     if (filteredView) updateLibraryFilterTotal(total);
+    paginationState.nextCursor = nextCursor;
     renderPagedItems(grid, items, true, hasMore);
     renderedRevision = revision;
     renderedRoute = libraryRoute;
@@ -2127,7 +2128,7 @@ async function loadMore() {
       updateSearchTotal(total);
       renderPagedItems(grid, results, false); // false = append, not replace
     } else {
-      const { items, hasMore } = await library.list(
+      const { items, hasMore, nextCursor } = await library.list(
         paginationState.statuses || [],
         paginationState.pageSize,
         paginationState.offset,
@@ -2141,9 +2142,11 @@ async function loadMore() {
           ownedPlatform: paginationState.ownedPlatformFilter || null,
           format: paginationState.formatFilter || libraryFilters.format || null,
           sort: paginationState.sort || null,
+          cursor: paginationState.nextCursor || '',
         }
       );
       if (libraryVersion !== libraryLoadVersion || paginationState.mode !== 'library') return;
+      paginationState.nextCursor = nextCursor;
       renderPagedItems(grid, items, false, hasMore);
     }
   } catch (err) {

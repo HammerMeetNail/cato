@@ -77,6 +77,7 @@ func TestEnqueueCoverJobRevivesExhausted(t *testing.T) {
 	ctx := context.Background()
 
 	database.Exec(`INSERT INTO games (id, name, slug, normalized_name) VALUES (1, 'Game', 'game', 'game')`)
+	putInLibrary(t, database, 1)
 	database.Exec(`INSERT INTO cover_jobs (game_id, source_url, attempts, last_error)
 		VALUES (1, 'https://old.example/co00001.jpg', 5, 'http status 404')`)
 

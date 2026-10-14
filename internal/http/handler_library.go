@@ -3,8 +3,10 @@ package http
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -25,6 +27,15 @@ type LibraryHandler struct {
 	db      *db.DB
 	games   *games.Store
 	cookies auth.Cookies
+	// coverQueued wakes the cover worker after a write that may have queued
+	// a cover job (nil in tests that don't care).
+	coverQueued func()
+}
+
+func (h *LibraryHandler) notifyCoverQueued() {
+	if h.coverQueued != nil {
+		h.coverQueued()
+	}
 }
 
 func NewLibraryHandler(db *db.DB, cookies auth.Cookies) *LibraryHandler {
@@ -133,6 +144,15 @@ func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, use
 			offset = o
 		}
 	}
+	var cursor *libraryCursor
+	if raw := r.URL.Query().Get("cursor"); raw != "" {
+		c, err := parseLibraryCursor(raw)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, errResp("invalid_cursor", "Invalid pagination cursor"))
+			return
+		}
+		cursor = &c
+	}
 
 	where, whereArgs := libraryFilter(statuses, tags, tagOp)
 
@@ -216,7 +236,7 @@ func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, use
 	default:
 		sort = "updated"
 	}
-	orderBy := "li.updated_at DESC"
+	orderBy := "li.updated_at DESC, li.game_id DESC"
 	switch sort {
 	case "name":
 		orderBy = "g.name COLLATE NOCASE ASC, li.updated_at DESC"
@@ -247,42 +267,48 @@ func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, use
 	case "added":
 		orderBy = "li.created_at DESC, li.updated_at DESC"
 	case "updated":
-		orderBy = "li.updated_at DESC"
+		orderBy = "li.updated_at DESC, li.game_id DESC"
 	}
-
-	// Total matching items for the current filter — surfaced via the
-	// X-Total-Count header so clients can show "N games" per tab and know
-	// when infinite scroll is done without coming up one item short.
-	var total int64
-	countQuery := `SELECT COUNT(*) FROM library_items li JOIN games g ON g.id = li.game_id WHERE li.user_id = ?` + where
-	if err := h.db.QueryRow(countQuery, append([]interface{}{userID}, whereArgs...)...).Scan(&total); err != nil {
-		log.Printf("library list: count failed: %v", err)
-		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to fetch library"))
+	if cursor != nil && sort != "updated" {
+		writeJSON(w, http.StatusBadRequest, errResp("invalid_cursor", "Cursors are only supported for the default (updated) order"))
 		return
 	}
+	firstPage := offset == 0 && cursor == nil
 
-	availablePlatformJoin := ""
+	// Total matching items for the current filter — surfaced via the
+	// X-Total-Count header so clients can show "N games" per tab. Only the
+	// first page pays for the COUNT; later pages rely on X-Has-More.
+	var total int64
+	if firstPage {
+		countQuery := `SELECT COUNT(*) FROM library_items li JOIN games g ON g.id = li.game_id WHERE li.user_id = ?` + where
+		if err := h.db.QueryRow(countQuery, append([]interface{}{userID}, whereArgs...)...).Scan(&total); err != nil {
+			log.Printf("library list: count failed: %v", err)
+			writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to fetch library"))
+			return
+		}
+	}
+
+	var args []interface{}
+	join := ""
 	if sort == "available_platform" || sort == "available_platform_desc" {
-		availablePlatformJoin = `
-		LEFT JOIN (
-			SELECT gp.game_id,
-				MIN(CASE
-					WHEN gp.platform_id = 0 THEN NULLIF(gp.platform_value, '')
-					ELSE COALESCE(NULLIF(p.name, ''), CAST(gp.platform_id AS TEXT))
-				END) AS available_platform
-			FROM game_platforms gp
-			LEFT JOIN platforms p ON p.id = gp.platform_id
-			WHERE gp.platform_id != 0 OR gp.platform_value != ''
-			GROUP BY gp.game_id
-		) ap ON ap.game_id = g.id`
+		join = availablePlatformJoin
+		args = append(args, userID)
+	}
+	args = append(args, userID)
+	args = append(args, whereArgs...)
+	// The default order pages by keyset (updated_at, game_id) — index-backed,
+	// and stable when an edit moves an item to the top between pages.
+	if cursor != nil {
+		where += " AND (li.updated_at, li.game_id) < (?, ?)"
+		args = append(args, cursor.updatedAt, cursor.gameID)
+		offset = 0
 	}
 
 	query := `SELECT ` + libraryItemSelect + `
 		FROM library_items li
-		JOIN games g ON g.id = li.game_id` + availablePlatformJoin + `
+		JOIN games g ON g.id = li.game_id` + join + `
 		WHERE li.user_id = ?` + where +
 		` ORDER BY ` + orderBy + ` LIMIT ? OFFSET ?`
-	args := append([]interface{}{userID}, whereArgs...)
 	// Fetch one extra row so hasMore is exact even when the total is a
 	// multiple of the page size.
 	args = append(args, limit+1, offset)
@@ -313,10 +339,62 @@ func (h *LibraryHandler) listLibrary(w http.ResponseWriter, r *http.Request, use
 		items = append(items, item)
 	}
 
-	w.Header().Set("X-Total-Count", strconv.FormatInt(total, 10))
+	if firstPage {
+		w.Header().Set("X-Total-Count", strconv.FormatInt(total, 10))
+	}
 	w.Header().Set("X-Has-More", strconv.FormatBool(hasMore))
+	if hasMore && sort == "updated" && len(items) > 0 {
+		last := items[len(items)-1]
+		if updatedAt, ok := last["updated_at"].(string); ok {
+			w.Header().Set("X-Next-Cursor", libraryCursor{updatedAt: updatedAt, gameID: last["game_id"].(int64)}.String())
+		}
+	}
 	writeJSON(w, http.StatusOK, items)
 }
+
+// libraryCursor is the keyset position after the last item of a page in the
+// default order (updated_at DESC, game_id DESC). Opaque to clients.
+type libraryCursor struct {
+	updatedAt string
+	gameID    int64
+}
+
+func (c libraryCursor) String() string {
+	return base64.RawURLEncoding.EncodeToString([]byte(c.updatedAt + "|" + strconv.FormatInt(c.gameID, 10)))
+}
+
+func parseLibraryCursor(raw string) (libraryCursor, error) {
+	b, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return libraryCursor{}, err
+	}
+	at, id, ok := strings.Cut(string(b), "|")
+	if !ok || at == "" {
+		return libraryCursor{}, errors.New("malformed cursor")
+	}
+	gameID, err := strconv.ParseInt(id, 10, 64)
+	if err != nil {
+		return libraryCursor{}, err
+	}
+	return libraryCursor{updatedAt: at, gameID: gameID}, nil
+}
+
+// availablePlatformJoin resolves each library game's alphabetically first
+// available platform for the available_platform sorts. It aggregates only
+// the caller's library games (first ? = user ID), not the whole catalog.
+const availablePlatformJoin = `
+		LEFT JOIN (
+			SELECT gp.game_id,
+				MIN(CASE
+					WHEN gp.platform_id = 0 THEN NULLIF(gp.platform_value, '')
+					ELSE COALESCE(NULLIF(p.name, ''), CAST(gp.platform_id AS TEXT))
+				END) AS available_platform
+			FROM library_items mine
+			JOIN game_platforms gp ON gp.game_id = mine.game_id
+			LEFT JOIN platforms p ON p.id = gp.platform_id
+			WHERE mine.user_id = ? AND (gp.platform_id != 0 OR gp.platform_value != '')
+			GROUP BY gp.game_id
+		) ap ON ap.game_id = g.id`
 
 // libraryFilter builds the shared WHERE fragment (status/tag filtering) used
 // by both the page query and the COUNT query so they can never diverge.
@@ -531,6 +609,7 @@ func (h *LibraryHandler) upsertLibraryItem(w http.ResponseWriter, r *http.Reques
 	if !h.writeLibraryItem(r.Context(), w, h.db, userID, gameID, req, nil) {
 		return
 	}
+	h.notifyCoverQueued()
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
 
@@ -654,6 +733,7 @@ func (h *LibraryHandler) patchLibraryItem(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to update library item"))
 		return
 	}
+	h.notifyCoverQueued()
 	writeJSON(w, http.StatusOK, updated)
 }
 
@@ -1248,6 +1328,16 @@ func (h *LibraryHandler) handleLibraryExport(w http.ResponseWriter, r *http.Requ
 // handleLibrarySuggestions handles GET /api/library/suggestions?limit=8 —
 // popular catalog games (by popularity_score) the caller doesn't own yet,
 // covers only, for the "start your library" empty state.
+// suggestionsQuery walks idx_games_suggest (a partial index on exactly this
+// ORDER BY and cover condition) and stops at the limit, skipping owned games,
+// instead of sorting the whole catalog on every request.
+const suggestionsQuery = `SELECT g.id, g.name, g.cover_url, g.local_cover_path, g.first_release_date
+		FROM games g
+		WHERE g.local_cover_path != ''
+		  AND NOT EXISTS (SELECT 1 FROM library_items li WHERE li.user_id = ? AND li.game_id = g.id)
+		ORDER BY g.popularity_score DESC, g.rating_count DESC, g.name
+		LIMIT ?`
+
 func (h *LibraryHandler) handleLibrarySuggestions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, errResp("method_not_allowed", "Method not allowed"))
@@ -1264,13 +1354,7 @@ func (h *LibraryHandler) handleLibrarySuggestions(w http.ResponseWriter, r *http
 
 	// Only games with a locally cached cover — a suggestion without art is
 	// just text and won't tempt anyone.
-	rows, err := h.db.Query(`SELECT g.id, g.name, g.cover_url, g.local_cover_path, g.first_release_date
-		FROM games g
-		LEFT JOIN library_items li ON li.game_id = g.id AND li.user_id = ?
-		WHERE li.game_id IS NULL
-		  AND g.local_cover_path != ''
-		ORDER BY g.popularity_score DESC, g.rating_count DESC, g.name
-		LIMIT ?`, userID, limit)
+	rows, err := h.db.Query(suggestionsQuery, userID, limit)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errResp("db_error", "Failed to fetch suggestions"))
 		return

@@ -48,23 +48,23 @@ var ValidSorts = map[string]bool{
 
 // searchOptions controls one search execution.
 type searchOptions struct {
-	limit            int
-	offset           int
-	applyFloor       bool // hide weak tier-3 substring matches unless popular
-	sort             string
-	yearFrom         int64 // unix seconds, inclusive; 0 = unset
-	yearTo           int64 // unix seconds, inclusive; 0 = unset
-	minRating        int64 // aggregated_rating >= minRating with count > 0; 0 = unset
-	platform         string
-	ownedPlatform    string // owned filter: substring of owned platform name/abbr/shortname (library only)
-	tags             []string
-	tagOp            string // "and" (default) or "or"
-	libraryUserID    string // when set, enable library-scoped filters below
-	inLibrary        *bool  // nil = no filter; true = only owned, false = not owned
-	libraryStatus    string   // when set with libraryUserID, filter to that library status (single)
-	libraryStatuses  []string // when set, filter to any of these statuses (multi, overrides libraryStatus)
-	withTotal        bool   // include a total via COUNT(*) OVER()
-	includeEditions  bool   // when false, hide IGDB editions (version_parent != 0) unless query explicitly asks for one
+	limit           int
+	offset          int
+	applyFloor      bool // hide weak tier-3 substring matches unless popular
+	sort            string
+	yearFrom        int64 // unix seconds, inclusive; 0 = unset
+	yearTo          int64 // unix seconds, inclusive; 0 = unset
+	minRating       int64 // aggregated_rating >= minRating with count > 0; 0 = unset
+	platform        string
+	ownedPlatform   string // owned filter: substring of owned platform name/abbr/shortname (library only)
+	tags            []string
+	tagOp           string   // "and" (default) or "or"
+	libraryUserID   string   // when set, enable library-scoped filters below
+	inLibrary       *bool    // nil = no filter; true = only owned, false = not owned
+	libraryStatus   string   // when set with libraryUserID, filter to that library status (single)
+	libraryStatuses []string // when set, filter to any of these statuses (multi, overrides libraryStatus)
+	withTotal       bool     // include a total via COUNT(*) OVER()
+	includeEditions bool     // when false, hide IGDB editions (version_parent != 0) unless query explicitly asks for one
 }
 
 func (s *Store) SearchLocal(ctx context.Context, query string, limit int) ([]GameResult, error) {
@@ -145,9 +145,22 @@ func (s *Store) search(ctx context.Context, query string, o searchOptions) ([]Ga
 		} else {
 			return results, total, nil
 		}
+	} else if len(query) < 3 {
+		// Too short for trigrams: match name/alias prefixes through their
+		// indexes rather than scanning the catalog with LIKE '%q%'.
+		return run("prefix", "")
 	}
 	return run("like", "")
 }
+
+// typeaheadCandidates bounds the name and alias matches a typeahead
+// (no-total) search ranks: a common trigram can match tens of thousands of
+// games, and only the best few are shown.
+const typeaheadCandidates = 500
+
+// prefixUpperBound is the exclusive upper bound of strings starting with p
+// (U+10FFFF sorts after every other code point in UTF-8 byte order).
+func prefixUpperBound(p string) string { return p + "\U0010FFFF" }
 
 // ValidLibraryStatuses whitelists library status values for search filtering.
 var ValidLibraryStatuses = map[string]bool{
@@ -305,6 +318,12 @@ func appendGameFilterWhere(b *strings.Builder, args *[]interface{}, o searchOpti
 // generated SQL. The FTS join starts at the virtual table and uses CROSS JOIN
 // to keep SQLite from choosing the full games table as the driving relation.
 func buildSearchCandidates(b *strings.Builder, args *[]interface{}, engine, match, query, prefix, wordPrefix, like string, o searchOptions) {
+	// Typeahead keeps the best candidates only (exact/prefix tiers first,
+	// then popularity); paged full results need every match for totals.
+	capped := ""
+	if !o.withTotal {
+		capped = fmt.Sprintf(" ORDER BY 2, g.popularity_score DESC LIMIT %d", typeaheadCandidates)
+	}
 	b.WriteString(`WITH name_match(id, tier) AS MATERIALIZED (`)
 	switch engine {
 	case "fts":
@@ -315,8 +334,13 @@ func buildSearchCandidates(b *strings.Builder, args *[]interface{}, engine, matc
 		            ELSE 3 END
 		     FROM games_fts f
 		     CROSS JOIN games g
-		     WHERE f.normalized_name MATCH ? AND g.id = f.rowid`)
+		     WHERE f.normalized_name MATCH ? AND g.id = f.rowid` + capped)
 		*args = append(*args, query, prefix, wordPrefix, match)
+	case "prefix":
+		b.WriteString(`SELECT g.id, CASE WHEN g.normalized_name = ? THEN 0 ELSE 1 END
+		     FROM games g
+		     WHERE g.normalized_name >= ? AND g.normalized_name < ?` + capped)
+		*args = append(*args, query, query, prefixUpperBound(query))
 	default: // "like"
 		b.WriteString(`SELECT g.id,
 		       CASE WHEN g.normalized_name = ? THEN 0
@@ -328,14 +352,24 @@ func buildSearchCandidates(b *strings.Builder, args *[]interface{}, engine, matc
 		*args = append(*args, query, prefix, wordPrefix, like)
 	}
 
+	aliasCap := ""
+	if !o.withTotal {
+		aliasCap = fmt.Sprintf(" LIMIT %d", typeaheadCandidates)
+	}
 	b.WriteString(`), alias_match(game_id) AS MATERIALIZED (`)
-	if engine == "fts" {
+	switch engine {
+	case "fts":
 		b.WriteString(`SELECT DISTINCT a.game_id
 		     FROM aliases_fts af
 		     CROSS JOIN game_aliases a
-		     WHERE af.normalized_alias MATCH ? AND a.rowid = af.rowid`)
+		     WHERE af.normalized_alias MATCH ? AND a.rowid = af.rowid` + aliasCap)
 		*args = append(*args, match)
-	} else {
+	case "prefix":
+		b.WriteString(`SELECT DISTINCT a.game_id
+		     FROM game_aliases a
+		     WHERE a.normalized_alias >= ? AND a.normalized_alias < ?` + aliasCap)
+		*args = append(*args, query, prefixUpperBound(query))
+	default:
 		b.WriteString(`SELECT DISTINCT a.game_id
 		     FROM game_aliases a
 		     WHERE a.normalized_alias LIKE ? ESCAPE '\'`)
@@ -922,6 +956,11 @@ func (s *Store) UpdateCategoryAndParentGame(ctx context.Context, gameID int64, c
 	return err
 }
 
+// EnqueueCoverJob queues a cover download for a game that is in someone's
+// library; for any other game it does nothing. Covers are only cached for
+// library games (the worker's nextJob joins library_items), so queueing jobs
+// for every search or refresh result just grew cover_jobs. Adding a game to
+// a library queues its job (handler_library.go).
 func (s *Store) EnqueueCoverJob(ctx context.Context, gameID int64, sourceURL string) error {
 	if sourceURL == "" {
 		return nil
@@ -932,7 +971,7 @@ func (s *Store) EnqueueCoverJob(ctx context.Context, gameID int64, sourceURL str
 	// changed, so routine re-saves of a library item don't restart healthy
 	// in-flight jobs.
 	_, err := s.db.ExecContext(ctx, `INSERT INTO cover_jobs (game_id, source_url)
-		VALUES (?, ?)
+		SELECT ?, ? WHERE EXISTS (SELECT 1 FROM library_items WHERE game_id = ?)
 		ON CONFLICT(game_id) DO UPDATE SET
 			source_url = excluded.source_url,
 			attempts = 0,
@@ -940,7 +979,7 @@ func (s *Store) EnqueueCoverJob(ctx context.Context, gameID int64, sourceURL str
 			next_attempt_at = CURRENT_TIMESTAMP,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE cover_jobs.attempts >= 5 OR cover_jobs.source_url != excluded.source_url`,
-		gameID, sourceURL)
+		gameID, sourceURL, gameID)
 	return err
 }
 

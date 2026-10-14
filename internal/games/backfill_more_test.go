@@ -464,6 +464,7 @@ func TestEnqueueCoverJobReviveConditions(t *testing.T) {
 	defer database.Close()
 	ctx := context.Background()
 	database.Exec(`INSERT INTO games (id, name, slug, normalized_name) VALUES (1, 'G', 'g', 'g')`)
+	putInLibrary(t, database, 1)
 
 	// Empty source URL is a no-op.
 	if err := store.EnqueueCoverJob(ctx, 1, ""); err != nil {

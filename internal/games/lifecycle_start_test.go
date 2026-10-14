@@ -79,6 +79,7 @@ func TestStartStaleRefreshRefreshesOldGame(t *testing.T) {
 		VALUES (1, 'Old Game', 'old-game', 'old game', ?)`, old); err != nil {
 		t.Fatalf("insert game: %v", err)
 	}
+	putInLibrary(t, database, 1)
 
 	igdb := &fakeIGDB{getFunc: func(ctx context.Context, id int64) (*Game, error) {
 		return &Game{ID: id, Name: "Old Game", Slug: "old-game", SafeName: "Old Game",
@@ -137,6 +138,7 @@ func TestStartCoverRepairRevivesExhaustedJob(t *testing.T) {
 		VALUES (1, 'Broken Cover', 'broken-cover', 'broken cover', 'https://images.igdb.com/old.jpg')`); err != nil {
 		t.Fatalf("insert game: %v", err)
 	}
+	putInLibrary(t, database, 1)
 	if _, err := database.Exec(`INSERT INTO cover_jobs (game_id, source_url, attempts, next_attempt_at)
 		VALUES (1, 'https://images.igdb.com/old.jpg', 5, '2000-01-01T00:00:00Z')`); err != nil {
 		t.Fatalf("insert cover job: %v", err)

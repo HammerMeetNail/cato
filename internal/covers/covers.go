@@ -36,6 +36,10 @@ type Worker struct {
 	mu                sync.Mutex
 	started, stopping bool
 	done              chan struct{}
+	// wake interrupts the idle wait when a job is enqueued; idleWait is the
+	// fallback re-check for retries whose backoff has expired.
+	wake     chan struct{}
+	idleWait time.Duration
 }
 
 func NewWorker(db *db.DB, coverDir string) *Worker {
@@ -45,13 +49,36 @@ func NewWorker(db *db.DB, coverDir string) *Worker {
 		coverDir: coverDir,
 		client:   &http.Client{Timeout: 30 * time.Second},
 		sem:      make(chan struct{}, maxConcurrentDownloads),
+		wake:     make(chan struct{}, 1),
+		idleWait: 30 * time.Second,
 	}
+}
+
+// Wake tells an idle worker that a job was queued. It never blocks.
+func (w *Worker) Wake() {
+	select {
+	case w.wake <- struct{}{}:
+	default:
+	}
+}
+
+// PruneJobs deletes cover jobs for games that are in nobody's library: the
+// worker never runs them (nextJob joins library_items), so they only grow
+// the table. Adding the game to a library enqueues a fresh job.
+func PruneJobs(ctx context.Context, database *db.DB) (int64, error) {
+	res, err := database.ExecContext(ctx, `DELETE FROM cover_jobs
+		WHERE NOT EXISTS (SELECT 1 FROM library_items li WHERE li.game_id = cover_jobs.game_id)`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // Start cleans up any stale DB paths then runs a coordinator goroutine that
 // picks pending cover jobs and dispatches them to download goroutines.
 // Up to maxConcurrentDownloads downloads run in parallel; when there are no
-// pending jobs the coordinator sleeps briefly before polling again.
+// pending jobs the coordinator sleeps until Wake (a new job) or idleWait
+// (a retry's backoff may have expired), instead of polling twice a second.
 func (w *Worker) Start() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -73,7 +100,7 @@ func (w *Worker) Start() {
 			gameID, sourceURL, attempts, err := w.nextJob()
 			if err != nil || gameID == 0 {
 				<-w.sem
-				if !w.wait(500 * time.Millisecond) {
+				if !w.waitIdle() {
 					return
 				}
 				continue
@@ -89,6 +116,20 @@ func (w *Worker) Start() {
 			}
 		}
 	}()
+}
+
+// waitIdle blocks until a Wake, the idle fallback, or shutdown (false).
+func (w *Worker) waitIdle() bool {
+	timer := time.NewTimer(w.idleWait)
+	defer timer.Stop()
+	select {
+	case <-w.ctx.Done():
+		return false
+	case <-w.wake:
+		return true
+	case <-timer.C:
+		return true
+	}
 }
 
 func (w *Worker) wait(delay time.Duration) bool {

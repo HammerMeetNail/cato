@@ -39,12 +39,19 @@ web/static/      HTML, CSS, JS (vanilla, no bundler)
 - **Driver is `modernc.org/sqlite`** (pure Go, no cgo). It does **NOT** understand the
   mattn/go-sqlite3 DSN params (`_journal_mode=`, `_busy_timeout=`, `_foreign_keys=`) — it
   **silently ignores them**. Use the `_pragma=NAME(VALUE)` syntax instead. The current DSN
-  sets `journal_mode(WAL)`, `busy_timeout(5000)`, `foreign_keys(ON)`, `synchronous(NORMAL)`.
+  sets `journal_mode(WAL)`, `busy_timeout(5000)`, `foreign_keys(ON)`, `synchronous(NORMAL)`,
+  `cache_size(-16000)`, `mmap_size(134217728)` and `temp_store(MEMORY)`; read connections add
+  `query_only(1)` and the writer `_txlock=immediate`.
   Using the wrong syntax here previously left prod in rollback-journal mode and was the cause
   of severe lock contention — do not regress it.
 - **Two-pool design**: `db.Open()` returns a `*db.DB{ Read, Write *sql.DB }`.
-  - `Read` is a pool of several connections (WAL allows many concurrent readers).
+  - `Read` is a pool of several connections (WAL allows many concurrent readers). They are
+    `query_only`: a write routed there fails instead of competing with the writer.
   - `Write` is a single connection (`SetMaxOpenConns(1)` — SQLite allows only one writer).
+    Its transactions are `BEGIN IMMEDIATE`. Inside a writer transaction use the `*sql.Tx` for
+    every statement: calling `db.Exec` while holding it deadlocks on the single connection.
+  - `db.Optimize` (bounded `ANALYZE` the first time, then `PRAGMA optimize`) runs in the daily
+    maintenance sweep and at shutdown.
   - `*db.DB` exposes proxy methods so it is a near drop-in for `*sql.DB`:
     `Query*/QueryRow*` route to the read pool; `Exec*` and `Begin*` route to the writer.
     **So most call sites just use `db.Query(...)` / `db.Exec(...)` unchanged** — the routing
@@ -86,12 +93,23 @@ web/static/      HTML, CSS, JS (vanilla, no bundler)
     placeholder with a short cache (`max-age=300`) on a miss. Keep the hot path DB-free.
   - The download worker only fetches covers for games that are in someone's **library**
     (`nextJob` INNER JOINs `library_items`); it does not crawl the whole catalog. A cover job
-    is enqueued when a game is added to a library (`upsertLibraryItem`). Do not reintroduce a
-    catalog-wide `EnqueueMissingCovers` at startup.
+    is enqueued when a game is added to a library (`upsertLibraryItem`), and
+    `games.Store.EnqueueCoverJob` is a no-op for games in nobody's library (so search and
+    refresh results never queue jobs). Library writes call `Worker.Wake()`; the idle worker
+    otherwise re-checks every 30 s. `covers.PruneJobs` drops orphaned jobs in the daily
+    sweep. Do not reintroduce a catalog-wide `EnqueueMissingCovers` at startup.
 - **Library API is paginated**: `GET /api/library?status=&limit=&offset=` (default limit 60,
-  max 200). The frontend (`web/static/js/library.js`) does infinite scroll and appends pages.
-- **HTTP middleware**: `gzipMiddleware` (skips `/covers/`) wraps the whole mux via
-  `Server.Handler()`; `staticCacheMiddleware` adds cache headers for `/js/`, `/css/`,
+  max 200). The default order (`updated`) pages by keyset: follow the opaque `X-Next-Cursor`
+  header with `?cursor=` (index-backed, stable when edits reorder items); other sorts use
+  `offset`. `X-Total-Count` is only sent with the first page. The frontend
+  (`web/static/js/library.js`) does infinite scroll and appends pages.
+- **HTTP middleware**: `gzipMiddleware` wraps the mux via `Server.Handler()` but only
+  compresses `/api/` JSON. Static text assets (`.js .css .html .svg .json .webmanifest`)
+  are served gzipped by `gzipStatic` (compressed once per file version, kept in memory,
+  served with `http.ServeContent` so Range/ETag/304 stay correct); covers are never
+  recompressed. Catalog JSON (`/api/games/{id}`, `/api/platforms`) uses
+  `writeCacheableJSON` (weak ETag + short public max-age); everything else under `/api/`
+  is `no-store`. `staticCacheMiddleware` adds cache headers for `/js/`, `/css/`,
   `/icons/`, `/favicon.svg`, `/manifest*` (`no-cache`), and `no-store` for
   `/service-worker.js`. `securityMiddleware` sets `nosniff`, `X-Frame-Options: DENY`,
   `Referrer-Policy`, `Permissions-Policy` (camera self-only, other sensors off), HSTS in

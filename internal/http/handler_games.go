@@ -161,7 +161,7 @@ func (h *GameHandler) handlePlatforms(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	writeJSON(w, http.StatusOK, platforms)
+	writeCacheableJSON(w, r, platforms, time.Hour)
 }
 
 func (h *GameHandler) handleSearch(w http.ResponseWriter, r *http.Request) {
@@ -524,7 +524,8 @@ func (h *GameHandler) handleGameByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, game)
+	// Catalog data is the same for everyone and changes only on refresh.
+	writeCacheableJSON(w, r, game, 5*time.Minute)
 }
 
 type noopIGDBClient struct{}

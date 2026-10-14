@@ -312,7 +312,9 @@ export const library = {
     let ownedPlatform = '';
     let format = '';
     let sort = '';
+    let cursor = '';
     if (opts && typeof opts === 'object') {
+      cursor = opts.cursor ?? '';
       ownedPlatform = opts.ownedPlatform ?? '';
       format = opts.format ?? '';
       sort = opts.sort ?? '';
@@ -357,13 +359,18 @@ export const library = {
     if (releaseFrom) params.append('release_from', releaseFrom);
     if (releaseTo) params.append('release_to', releaseTo);
     params.append('limit', limit);
-    params.append('offset', offset);
+    // The default order pages by an opaque keyset cursor (stable when edits
+    // reorder items); other sorts page by offset. The total is only sent with
+    // the first page.
+    if (cursor) params.append('cursor', cursor);
+    else params.append('offset', offset);
     const qs = params.toString() ? `?${params.toString()}` : '';
     const { data, res } = await api.getFull(`/api/library${qs}`);
     return {
       items: data,
       total: Number(res.headers.get('X-Total-Count')) || data.length,
       hasMore: res.headers.get('X-Has-More') === 'true',
+      nextCursor: res.headers.get('X-Next-Cursor') || '',
     };
   },
 

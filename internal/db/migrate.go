@@ -13,6 +13,47 @@ type Migration struct {
 
 var migrations = []Migration{
 	{
+		Version: 17,
+		// Performance (Cato Smooth plan §2.3):
+		// - F2: library rows by game, for the cover worker's join and the
+		//   ON DELETE CASCADE from games.
+		// - F6: the default library order (updated, newest first) and its
+		//   keyset cursor (updated_at, game_id) without a temp B-tree.
+		// - F3: re-index FTS only when normalized_name changes, and rebuild
+		//   game_platforms only when platforms_json actually changes (cover,
+		//   popularity and refresh-marker updates used to rewrite both).
+		// - F5: suggestions walk this partial index in ORDER BY order and stop
+		//   at the limit instead of sorting the whole catalog.
+		// - F8: two-character typeahead matches alias prefixes by index.
+		Up: `CREATE INDEX IF NOT EXISTS idx_library_game ON library_items(game_id);
+		     CREATE INDEX IF NOT EXISTS idx_library_user_updated
+		       ON library_items(user_id, updated_at DESC, game_id DESC);
+		     DROP TRIGGER IF EXISTS games_fts_au;
+		     CREATE TRIGGER games_fts_au AFTER UPDATE OF normalized_name ON games
+		       WHEN old.normalized_name IS NOT new.normalized_name BEGIN
+		       INSERT INTO games_fts(games_fts, rowid, normalized_name) VALUES ('delete', old.rowid, old.normalized_name);
+		       INSERT INTO games_fts(rowid, normalized_name) VALUES (new.rowid, new.normalized_name);
+		     END;
+		     DROP TRIGGER IF EXISTS game_platforms_au;
+		     CREATE TRIGGER game_platforms_au AFTER UPDATE OF platforms_json ON games
+		       WHEN old.platforms_json IS NOT new.platforms_json BEGIN
+		       DELETE FROM game_platforms WHERE game_id = old.id;
+		       INSERT OR IGNORE INTO game_platforms (game_id, platform_id, platform_value)
+		         SELECT new.id,
+		                CASE WHEN je.type = 'integer'
+		                           OR (je.type = 'text' AND je.value != '' AND je.value NOT GLOB '*[^0-9]*')
+		                     THEN CAST(je.value AS INTEGER) ELSE 0 END,
+		                CASE WHEN je.type = 'integer'
+		                           OR (je.type = 'text' AND je.value != '' AND je.value NOT GLOB '*[^0-9]*')
+		                     THEN '' ELSE CAST(je.value AS TEXT) END
+		           FROM json_each(CASE WHEN json_valid(new.platforms_json) THEN new.platforms_json ELSE '[]' END) je
+		          WHERE je.type != 'null';
+		     END;
+		     CREATE INDEX IF NOT EXISTS idx_games_suggest
+		       ON games(popularity_score DESC, rating_count DESC, name) WHERE local_cover_path != '';
+		     CREATE INDEX IF NOT EXISTS idx_game_aliases_alias ON game_aliases(normalized_alias);`,
+	},
+	{
 		Version: 16,
 		// Case-insensitive tag indexes. Tag filtering and autocomplete are now
 		// LOWER(tag) based (RPG = rpg). The v15 indexes on (user_id, tag)

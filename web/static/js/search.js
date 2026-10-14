@@ -343,10 +343,12 @@ export function initSearch(inputEl, resultsEl, onSelect, onSubmit, onTagLookup) 
     suppressOutsideClickTimer = setTimeout(() => { suppressOutsideClick = false; }, 500);
     dismissSearchFocus();
   };
-  // Pointer/touch down is the earliest reliable point to consume the gesture;
-  // mousedown keeps the guard working in browsers without Pointer Events.
+  // Pointer down is the earliest reliable point to consume the gesture (it
+  // covers touch too); mousedown keeps the guard working in browsers without
+  // Pointer Events. No touchstart listener: a non-passive one on document
+  // makes the browser wait for the main thread before every scroll, and the
+  // follow-up click is caught by the search backdrop/suppressOutsideClick.
   document.addEventListener('pointerdown', blockOutsidePointer, { capture: true, passive: false });
-  document.addEventListener('touchstart', blockOutsidePointer, { capture: true, passive: false });
   document.addEventListener('mousedown', blockOutsidePointer, { capture: true, passive: false });
 
   // Search backdrop — like the library filter backdrop, it sits above the

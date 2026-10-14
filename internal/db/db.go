@@ -33,19 +33,55 @@ type DB struct {
 // ran in rollback-journal mode with no busy timeout — the root cause of the
 // lock contention this change fixes.
 //
+// Per-connection tuning: a 16 MB page cache (cache_size is in KiB when
+// negative), 128 MB of memory-mapped reads, and temp tables/sorts in memory.
+//
 // The writer also uses _txlock=immediate: every writer transaction takes the
 // write lock at BEGIN, so a read-modify-write transaction can't fail late
 // with SQLITE_BUSY_SNAPSHOT when another process wrote after its first read.
+// Read-pool connections are query_only, so a write routed to them by mistake
+// fails loudly instead of competing with the single writer.
 func dsn(path string, writer bool) string {
 	d := fmt.Sprintf(
 		"file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"+
-			"&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)",
+			"&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)"+
+			"&_pragma=cache_size(-16000)&_pragma=mmap_size(134217728)&_pragma=temp_store(MEMORY)",
 		path,
 	)
 	if writer {
 		d += "&_txlock=immediate"
+	} else {
+		d += "&_pragma=query_only(1)"
 	}
 	return d
+}
+
+// Optimize keeps the query planner's statistics current as the catalog and
+// libraries grow: the first call on a database without statistics runs a
+// bounded ANALYZE (analysis_limit samples each index), later calls run
+// PRAGMA optimize, which only re-analyzes tables that need it. Cheap enough
+// for startup, a daily sweep and shutdown. (The bundled SQLite is 3.41, which
+// predates PRAGMA optimize's 0x10000 "analyze everything stale" flag.)
+func (db *DB) Optimize(ctx context.Context) error {
+	conn, err := db.Write.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "PRAGMA analysis_limit=400"); err != nil {
+		return err
+	}
+	var analyzed int
+	if err := conn.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM sqlite_master WHERE name = 'sqlite_stat1'").Scan(&analyzed); err != nil {
+		return err
+	}
+	stmt := "PRAGMA optimize"
+	if analyzed == 0 {
+		stmt = "ANALYZE"
+	}
+	_, err = conn.ExecContext(ctx, stmt)
+	return err
 }
 
 func Open(path string) (*DB, error) {
