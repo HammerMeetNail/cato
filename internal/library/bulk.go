@@ -56,6 +56,7 @@ func (s *Store) Bulk(ctx context.Context, userID string, a BulkAction) (*BulkRes
 	}
 	defer tx.Rollback()
 	var snaps []itemSnapshot
+	var evs []Event
 	for _, id := range ids {
 		ch := Change{Status: a.Status}
 		if len(a.AddTags) > 0 || len(a.RemoveTags) > 0 {
@@ -69,7 +70,7 @@ func (s *Store) Bulk(ctx context.Context, userID string, a BulkAction) (*BulkRes
 			tags := editTags(cur.Tags, a.AddTags, a.RemoveTags)
 			ch.Tags = &tags
 		}
-		snap, _, err := s.applyChange(ctx, tx, userID, id, ch, modePatch)
+		snap, wr, err := s.applyChange(ctx, tx, userID, id, ch, modePatch)
 		if err == ErrNotFound {
 			continue
 		}
@@ -77,9 +78,13 @@ func (s *Store) Bulk(ctx context.Context, userID string, a BulkAction) (*BulkRes
 			return nil, err
 		}
 		snaps = append(snaps, snap)
+		evs = append(evs, wr.events...)
 	}
 	res := &BulkResult{Updated: len(snaps)}
 	if res.UndoID, err = saveUndo(ctx, tx, userID, snaps); err != nil {
+		return nil, err
+	}
+	if err := recordEvents(ctx, tx, userID, res.UndoID, evs); err != nil {
 		return nil, err
 	}
 	tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT library_rev FROM user_state WHERE user_id = ?), 0)`, userID).Scan(&res.Rev)

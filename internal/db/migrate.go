@@ -13,6 +13,160 @@ type Migration struct {
 
 var migrations = []Migration{
 	{
+		Version: 21,
+		// People (plan §7), limited to this server and private by default.
+		// The oldest account becomes the admin. Usernames are generated from
+		// the email's local part (people can change them); profile
+		// visibility starts private.
+		Up: `ALTER TABLE users ADD COLUMN username TEXT;
+		     ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT '';
+		     ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin'));
+		     ALTER TABLE users ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'followers', 'instance'));
+		     ALTER TABLE users ADD COLUMN avatar_path TEXT NOT NULL DEFAULT '';
+		     ALTER TABLE users ADD COLUMN use_gravatar INTEGER NOT NULL DEFAULT 0;
+		     ALTER TABLE users ADD COLUMN favourites_json TEXT NOT NULL DEFAULT '[]';
+		     UPDATE users SET username = lower(substr(replace(replace(substr(email, 1, instr(email, '@') - 1), '.', '_'), '+', '_'), 1, 24))
+		       || CASE WHEN (SELECT COUNT(*) FROM users u2 WHERE lower(substr(replace(replace(substr(u2.email, 1, instr(u2.email, '@') - 1), '.', '_'), '+', '_'), 1, 24))
+		                       = lower(substr(replace(replace(substr(users.email, 1, instr(users.email, '@') - 1), '.', '_'), '+', '_'), 1, 24))
+		                       AND u2.rowid < users.rowid) > 0 THEN '_' || rowid ELSE '' END;
+		     CREATE UNIQUE INDEX idx_users_username ON users(username COLLATE NOCASE);
+		     UPDATE users SET role = 'admin' WHERE rowid = (SELECT MIN(rowid) FROM users);
+
+		     CREATE TABLE instance_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+
+		     CREATE TABLE invites (
+		       token_hash TEXT PRIMARY KEY,
+		       created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		       note TEXT NOT NULL DEFAULT '',
+		       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+		       expires_at TEXT NOT NULL,
+		       used_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+		       used_at TEXT,
+		       revoked_at TEXT
+		     );
+		     CREATE INDEX idx_invites_creator ON invites(created_by, created_at DESC);
+
+		     CREATE TABLE reset_tokens (
+		       token_hash TEXT PRIMARY KEY,
+		       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		       created_by TEXT,
+		       expires_at TEXT NOT NULL,
+		       used_at TEXT
+		     );
+
+		     CREATE TABLE follows (
+		       follower_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		       followee_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		       status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted')),
+		       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+		       PRIMARY KEY (follower_id, followee_id),
+		       CHECK (follower_id != followee_id)
+		     );
+		     CREATE INDEX idx_follows_followee ON follows(followee_id, status);
+
+		     CREATE TABLE blocks (
+		       blocker_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		       blocked_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+		       PRIMARY KEY (blocker_id, blocked_id)
+		     );
+		     CREATE INDEX idx_blocks_blocked ON blocks(blocked_id);
+
+		     CREATE TABLE reviews (
+		       id INTEGER PRIMARY KEY AUTOINCREMENT,
+		       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		       game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+		       playthrough_id INTEGER REFERENCES playthroughs(id) ON DELETE SET NULL,
+		       body TEXT NOT NULL,
+		       spoiler INTEGER NOT NULL DEFAULT 0,
+		       visibility TEXT NOT NULL DEFAULT 'inherit' CHECK (visibility IN ('inherit', 'private', 'followers', 'instance')),
+		       rating INTEGER NOT NULL DEFAULT 0,
+		       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+		       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+		       hidden_at TEXT,
+		       hidden_by TEXT
+		     );
+		     CREATE INDEX idx_reviews_game ON reviews(game_id, created_at DESC);
+		     CREATE INDEX idx_reviews_user ON reviews(user_id, created_at DESC);
+
+		     CREATE TABLE review_likes (
+		       review_id INTEGER NOT NULL REFERENCES reviews(id) ON DELETE CASCADE,
+		       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+		       PRIMARY KEY (review_id, user_id)
+		     );
+
+		     CREATE TABLE reports (
+		       id INTEGER PRIMARY KEY AUTOINCREMENT,
+		       reporter_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		       kind TEXT NOT NULL CHECK (kind IN ('review', 'list', 'user')),
+		       target TEXT NOT NULL,
+		       reason TEXT NOT NULL DEFAULT '',
+		       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+		       resolved_at TEXT,
+		       resolved_by TEXT
+		     );
+
+		     CREATE TABLE lists (
+		       id INTEGER PRIMARY KEY AUTOINCREMENT,
+		       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		       title TEXT NOT NULL,
+		       description TEXT NOT NULL DEFAULT '',
+		       ranked INTEGER NOT NULL DEFAULT 0,
+		       visibility TEXT NOT NULL DEFAULT 'inherit' CHECK (visibility IN ('inherit', 'private', 'followers', 'instance')),
+		       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+		       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+		       hidden_at TEXT
+		     );
+		     CREATE INDEX idx_lists_user ON lists(user_id, updated_at DESC);
+		     CREATE TABLE list_items (
+		       list_id INTEGER NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+		       game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+		       position INTEGER NOT NULL DEFAULT 0,
+		       note TEXT NOT NULL DEFAULT '',
+		       added_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+		       PRIMARY KEY (list_id, game_id)
+		     );
+		     CREATE INDEX idx_list_items_game ON list_items(game_id);
+
+		     -- The feed: written when things happen (fan-out on read through
+		     -- follows). undo_id lets an undone write take its activity back.
+		     CREATE TABLE activity (
+		       id INTEGER PRIMARY KEY AUTOINCREMENT,
+		       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		       kind TEXT NOT NULL,
+		       game_id INTEGER,
+		       ref_id INTEGER,
+		       data_json TEXT NOT NULL DEFAULT '{}',
+		       undo_id TEXT,
+		       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+		     );
+		     CREATE INDEX idx_activity_user ON activity(user_id, id DESC);
+		     CREATE INDEX idx_activity_undo ON activity(undo_id) WHERE undo_id IS NOT NULL;
+
+		     CREATE TABLE notifications (
+		       id INTEGER PRIMARY KEY AUTOINCREMENT,
+		       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		       kind TEXT NOT NULL,
+		       actor_id TEXT,
+		       game_id INTEGER,
+		       ref_id INTEGER,
+		       data_json TEXT NOT NULL DEFAULT '{}',
+		       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+		       read_at TEXT
+		     );
+		     CREATE INDEX idx_notifications_user ON notifications(user_id, id DESC);
+
+		     CREATE TABLE audit_log (
+		       id INTEGER PRIMARY KEY AUTOINCREMENT,
+		       actor_id TEXT,
+		       action TEXT NOT NULL,
+		       target TEXT NOT NULL DEFAULT '',
+		       data_json TEXT NOT NULL DEFAULT '{}',
+		       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+		     );`,
+	},
+	{
 		Version: 20,
 		// Rich catalog (plan §6.1). Queried relations get tables; display-only
 		// detail (media, links, ratings, languages, multiplayer) is one JSON

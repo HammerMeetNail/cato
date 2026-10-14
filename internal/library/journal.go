@@ -205,9 +205,16 @@ func (s *Store) UpdateSession(ctx context.Context, userID string, sessionID int6
 
 // finishWrite records the undo snapshot, reloads the item and commits.
 func (s *Store) finishWrite(ctx context.Context, tx *sql.Tx, userID string, gameID int64, snaps []itemSnapshot) (*WriteResult, error) {
+	return s.finishWriteEvents(ctx, tx, userID, gameID, snaps, nil)
+}
+
+func (s *Store) finishWriteEvents(ctx context.Context, tx *sql.Tx, userID string, gameID int64, snaps []itemSnapshot, evs []Event) (*WriteResult, error) {
 	res := &WriteResult{}
 	var err error
 	if res.UndoID, err = saveUndo(ctx, tx, userID, snaps); err != nil {
+		return nil, err
+	}
+	if err := recordEvents(ctx, tx, userID, res.UndoID, evs); err != nil {
 		return nil, err
 	}
 	if res.Item, err = s.get(ctx, tx, userID, gameID); err != nil && !errors.Is(err, ErrNotFound) {
@@ -459,7 +466,8 @@ func (s *Store) StopTimer(ctx context.Context, userID string, log bool, minutes 
 	if err != nil {
 		return nil, err
 	}
-	res, err := s.finishWrite(ctx, tx, userID, t.GameID, []itemSnapshot{snap})
+	res, err := s.finishWriteEvents(ctx, tx, userID, t.GameID, []itemSnapshot{snap},
+		[]Event{{Kind: EventLogged, GameID: t.GameID, Data: map[string]any{"minutes": sess.Minutes, "played_on": sess.PlayedOn}}})
 	if err != nil {
 		return nil, err
 	}

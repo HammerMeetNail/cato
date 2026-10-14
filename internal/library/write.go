@@ -60,6 +60,8 @@ type WriteResult struct {
 	UndoID  string   `json:"undo_id"`
 	Created bool     `json:"created"`
 	Rev     int64    `json:"library_rev"`
+
+	events []Event
 }
 
 type writeMode int
@@ -144,6 +146,9 @@ func (s *Store) write(ctx context.Context, userID string, gameID int64, ch Chang
 		return nil, err
 	}
 	if res.UndoID, err = saveUndo(ctx, tx, userID, []itemSnapshot{snap}); err != nil {
+		return nil, err
+	}
+	if err := recordEvents(ctx, tx, userID, res.UndoID, res.events); err != nil {
 		return nil, err
 	}
 	if res.Item, err = s.get(ctx, tx, userID, gameID); err != nil {
@@ -328,6 +333,7 @@ func (s *Store) applyChange(ctx context.Context, tx *sql.Tx, userID string, game
 		}
 		res.Session = sess
 	}
+	res.events = events(prev, st, ch, gameID, res.Session)
 
 	return snap, res, nil
 }

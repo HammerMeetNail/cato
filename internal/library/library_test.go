@@ -522,3 +522,35 @@ func TestExports(t *testing.T) {
 		t.Errorf("json export %+v", all)
 	}
 }
+
+func TestActivityEventsFollowWritesAndUndo(t *testing.T) {
+	f := newFixture(t)
+	kinds := func() string {
+		rows, _ := f.db.Query(`SELECT kind FROM activity WHERE user_id = 'u1' ORDER BY id`)
+		defer rows.Close()
+		var out []string
+		for rows.Next() {
+			var k string
+			rows.Scan(&k)
+			out = append(out, k)
+		}
+		return strings.Join(out, ",")
+	}
+	f.patch(1, Change{Status: str("wishlist")})
+	f.patch(1, Change{Status: str("playing")})
+	f.store.LogSession(f.ctx, "u1", 1, 30, "", "")
+	f.patch(1, Change{Notes: str("no event for notes")})
+	res := f.patch(1, Change{Status: str("completed"), Rating: num(90)})
+	if got := kinds(); got != "wishlisted,started,logged,finished" {
+		t.Fatalf("events %q", got)
+	}
+	f.store.Undo(f.ctx, "u1", res.UndoID)
+	if got := kinds(); got != "wishlisted,started,logged" {
+		t.Errorf("undo should take the finish back: %q", got)
+	}
+	f.patch(1, Change{Status: str("paused")})
+	f.patch(1, Change{Status: str("playing")})
+	if got := kinds(); got != "wishlisted,started,logged" {
+		t.Errorf("pause/resume is not news: %q", got)
+	}
+}

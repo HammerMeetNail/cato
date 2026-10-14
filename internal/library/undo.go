@@ -183,6 +183,10 @@ func (s *Store) Undo(ctx context.Context, userID, undoID string) ([]int64, error
 	if _, err := tx.ExecContext(ctx, `DELETE FROM undo_log WHERE id = ?`, undoID); err != nil {
 		return nil, err
 	}
+	// What the undone write told friends goes too.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM activity WHERE undo_id = ? AND user_id = ?`, undoID, userID); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
