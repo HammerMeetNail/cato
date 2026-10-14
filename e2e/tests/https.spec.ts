@@ -29,28 +29,38 @@ test.describe('HTTPS everywhere', () => {
     }
   });
 
-  test('WebAuthn creates a passkey with the hostname as relying party (Chromium virtual authenticator)', async ({ page, browserName }) => {
+  test('WebAuthn creates a passkey with the hostname as relying party (Chromium virtual authenticator)', async ({ browserName, playwright, baseURL }, testInfo) => {
     test.skip(browserName !== 'chromium', 'virtual authenticators are a Chromium DevTools feature');
-    await page.goto('/login');
-    const cdp = await page.context().newCDPSession(page);
-    await cdp.send('WebAuthn.enable');
-    await cdp.send('WebAuthn.addVirtualAuthenticator', {
-      options: { protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true },
-    });
-    const created = await page.evaluate(async () => {
-      const cred = await navigator.credentials.create({
-        publicKey: {
-          rp: { name: 'Cato', id: location.hostname },
-          user: { id: crypto.getRandomValues(new Uint8Array(16)), name: 'e2e@example.com', displayName: 'E2E' },
-          challenge: crypto.getRandomValues(new Uint8Array(32)),
-          pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
-          authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
-        },
-      }) as PublicKeyCredential;
-      return { type: cred.type, rawIdBytes: cred.rawId.byteLength };
-    });
-    expect(created.type).toBe('public-key');
-    expect(created.rawIdBytes).toBeGreaterThan(0);
+    // A dedicated browser: headless Chromium intermittently segfaults while
+    // closing a context that used a virtual authenticator, which would take
+    // down the worker's shared browser and fail whichever test runs next.
+    const browser = await playwright.chromium.launch(testInfo.project.use.launchOptions);
+    try {
+      const context = await browser.newContext({ baseURL, ignoreHTTPSErrors: true });
+      const page = await context.newPage();
+      await page.goto('/login');
+      const cdp = await context.newCDPSession(page);
+      await cdp.send('WebAuthn.enable');
+      await cdp.send('WebAuthn.addVirtualAuthenticator', {
+        options: { protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true },
+      });
+      const created = await page.evaluate(async () => {
+        const cred = await navigator.credentials.create({
+          publicKey: {
+            rp: { name: 'Cato', id: location.hostname },
+            user: { id: crypto.getRandomValues(new Uint8Array(16)), name: 'e2e@example.com', displayName: 'E2E' },
+            challenge: crypto.getRandomValues(new Uint8Array(32)),
+            pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+            authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
+          },
+        }) as PublicKeyCredential;
+        return { type: cred.type, rawIdBytes: cred.rawId.byteLength };
+      });
+      expect(created.type).toBe('public-key');
+      expect(created.rawIdBytes).toBeGreaterThan(0);
+    } finally {
+      await browser.close().catch(() => {});
+    }
   });
 
   test('responses carry HTTPS security headers and __Host- session cookies', async ({ request }) => {
