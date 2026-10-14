@@ -221,3 +221,5 @@ func (a *API) search(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
+
+func coverOf(local, remote string) string { return library.CoverURL(local, remote) }

@@ -357,3 +357,67 @@ func TestWriteRateLimit(t *testing.T) {
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+func TestDevicesAndDiscover(t *testing.T) {
+	f := newFixture(t)
+	c := f.user(t, "u1")
+	other, err := auth.CreateSession(f.db, "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth.NoteSessionClient(f.db, other.ID, "Mozilla/5.0 (iPhone)")
+	list := c.json(http.MethodGet, "/api/v1/devices", nil, http.StatusOK)["items"].([]any)
+	if len(list) != 2 {
+		t.Fatalf("devices %v", list)
+	}
+	var otherID float64
+	currents := 0
+	for _, d := range list {
+		m := d.(map[string]any)
+		if m["current"] == true {
+			currents++
+		} else {
+			otherID = m["id"].(float64)
+			if m["user_agent"] != "Mozilla/5.0 (iPhone)" {
+				t.Errorf("user agent %v", m)
+			}
+		}
+	}
+	if currents != 1 {
+		t.Errorf("current device count %d", currents)
+	}
+	intruder := f.user(t, "u2")
+	intruder.json(http.MethodDelete, "/api/v1/devices/"+itoa(int64(otherID)), nil, http.StatusNotFound)
+	c.json(http.MethodDelete, "/api/v1/devices/"+itoa(int64(otherID)), nil, http.StatusOK)
+	if s, _ := auth.GetSession(f.db, other.ID); s != nil {
+		t.Error("revoked session still valid")
+	}
+	third, _ := auth.CreateSession(f.db, "u1")
+	res := c.json(http.MethodPost, "/api/v1/devices/revoke-others", nil, http.StatusOK)
+	if res["revoked"].(float64) != 1 {
+		t.Errorf("revoke others %v", res)
+	}
+	if s, _ := auth.GetSession(f.db, third.ID); s != nil {
+		t.Error("other session survived")
+	}
+	c.json(http.MethodGet, "/api/v1/me", nil, http.StatusOK) // the current one still works
+
+	f.db.Exec(`UPDATE games SET local_cover_path = '/covers/' || id || '.jpg'`)
+	c.json(http.MethodPut, "/api/v1/library/1", map[string]any{}, http.StatusCreated)
+	shelves := c.json(http.MethodGet, "/api/v1/discover", nil, http.StatusOK)["shelves"].([]any)
+	popular := shelves[0].(map[string]any)["items"].([]any)
+	for _, g := range popular {
+		if g.(map[string]any)["id"].(float64) == 1 {
+			t.Error("discover suggests a game already in the library")
+		}
+	}
+	if len(popular) != 2 {
+		t.Errorf("popular %v", popular)
+	}
+
+	views := c.json(http.MethodPatch, "/api/v1/me/prefs", map[string]any{"saved_views": []map[string]string{{"name": "Couch co-op", "query": "shelf=backlog&q=$co-op"}}}, http.StatusOK)
+	if len(views["prefs"].(map[string]any)["saved_views"].([]any)) != 1 {
+		t.Errorf("saved views %v", views)
+	}
+	c.json(http.MethodPatch, "/api/v1/me/prefs", map[string]any{"saved_views": []map[string]string{{"name": "", "query": "x"}}}, http.StatusBadRequest)
+}

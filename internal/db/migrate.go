@@ -13,6 +13,14 @@ type Migration struct {
 
 var migrations = []Migration{
 	{
+		Version: 19,
+		// Sessions and devices (You → Settings): which browser a session
+		// belongs to and when it was last used, so people can review and
+		// revoke their signed-in devices.
+		Up: `ALTER TABLE sessions ADD COLUMN user_agent TEXT NOT NULL DEFAULT '';
+		     ALTER TABLE sessions ADD COLUMN last_seen_at TEXT;`,
+	},
+	{
 		Version: 18,
 		// Journal foundations (Cato Smooth plan §4.1):
 		// - library_items is rebuilt to add the 'paused' status (a CHECK

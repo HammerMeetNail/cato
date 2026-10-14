@@ -400,6 +400,7 @@ func (h *AuthHandler) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"google_enabled": h.googleCfg != nil,
 		"signup":         h.cfg.SignupMode(),
 		"signup_allowed": h.signupAllowed(),
+		"dev":            h.cfg.Dev,
 	})
 }
 
@@ -458,6 +459,7 @@ func (h *AuthHandler) handleSignup(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, errResp("internal_error", "Failed to create session"))
 		return
 	}
+	auth.NoteSessionClient(h.db, session.ID, r.UserAgent())
 
 	h.cookies.SetSession(w, session.ID)
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
@@ -537,6 +539,7 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, errResp("internal_error", "Failed to create session"))
 		return
 	}
+	auth.NoteSessionClient(h.db, session.ID, r.UserAgent())
 
 	h.cookies.SetSession(w, session.ID)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -645,6 +648,7 @@ func (h *AuthHandler) handleGoogleCallback(w http.ResponseWriter, r *http.Reques
 		writeAuthErrorPage(w, http.StatusInternalServerError, "Something went wrong while signing you in. Please try again.")
 		return
 	}
+	auth.NoteSessionClient(h.db, session.ID, r.UserAgent())
 
 	h.cookies.SetSession(w, session.ID)
 	http.Redirect(w, r, "/library", http.StatusFound)

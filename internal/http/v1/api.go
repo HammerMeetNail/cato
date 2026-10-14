@@ -90,6 +90,11 @@ func Register(mux *http.ServeMux, d Deps) *API {
 	route("GET /api/v1/export.json", a.exportJSON)
 	route("GET /api/v1/export.csv", a.exportCSV)
 
+	route("GET /api/v1/devices", a.devices)
+	route("DELETE /api/v1/devices/{id}", a.revokeDevice)
+	route("POST /api/v1/devices/revoke-others", a.revokeOtherDevices)
+	route("GET /api/v1/discover", a.discover)
+
 	route("GET /api/v1/games/{id}", a.getGame)
 	route("GET /api/v1/platforms", a.platforms)
 	route("GET /api/v1/typeahead", a.typeahead)

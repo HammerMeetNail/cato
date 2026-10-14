@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"unicode/utf8"
 )
 
 // Prefs are per-user settings kept in user_state.prefs_json. Unknown keys
@@ -34,13 +35,27 @@ type Prefs struct {
 	Haptics bool `json:"haptics"`
 	// Confetti celebrates finishing a game (reduced motion still wins).
 	Confetti bool `json:"confetti"`
+	// SavedViews are named Library filters (shelf, search, sort, layout).
+	SavedViews []SavedView `json:"saved_views"`
 }
+
+// SavedView is a named Library route query ("shelf=backlog&q=$co-op").
+type SavedView struct {
+	Name  string `json:"name"`
+	Query string `json:"query"`
+}
+
+const (
+	maxSavedViews     = 20
+	maxSavedViewName  = 40
+	maxSavedViewQuery = 300
+)
 
 // DefaultPrefs is what a new account starts with.
 func DefaultPrefs() Prefs {
 	return Prefs{Theme: "system", RatingDisplay: "stars", DefaultPlatforms: []string{}, LibraryLayout: "grid",
 		Density: "comfortable", LibrarySort: "updated", UpNext: []int64{}, Streaks: true, WeekStart: "mon",
-		Haptics: true, Confetti: true}
+		Haptics: true, Confetti: true, SavedViews: []SavedView{}}
 }
 
 const maxUpNext = 5
@@ -84,6 +99,19 @@ func (p *Prefs) validate() error {
 	}
 	if len(p.UpNext) > maxUpNext {
 		return invalid("invalid_pref", "up_next", "Up Next holds at most 5 games")
+	}
+	if p.SavedViews == nil {
+		p.SavedViews = []SavedView{}
+	}
+	if len(p.SavedViews) > maxSavedViews {
+		return invalid("invalid_pref", "saved_views", "At most 20 saved views")
+	}
+	for i, v := range p.SavedViews {
+		v.Name = strings.TrimSpace(v.Name)
+		if v.Name == "" || utf8.RuneCountInString(v.Name) > maxSavedViewName || len(v.Query) > maxSavedViewQuery {
+			return invalid("invalid_pref", "saved_views", "A saved view needs a name of at most 40 characters")
+		}
+		p.SavedViews[i] = v
 	}
 	return nil
 }
