@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -130,6 +132,7 @@ func (s *Store) search(ctx context.Context, query string, o searchOptions) ([]Ga
 	if match, ok := BuildFTSMatch(query); ok {
 		results, total, err := run("fts", match)
 		if err != nil {
+			slog.Warn("search: full-text query failed, falling back to LIKE", "query", query, "err", err)
 			// FTS table missing or query error: fall through to the LIKE
 			// path below. Keeps search working on databases migrated before
 			// v5/v7 or if a virtual table is ever dropped.
@@ -159,6 +162,13 @@ func (s *Store) search(ctx context.Context, query string, o searchOptions) ([]Ga
 // (no-total) search ranks: a common trigram can match tens of thousands of
 // games, and only the best few are shown.
 const typeaheadCandidates = 500
+
+// typeaheadPrefixScan and typeaheadFTSScan bound how many name-prefix and
+// full-text matches a typeahead considers before ranking.
+const (
+	typeaheadPrefixScan = 300
+	typeaheadFTSScan    = 3000
+)
 
 // prefixUpperBound is the exclusive upper bound of strings starting with p
 // (U+10FFFF sorts after every other code point in UTF-8 byte order).
@@ -330,6 +340,28 @@ func buildSearchCandidates(b *strings.Builder, args *[]interface{}, engine, matc
 	b.WriteString(`WITH name_match(id, tier) AS MATERIALIZED (`)
 	switch engine {
 	case "fts":
+		if capped != "" {
+			// Typeahead: a common trigram can match most of the catalog, so
+			// rank a bounded set: names starting with the query (by index)
+			// plus the first typeaheadFTSScan full-text matches.
+			b.WriteString(`SELECT id, tier FROM (
+			   SELECT * FROM (
+			     SELECT g.id AS id, CASE WHEN g.normalized_name = ? THEN 0 ELSE 1 END AS tier, g.popularity_score AS pop
+			       FROM games g
+			       WHERE g.normalized_name >= ? AND g.normalized_name < ?
+			       LIMIT ` + strconv.Itoa(typeaheadPrefixScan) + `)
+			   UNION
+			   SELECT g.id, CASE WHEN g.normalized_name = ? THEN 0
+			            WHEN g.normalized_name LIKE ? ESCAPE '\' THEN 1
+			            WHEN g.normalized_name LIKE ? ESCAPE '\' THEN 2
+			            ELSE 3 END, g.popularity_score
+			     FROM (SELECT rowid FROM games_fts WHERE normalized_name MATCH ? LIMIT ` + strconv.Itoa(typeaheadFTSScan) + `) f
+			     CROSS JOIN games g
+			     WHERE g.id = f.rowid
+			 ) ORDER BY tier, pop DESC LIMIT ` + strconv.Itoa(typeaheadCandidates))
+			*args = append(*args, query, query, prefixUpperBound(query), query, prefix, wordPrefix, match)
+			break
+		}
 		b.WriteString(`SELECT g.id,
 		       CASE WHEN g.normalized_name = ? THEN 0
 		            WHEN g.normalized_name LIKE ? ESCAPE '\' THEN 1
@@ -337,12 +369,24 @@ func buildSearchCandidates(b *strings.Builder, args *[]interface{}, engine, matc
 		            ELSE 3 END
 		     FROM games_fts f
 		     CROSS JOIN games g
-		     WHERE f.normalized_name MATCH ? AND g.id = f.rowid` + capped)
+		     WHERE f.normalized_name MATCH ? AND g.id = f.rowid`)
 		*args = append(*args, query, prefix, wordPrefix, match)
 	case "prefix":
+		if capped != "" {
+			// A one- or two-letter prefix can match a third of the catalog:
+			// rank only the first typeaheadFTSScan names in index order.
+			b.WriteString(`SELECT id, tier FROM (
+			     SELECT g.id AS id, CASE WHEN g.normalized_name = ? THEN 0 ELSE 1 END AS tier, g.popularity_score AS pop
+			     FROM games g
+			     WHERE g.normalized_name >= ? AND g.normalized_name < ?
+			     LIMIT ` + strconv.Itoa(typeaheadFTSScan) + `
+			   ) ORDER BY tier, pop DESC LIMIT ` + strconv.Itoa(typeaheadCandidates))
+			*args = append(*args, query, query, prefixUpperBound(query))
+			break
+		}
 		b.WriteString(`SELECT g.id, CASE WHEN g.normalized_name = ? THEN 0 ELSE 1 END
 		     FROM games g
-		     WHERE g.normalized_name >= ? AND g.normalized_name < ?` + capped)
+		     WHERE g.normalized_name >= ? AND g.normalized_name < ?`)
 		*args = append(*args, query, query, prefixUpperBound(query))
 	default: // "like"
 		b.WriteString(`SELECT g.id,
@@ -457,7 +501,10 @@ func (s *Store) execSearch(ctx context.Context, engine, match, query, prefix, wo
 	if o.withTotal {
 		sql.WriteString(", COUNT(*) OVER() AS total_count")
 	}
-	sql.WriteString(" FROM eligible x JOIN games g ON g.id = x.id")
+	// CROSS JOIN keeps the (small) candidate set as the outer loop: left to
+	// itself the planner may walk the whole catalog in popularity order and
+	// probe the candidates, which is ~30 ms on a 300k-game catalog.
+	sql.WriteString(" FROM eligible x CROSS JOIN games g ON g.id = x.id")
 	sql.WriteString(" ORDER BY ")
 	sql.WriteString(sortOrder(o.sort))
 	sql.WriteString(" LIMIT ? OFFSET ?")
