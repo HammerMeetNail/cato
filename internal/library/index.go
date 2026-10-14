@@ -51,7 +51,7 @@ func (s *Store) Index(ctx context.Context, userID string, since int64) (*Index, 
 	idx.Full = since <= 0
 	rows, err := tx.QueryContext(ctx, `SELECT li.game_id, g.name, li.status, li.rating, li.playtime_minutes, li.updated_at, li.created_at,
 			li.owned_platforms_json, li.tags_json, g.first_release_date, g.local_cover_path, g.cover_url, li.medium,
-			substr(li.notes, 1, ?), g.platforms_json
+			substr(li.notes, 1, ?), g.platforms_json, g.ttb_normally
 		FROM library_items li JOIN games g ON g.id = li.game_id
 		WHERE li.user_id = ? AND li.rev > ?
 		ORDER BY li.updated_at DESC, li.game_id DESC`, indexNotesChars, userID, since)
@@ -61,10 +61,10 @@ func (s *Store) Index(ctx context.Context, userID string, since int64) (*Index, 
 	defer rows.Close()
 	names := s.platformNames(ctx)
 	for rows.Next() {
-		var id, rating, minutes, release int64
+		var id, rating, minutes, release, ttb int64
 		var name, status, updated, added, owned, tags, local, remote, medium, notes, platformsJSON string
 		if err := rows.Scan(&id, &name, &status, &rating, &minutes, &updated, &added, &owned, &tags, &release,
-			&local, &remote, &medium, &notes, &platformsJSON); err != nil {
+			&local, &remote, &medium, &notes, &platformsJSON, &ttb); err != nil {
 			return nil, err
 		}
 		ids := platformIDs(platformsJSON)
@@ -75,7 +75,7 @@ func (s *Store) Index(ctx context.Context, userID string, since int64) (*Index, 
 		}
 		idx.Items = append(idx.Items, []any{
 			id, name, status, rating, minutes, unixOf(updated), unixOf(added),
-			decodeStrings(owned), decodeStrings(tags), release, 0, CoverURL(local, remote), medium, notes, ids,
+			decodeStrings(owned), decodeStrings(tags), release, ttb, CoverURL(local, remote), medium, notes, ids,
 		})
 	}
 	if err := rows.Err(); err != nil {

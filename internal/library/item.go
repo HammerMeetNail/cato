@@ -77,6 +77,8 @@ type Game struct {
 	Cover       string   `json:"cover"`
 	ReleaseDate int64    `json:"release_date"`
 	Platforms   []string `json:"platforms"`
+	// TTBMinutes is IGDB's "normally" time to beat (0 when unknown).
+	TTBMinutes int64 `json:"ttb_minutes"`
 }
 
 // Item is one game in a user's library.
@@ -110,7 +112,7 @@ func CoverURL(local, remote string) string {
 const itemSelect = `li.game_id, li.status, li.rating, li.playtime_minutes, li.tags_json,
 	li.notes, li.started_at, li.completed_at, li.created_at, li.updated_at,
 	li.owned_platforms_json, li.medium, li.current_playthrough_id, li.rev,
-	g.name, g.slug, g.cover_url, g.local_cover_path, g.first_release_date, g.platforms_json`
+	g.name, g.slug, g.cover_url, g.local_cover_path, g.first_release_date, g.platforms_json, g.ttb_normally`
 
 type scanner interface{ Scan(...any) error }
 
@@ -122,7 +124,7 @@ func scanItem(row scanner, names map[int64]string) (Item, error) {
 	if err := row.Scan(&it.GameID, &it.Status, &it.Rating, &it.Minutes, &tagsJSON,
 		&it.Notes, &started, &completed, &it.CreatedAt, &it.UpdatedAt,
 		&ownedJSON, &it.Medium, &current, &it.Rev,
-		&it.Game.Name, &it.Game.Slug, &coverURL, &localCover, &it.Game.ReleaseDate, &platformsJSON); err != nil {
+		&it.Game.Name, &it.Game.Slug, &coverURL, &localCover, &it.Game.ReleaseDate, &platformsJSON, &it.Game.TTBMinutes); err != nil {
 		return Item{}, err
 	}
 	it.Game.ID = it.GameID

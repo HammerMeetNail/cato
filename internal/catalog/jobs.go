@@ -22,16 +22,12 @@ func (s *Service) Jobs(igdbConfigured bool) []jobs.Job {
 	if !igdbConfigured {
 		return list
 	}
-	return append(list,
+	list = append(list,
 		jobs.Job{
 			// One request; a no-op once the table is filled (shortnames are
 			// re-applied every run).
 			Name: "catalog.platform-sync", Interval: 24 * time.Hour, Jitter: time.Hour,
 			Run: s.SyncPlatforms,
-		},
-		jobs.Job{
-			Name: "catalog.stale-refresh", Interval: 6 * time.Hour, Jitter: 30 * time.Minute, FirstRun: 5 * time.Minute,
-			Run: func(ctx context.Context) error { s.refreshStaleGamesContext(ctx, 100); return nil },
 		},
 		jobs.Job{
 			// Keeps popular queries fresh so the first search after expiry
@@ -44,6 +40,14 @@ func (s *Service) Jobs(igdbConfigured bool) []jobs.Job {
 			Run: func(ctx context.Context) error { s.RepairCovers(ctx); return nil },
 		},
 	)
+	if _, ok := s.details(); ok {
+		// The delta sync replaces the refresh-by-age loop.
+		return append(list, s.richJobs()...)
+	}
+	return append(list, jobs.Job{
+		Name: "catalog.stale-refresh", Interval: 6 * time.Hour, Jitter: 30 * time.Minute, FirstRun: 5 * time.Minute,
+		Run: func(ctx context.Context) error { s.refreshStaleGamesContext(ctx, 100); return nil },
+	})
 }
 
 // jobNamed returns one of s.Jobs(true) (tests).

@@ -13,6 +13,100 @@ type Migration struct {
 
 var migrations = []Migration{
 	{
+		Version: 20,
+		// Rich catalog (plan §6.1). Queried relations get tables; display-only
+		// detail (media, links, ratings, languages, multiplayer) is one JSON
+		// document per game.
+		// - lookups: genre/theme/mode/perspective/game type names by IGDB ID.
+		// - games: time to beat (minutes), theme/mode/perspective IDs, when
+		//   details were fetched, where the row came from (igdb or custom);
+		//   igdb_popularity now holds IGDB PopScore.
+		// - custom entries use negative IDs, so every library feature works.
+		Up: `CREATE TABLE lookups (
+		       kind TEXT NOT NULL,
+		       id INTEGER NOT NULL,
+		       name TEXT NOT NULL,
+		       slug TEXT NOT NULL DEFAULT '',
+		       PRIMARY KEY (kind, id)
+		     );
+		     ALTER TABLE games ADD COLUMN ttb_hastily INTEGER NOT NULL DEFAULT 0;
+		     ALTER TABLE games ADD COLUMN ttb_normally INTEGER NOT NULL DEFAULT 0;
+		     ALTER TABLE games ADD COLUMN ttb_completely INTEGER NOT NULL DEFAULT 0;
+		     ALTER TABLE games ADD COLUMN ttb_count INTEGER NOT NULL DEFAULT 0;
+		     ALTER TABLE games ADD COLUMN themes_json TEXT NOT NULL DEFAULT '[]';
+		     ALTER TABLE games ADD COLUMN modes_json TEXT NOT NULL DEFAULT '[]';
+		     ALTER TABLE games ADD COLUMN perspectives_json TEXT NOT NULL DEFAULT '[]';
+		     ALTER TABLE games ADD COLUMN details_fetched_at INTEGER NOT NULL DEFAULT 0;
+		     ALTER TABLE games ADD COLUMN source TEXT NOT NULL DEFAULT 'igdb';
+		     ALTER TABLE games ADD COLUMN created_by TEXT;
+		     CREATE INDEX idx_games_details_fetched ON games(details_fetched_at);
+		     CREATE INDEX idx_games_popscore ON games(igdb_popularity DESC) WHERE igdb_popularity > 0;
+		     CREATE INDEX idx_games_release ON games(first_release_date);
+
+		     CREATE TABLE game_details (
+		       game_id INTEGER PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
+		       json TEXT NOT NULL DEFAULT '{}',
+		       fetched_at INTEGER NOT NULL DEFAULT 0
+		     );
+		     CREATE TABLE game_relations (
+		       game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+		       related_id INTEGER NOT NULL,
+		       kind TEXT NOT NULL,
+		       PRIMARY KEY (game_id, kind, related_id)
+		     );
+		     CREATE INDEX idx_game_relations_related ON game_relations(related_id, kind);
+		     CREATE TABLE game_release_dates (
+		       game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+		       platform_id INTEGER NOT NULL DEFAULT 0,
+		       date INTEGER NOT NULL DEFAULT 0,
+		       region INTEGER NOT NULL DEFAULT 0,
+		       human TEXT NOT NULL DEFAULT '',
+		       PRIMARY KEY (game_id, platform_id, region)
+		     );
+		     CREATE INDEX idx_release_dates_date ON game_release_dates(date);
+		     CREATE TABLE game_companies (
+		       game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+		       company_id INTEGER NOT NULL,
+		       name TEXT NOT NULL,
+		       developer INTEGER NOT NULL DEFAULT 0,
+		       publisher INTEGER NOT NULL DEFAULT 0,
+		       PRIMARY KEY (game_id, company_id)
+		     );
+		     CREATE INDEX idx_game_companies_company ON game_companies(company_id);
+		     CREATE TABLE game_series (
+		       game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+		       series_id INTEGER NOT NULL,
+		       kind TEXT NOT NULL,
+		       name TEXT NOT NULL,
+		       PRIMARY KEY (game_id, kind, series_id)
+		     );
+		     CREATE INDEX idx_game_series_series ON game_series(kind, series_id);
+		     CREATE TABLE game_external_ids (
+		       game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+		       source INTEGER NOT NULL,
+		       uid TEXT NOT NULL,
+		       PRIMARY KEY (source, uid, game_id)
+		     );
+		     CREATE INDEX idx_game_external_game ON game_external_ids(game_id);
+		     CREATE TABLE game_popularity (
+		       game_id INTEGER NOT NULL,
+		       type INTEGER NOT NULL,
+		       value REAL NOT NULL,
+		       updated_at INTEGER NOT NULL,
+		       PRIMARY KEY (type, game_id)
+		     );
+		     CREATE INDEX idx_game_popularity_rank ON game_popularity(type, value DESC);
+		     ALTER TABLE playthroughs ADD COLUMN edition_game_id INTEGER;
+		     -- The library index now carries time to beat too.
+		     DROP TRIGGER games_library_rev_au;
+		     CREATE TRIGGER games_library_rev_au AFTER UPDATE OF name, cover_url, local_cover_path, first_release_date, ttb_normally ON games
+		       WHEN old.name IS NOT new.name OR old.cover_url IS NOT new.cover_url
+		         OR old.local_cover_path IS NOT new.local_cover_path OR old.first_release_date IS NOT new.first_release_date
+		         OR old.ttb_normally IS NOT new.ttb_normally BEGIN
+		       UPDATE library_items SET rev = rev WHERE game_id = new.id;
+		     END;`,
+	},
+	{
 		Version: 19,
 		// Sessions and devices (You → Settings): which browser a session
 		// belongs to and when it was last used, so people can review and
