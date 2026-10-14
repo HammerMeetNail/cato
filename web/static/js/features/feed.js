@@ -31,11 +31,11 @@ function line(e) {
     case 'started': return html`${who} ${e.data?.replay ? 'started replaying' : 'started'} ${gameLink(g)}`;
     case 'finished': return html`${who} finished ${gameLink(g)} ${e.data?.rating ? stars(e.data.rating, { display: ratingDisplay() }) : nothing}`;
     case 'dropped': return html`${who} dropped ${gameLink(g)}`;
-    case 'wishlisted': return html`${who} wants to play ${gameLink(g)}`;
-    case 'added': return html`${who} added ${gameLink(g)}`;
+    case 'wishlisted': return e.games.length > 1 ? html`${who} wants to play ${plural(e.games.length, 'game')}` : html`${who} wants to play ${gameLink(g)}`;
+    case 'added': return e.games.length > 1 ? html`${who} added ${plural(e.games.length, 'game')}` : html`${who} added ${gameLink(g)}`;
     case 'rated': return html`${who} rated ${gameLink(g)} ${stars(e.data?.rating, { display: ratingDisplay() })}`;
     case 'reviewed': return html`${who} reviewed ${gameLink(g)}${e.data?.spoiler ? ' (spoilers)' : ''}`;
-    case 'listed': return html`${who} added ${gameLink(g)} to <a href=${`#list/${e.ref_id}`}>${e.list_title}</a>`;
+    case 'listed': return html`${who} added ${e.games.length > 1 ? plural(e.games.length, 'game') : gameLink(g)} to <a href=${`#list/${e.ref_id}`}>${e.list_title}</a>`;
     default: return html`${who} ${e.kind} ${g ? gameLink(g) : ''}`;
   }
 }

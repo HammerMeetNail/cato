@@ -71,16 +71,17 @@ func (s *Service) Feed(ctx context.Context, viewer string, before int64, limit i
 			if m, ok := e.Data["minutes"].(float64); ok {
 				e.Minutes = int64(m)
 			}
-			// Merge into the previous entry when it is the same person's
-			// logging on the same day.
-			if k := len(out) - 1; k >= 0 && out[k].Kind == "logged" && out[k].Person.ID == e.Person.ID && out[k].CreatedAt[:10] == e.CreatedAt[:10] {
-				out[k].Minutes += e.Minutes
-				if g.ID != 0 && !hasGame(out[k].Games, g.ID) {
-					out[k].Games = append(out[k].Games, g)
-				}
-				next = e.ID
-				continue
+		}
+		// A day's logging, adds, wishlists and additions to one list by
+		// the same person become one line.
+		if k := len(out) - 1; k >= 0 && groupable[e.Kind] && out[k].Kind == e.Kind && out[k].Person.ID == e.Person.ID &&
+			out[k].CreatedAt[:10] == e.CreatedAt[:10] && (e.Kind != "listed" || out[k].RefID == e.RefID) {
+			out[k].Minutes += e.Minutes
+			if g.ID != 0 && !hasGame(out[k].Games, g.ID) {
+				out[k].Games = append(out[k].Games, g)
 			}
+			next = e.ID
+			continue
 		}
 		if len(out) == limit {
 			break
@@ -93,6 +94,8 @@ func (s *Service) Feed(ctx context.Context, viewer string, before int64, limit i
 	}
 	return out, next, rows.Err()
 }
+
+var groupable = map[string]bool{"logged": true, "added": true, "wishlisted": true, "listed": true}
 
 func hasGame(gs []GameRef, id int64) bool {
 	for _, g := range gs {

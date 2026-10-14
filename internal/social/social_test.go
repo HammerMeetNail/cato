@@ -440,4 +440,10 @@ func TestReviewsListsFeedAndModeration(t *testing.T) {
 	if feed[0].Kind != "logged" || feed[0].Minutes != 180 || len(feed[0].Games) != 2 {
 		t.Fatalf("grouped feed: %+v", feed[0])
 	}
+	// Two additions to the same list are one line.
+	for _, e := range feed {
+		if e.Kind == "listed" && len(e.Games) != 2 {
+			t.Fatalf("listed not grouped: %+v", e)
+		}
+	}
 }

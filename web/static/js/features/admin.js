@@ -163,7 +163,7 @@ export function adminView() {
   return html`<div class="page">
     <header class="page-head"><h1>Admin</h1><button type="button" class="btn btn-ghost btn-sm" @click=${load}>${icon('refresh-cw')}Refresh</button></header>
     <div class="chips chips-scroll" role="tablist" aria-label="Admin sections">${TABS.map(t => html`<a class="chip" role="tab" href=${`#admin?tab=${t.value}`}
-      aria-selected=${String(st.tab === t.value)} aria-pressed=${String(st.tab === t.value)}>${icon(t.icon)}${t.label}</a>`)}</div>
+      aria-selected=${String(st.tab === t.value)}>${icon(t.icon)}${t.label}</a>`)}</div>
     <div class="section">${body}</div>
   </div>`;
 }

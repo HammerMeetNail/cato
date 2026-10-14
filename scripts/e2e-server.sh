@@ -113,7 +113,11 @@ sqlite3 "$E2E_TMP/cato.db" \
    (212, 'Zelda Links Awakening', 'zelda-la', 'Zelda Links Awakening', 'zelda links awakening', 'Koholint island.', '[130]', 1569542400, 87, 40, 600, ''),
    (213, 'Pikmin 4', 'pikmin-4', 'Pikmin 4', 'pikmin 4', 'Tiny explorers.', '[130]', 1689897600, 87, 30, 640, ''),
    (214, 'Astro Bot', 'astro-bot', 'Astro Bot', 'astro bot', 'Platforming joy.', '[167]', 1725580800, 94, 50, 950, ''),
-   (215, 'Metroid Dread', 'metroid-dread', 'Metroid Dread', 'metroid dread', 'Samus returns.', '[130]', 1633651200, 88, 40, 620, '');"
+   (215, 'Metroid Dread', 'metroid-dread', 'Metroid Dread', 'metroid dread', 'Samus returns.', '[130]', 1633651200, 88, 40, 620, '');
+   -- A fixed admin (password e2e-password-1, bcrypt cost 4) so admin specs
+   -- don't depend on which test signs up first.
+   INSERT OR IGNORE INTO users (id, email, password_hash, display_name, username, role, visibility) VALUES
+   ('e2e-admin', 'admin@e2e.test', '\$2a\$04\$K4tCXdGH3if/71qNrmzGf.MlyEEvl/p23Qg30S4jNeOxdsL/miw3G', 'E2E Admin', 'e2e_admin', 'admin', 'instance');"
 
 # Readiness includes seeding, which /healthz alone cannot guarantee.
 kill -0 "$SRV_PID" 2>/dev/null || { wait "$SRV_PID"; exit 1; }

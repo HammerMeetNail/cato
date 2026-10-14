@@ -57,7 +57,10 @@ func newAssetIndex(root string) *assetIndex {
 // preloaded).
 const entryModule = "/js/app.js"
 
-var staticImport = regexp.MustCompile(`(?m)^\s*(?:import|export)\s+(?:[^'";]*?\sfrom\s+)?['"]([^'"]+)['"]`)
+// staticImport finds static import/export-from specifiers, including in
+// minified code (`import{x}from"./a.js";import"./b.js"`), but not dynamic
+// import() calls.
+var staticImport = regexp.MustCompile(`(?m)(?:^|[;}])\s*(?:import|export)\s*(?:[^'";()]*?\bfrom\s*)?['"]([^'"]+)['"]`)
 
 // refresh re-scans the tree (at most once per minCheck) and recomputes
 // hashes of files whose size or mtime changed.

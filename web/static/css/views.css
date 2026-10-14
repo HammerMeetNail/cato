@@ -1041,9 +1041,18 @@
   cursor: pointer;
 }
 
-.chip[aria-pressed="true"] .icon {
+.review .chip[aria-pressed="true"] .icon {
   color: var(--danger);
   fill: currentColor;
+}
+
+a.chip {
+  text-decoration: none;
+}
+
+.review header .grow {
+  flex: 1;
+  min-width: 0;
 }
 
 .friend-row {
@@ -1085,6 +1094,8 @@
 
 .friend .sub {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   align-items: center;
   gap: 2px;
   font-size: var(--fs-12);

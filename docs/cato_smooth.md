@@ -608,6 +608,15 @@ This is the part the user feels. Ship it in this order:
 
 ---
 
+### 6.3 P3 implementation notes (2026-10-14)
+
+- **Data model:** migration v20 adds `lookups`, time to beat on `games` (minutes), and tables for details, relations, release dates, companies, series, external IDs and PopScore. Media, links, ratings, languages and multiplayer are one JSON row per game (`game_details`), because they are only ever read whole on the game page.
+- **Freshness:** a first visit to a game page fetches its details (up to 3 s, then the page renders without them). Jobs refresh library games weekly, run an `updated_at` delta sync every 6 hours, and sync lookups weekly and PopScore daily. The delta sync replaces the old refresh-by-age loop. IGDB webhooks were not used, because they need a publicly reachable URL, which the NAS doesn't have.
+- **Editions roll up at the API:** adding an edition adds its base game and records the edition on the playthrough (`edition_game_id`), so stats and Up Next count the game once.
+- **Wikidata is opt-in** (`CATO_WIKIDATA_LINKS=1`). It sends game names to a third party, so it is off by default. Crosswalk IDs use sources ≥ 1000, which IGDB refreshes leave alone.
+- **Search facets:** genre and maximum time to beat join the existing filters; `max_ttb` is in hours.
+- **Not done:** OpenCritic and SteamGridDB (marked optional in §9).
+
 ## 7. P4: People (limited to this instance, private by default)
 
 For a household or friends server. **Decided:** social features are limited to this server and there is no federation. Even if the production domain is reachable from the internet, nothing is visible without an account, and accounts are invite-only. The "instance" visibility level means everyone with an account on this server.
@@ -636,6 +645,22 @@ For a household or friends server. **Decided:** social features are limited to t
 - render user content only through lit-html (automatic escaping), keeping CSP and Trusted Types (`require-trusted-types-for 'script'`, worth trying once all `innerHTML` is gone);
 - size limits on bio, review and list text;
 - an audit log for admin actions.
+
+### 7.1 P4 implementation notes (2026-10-14)
+
+- **One visibility rule.** `internal/social` decides who sees what in one Go function (`CanSee`) and one SQL fragment (`visibleSQL`), and every query for someone else's content uses them. `TestAuthorizationMatrix` checks 96 combinations: 3 profile levels × 8 relationships (self, stranger, pending, follower, blocked either way, disabled owner, admin) × 4 item levels. Each combination is checked against profiles, reviews, lists, the feed, the game page community numbers and likes.
+- **Admins get no read bypass.** Admins see reported text on the Reports page, but otherwise follow the same visibility rules as everyone else.
+- **Sign-up modes:**
+  - The admin page can override `CATO_SIGNUP`.
+  - `closed` still accepts invites made by admins, which is how a closed server adds people.
+  - `invite` accepts invites from anyone.
+  - The first account on an empty server becomes the admin. On upgrade, migration v21 makes the oldest account the admin.
+- **Invites make a mutual follow**, so a household is connected at once.
+- **Activity is written with library writes** and carries the write's undo ID, so undoing a status change also removes it from friends' feeds. The feed groups a person's logging, adds, wishlists and additions to one list per day.
+- **Trusted Types are enforced.** The CSP is `require-trusted-types-for 'script'; trusted-types lit-html cato-sw`. lit-html has its own policy. The only other sink is service worker registration, which has a policy that allows exactly `/service-worker.js`.
+- **Avatars and Gravatar:** avatars are re-encoded (which drops EXIF) and served only to signed-in people. Gravatar is opt-in per account, because it loads an image from a third party.
+- **Social notifications:** P4 creates them in the in-app inbox only, with an unread badge (also on the app icon via the Badging API). Push and email delivery, with per-kind settings that are off by default, come with P5.
+- **"Ask a friend"** links to the friend's review on the game page. There are no direct messages.
 
 ---
 

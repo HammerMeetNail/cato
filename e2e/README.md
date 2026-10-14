@@ -22,7 +22,9 @@ serves those files on `127.0.0.1:7180`.
 Contexts a test creates itself (`browser.newContext`, `playwright.request.newContext`)
 must pass `ignoreHTTPSErrors: true`. The harness seeds catalog IDs 1–2, 100–164
 and named games 200–215 (`tests/helpers.ts` `G`), and runs with `CATO_DEV=1` so
-the component gallery (`#dev/ui`) is available. Each test creates its own user
+the component gallery (`#dev/ui`) is available. It also seeds one fixed admin,
+`admin@e2e.test` (username `e2e_admin`, the shared E2E password), so admin specs
+don't depend on which test signs up first. Each test creates its own user
 through `/api/auth/signup` and seeds through `/api/v1`; the behaviour under test
 is driven through the UI. Artifacts default to `/tmp/cato-e2e-results`
 (override with `CATO_E2E_RESULTS`).
@@ -38,7 +40,8 @@ is driven through the UI. Artifacts default to `/tmp/cato-e2e-results`
 | `discover.spec.ts` | Popular shelf excludes your games; faceted search results; Want from results |
 | `offline.spec.ts` | (Chromium) worker-served versioned assets and offline fallback; the app opens offline from the cached shell and IndexedDB, queues a write, survives a reload and sends it on reconnect |
 | `regressions.spec.ts` | Plan §2.1 bugs that still apply: re-adding after removal (#5), Finish can't be double-tapped onto the next game and undo restores (#6), malformed `%` hash (#8), offline copy (#9), `#search` shortcut focuses the Library search (#10) |
-| `a11y.spec.ts` | axe-core: no serious or critical violations on login, Home, Library (grid and list), game pages, Discover, search results, You, Stats, Diary, Settings, Help, the gallery and the Log and Finish sheets, light and dark |
+| `people.spec.ts` | Follow from People search and see their activity in the Home feed and on their profile; a private profile needs an approved follow (request, inbox badge, accept); a spoiler review is hidden until revealed, a friend likes it and the like reaches the inbox; lists from a suggestion, adding from game pages and reordering; an invite link signs someone up already connected; admin people, reports (hide), sign-up mode and the audit log, and 403 for others |
+| `a11y.spec.ts` | axe-core: no serious or critical violations on login, Home, Library (grid and list), game pages, Discover, search results, You, Stats, Diary, Settings, Help, the gallery, the Log and Finish sheets, profiles, game-page reviews, lists, People, Inbox, Edit profile and every admin tab, light and dark |
 | `visual.spec.ts` | (Chromium) gallery and Home screenshots, light and dark, desktop and phone; baselines per platform under `tests/__screenshots__`, recorded on a platform's first run |
 | `perf.spec.ts` | (Chromium) cold Home load: render-blocking requests ≤ 12, no module waterfall (every eager module requested from the HTML), initial JS ≤ 60 KB and CSS ≤ 20 KB gzipped, LCP < 1 s; INP < 100 ms (median of three visits) with 4× CPU throttling |
 | `https.spec.ts` | Secure context on `cato.test`/`127.0.0.1`, service worker registration, WebAuthn passkey creation (Chromium virtual authenticator), HSTS/CSP upgrade/Permissions-Policy headers, `__Host-` session cookie |

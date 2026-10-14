@@ -71,5 +71,46 @@ for (const scheme of ['light', 'dark'] as const) {
       await expect(page.locator('dialog.sheet[aria-label="Finish Hades"]')).toBeVisible();
       await scan(page, 'finish sheet');
     });
+
+    test(`people screens have no serious violations (${scheme})`, async ({ page }) => {
+      const acc = await account(page, 'a11y-people');
+      const h = { 'X-CSRF-Token': acc.csrf };
+      const username = `a11y_${Math.random().toString(36).slice(2, 8)}`;
+      await page.request.patch('/api/v1/me/profile', { headers: h, data: { username, bio: 'Accessible bio', visibility: 'instance', favourites: [G.hades] } });
+      await put(acc, G.hades, { status: 'completed', rating: 80 });
+      await page.request.post('/api/v1/reviews', { headers: h, data: { game_id: G.hades, body: 'A review with spoilers', spoiler: true } });
+      const list = (await (await page.request.post('/api/v1/lists', { headers: h, data: { title: 'Favourites', ranked: true } })).json()).list;
+      await page.request.put(`/api/v1/lists/${list.id}/items/${G.hades}`, { headers: h, data: { note: 'Best' } });
+      await page.request.post('/api/v1/users/e2e_admin/follow', { headers: h });
+
+      const screens: [string, string, (p: Page) => Promise<void>][] = [
+        ['profile', `#u/${username}`, p => expect(p.getByRole('heading', { name: 'Favourites' }).first()).toBeVisible()],
+        ['someone else', '#u/e2e_admin', p => expect(p.getByRole('button', { name: 'Following' })).toBeVisible()],
+        ['game page social', `#game/${G.hades}`, p => expect(p.locator('.review').first()).toBeVisible()],
+        ['lists', '#you/lists', p => expect(p.locator('.list-card').first()).toBeVisible()],
+        ['list', `#list/${list.id}`, p => expect(p.locator('.list-items li').first()).toBeVisible()],
+        ['people', '#you/people', p => expect(p.getByRole('heading', { name: 'Following' })).toBeVisible()],
+        ['inbox', '#you/inbox', p => expect(p.getByRole('heading', { name: 'Inbox' })).toBeVisible()],
+      ];
+      for (const [label, hash, ready] of screens) {
+        await gotoApp(page, hash);
+        await ready(page);
+        await scan(page, label);
+      }
+      await gotoApp(page, '#you');
+      await page.getByRole('button', { name: 'Edit profile' }).click();
+      await expect(page.locator('dialog.sheet[aria-label="Edit profile"]')).toBeVisible();
+      await scan(page, 'edit profile sheet');
+    });
+
+    test(`admin screens have no serious violations (${scheme})`, async ({ page }) => {
+      expect((await page.request.post('/api/auth/login', { data: { email: 'admin@e2e.test', password: 'e2e-password-1' } })).status()).toBe(200);
+      for (const tab of ['users', 'reports', 'invites', 'system', 'audit']) {
+        await gotoApp(page, `#admin?tab=${tab}`);
+        await expect(page.locator('.section').first()).not.toContainText('Loading');
+        await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
+        await scan(page, `admin ${tab}`);
+      }
+    });
   });
 }

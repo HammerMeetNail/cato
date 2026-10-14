@@ -180,3 +180,15 @@ func TestServiceWorkerAndManifestTrackTheVersion(t *testing.T) {
 	}
 	_ = http.StatusOK
 }
+
+func TestStaticImportScanFindsMinifiedImports(t *testing.T) {
+	src := "import{a as b}from\"./x.js\";import\"./y.js\";export*from'./z.js'\n" +
+		"import { c } from './c.js';\nconst m = () => import('./lazy.js');\nexport const s = 'not.js';\n"
+	var got []string
+	for _, m := range staticImport.FindAllStringSubmatch(src, -1) {
+		got = append(got, m[1])
+	}
+	if strings.Join(got, " ") != "./x.js ./y.js ./z.js ./c.js" {
+		t.Fatalf("specifiers: %v", got)
+	}
+}

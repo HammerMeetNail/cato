@@ -99,3 +99,50 @@ The item's `minutes` always equals the sum of its sessions (adjustments included
 | `GET /typeahead?q=` | `{library: [Item], catalog: [result]}`; your library first. Each catalog result carries your `status`. |
 | `GET /search?q=&sort=&platform=&genre=&max_ttb=&year_from=&year_to=&min_rating=&in_library=&limit=&offset=` | Full catalog search: `{items, total, next_offset}`; `max_ttb` is in hours. Rate limited per IP. |
 | `GET /platforms?q=` | Platform names. |
+
+## People
+
+Everything is limited to this server. Profiles are private by default. Who sees what is decided in one place (`internal/social`):
+
+- you always see your own things;
+- a block, in either direction, hides everything, and disabled accounts are hidden;
+- `private` is you only; `followers` adds people whose follow you accepted; `instance` is everyone with an account here;
+- reviews and lists have their own `visibility`; `inherit` uses your profile's.
+
+| Method and path | Purpose |
+|---|---|
+| `GET /me/profile`, `PATCH /me/profile` | Your profile: `{username, display_name, bio (≤ 500), visibility, favourites (≤ 4 game IDs), use_gravatar}`. Usernames are `[a-z0-9_.-]{1,32}`, unique ignoring case. Going `instance` accepts waiting follow requests. |
+| `PUT /me/avatar`, `DELETE /me/avatar` | `{avatar: "data:image/...;base64,..."}`: re-encoded to a 256 px JPEG (metadata dropped) and served from `/avatars/` to signed-in people only. |
+| `GET /users?q=` | Find people (prefix of username or name). Private profiles only match their exact username; blocks hide people both ways. |
+| `GET /users/{username}` | `{person, relationship: {self, following, follows_you, blocked, blocks_you, can_see, visibility}, bio, favourites, playing, recent_finishes, stats, lists, reviews, followers, following}`. Content fields are empty unless `can_see`. 404 when they blocked you. |
+| `POST`/`DELETE /users/{username}/follow` | Follow (`{following: "accepted" | "pending"}`) or unfollow / withdraw. |
+| `POST`/`DELETE /users/{username}/block` | Block (ends follows both ways) or unblock. |
+| `POST /followers/{username}/accept`, `DELETE /followers/{username}` | Approve a request; decline one or remove a follower. |
+| `GET /people` | `{followers, following, requests, blocked}`. |
+| `GET /feed?before=` | Activity of people you follow, newest first: `started`, `finished` (rating), `dropped`, `wishlisted`, `added`, `rated`, `logged`, `reviewed`, `listed`. A person's logging, adds, wishlists and additions to one list on one day are one entry (`games` lists them, `minutes` sums). An undone library write takes its activity back. |
+| `GET /notifications?before=`, `POST /notifications/read` | The inbox `{items, unread}`; `{up_to}` marks read (0 = all). Kinds: `follow`, `follow_request`, `follow_accepted`, `like`, `invite_used`, and alerts. |
+| `GET /games/{id}/social` | `{friends: [{person, status, rating, minutes, review_id}], community: {players, ratings, average, histogram[10]}, reviews}`. Reviews: yours, then friends', then most liked. The community counts only people you may see. |
+| `GET /games/{id}/lists` | Your lists with `has_game`. |
+| `POST /reviews` | `{game_id, body (≤ 10,000), spoiler, visibility, playthrough_id?}`; carries your current rating. `GET`/`PATCH`/`DELETE /reviews/{id}`. |
+| `POST`/`DELETE /reviews/{id}/like` | Like or unlike a review you can see. |
+| `POST /reports` | `{kind: review|list|user, target, reason}` for something you can see. |
+| `GET /lists?user=` | A person's lists you may see (yours by default). |
+| `POST /lists`, `GET`/`PATCH`/`DELETE /lists/{id}` | `{title (≤ 100), description (≤ 2,000), ranked, visibility}`. |
+| `PUT`/`DELETE /lists/{id}/items/{game_id}` | Add (with `{note}` ≤ 500) or remove; ≤ 500 games. `POST /lists/{id}/order` `{game_ids}` reorders. |
+| `GET /invites`, `POST /invites`, `DELETE /invites/{id}` | Your invite links (`{note}`): single use, 7 days. The response has the `path` (`/login?invite=…`) once. Whoever signs up with it and you follow each other. |
+
+## Admin
+
+Admins only (`403` otherwise). Every change is written to the audit log.
+
+| Method and path | Purpose |
+|---|---|
+| `GET /admin/users`, `PATCH /admin/users/{id}` | People with role, last seen and library size; `{role, disabled}` (disabling signs out everywhere; the last admin can't be demoted or disabled: `409 last_admin`). |
+| `POST /admin/users/{id}/reset-link` | A single-use password link (`/login?reset=…`, 24 hours). Using it (`POST /api/auth/reset {token, password}`) signs the account out everywhere. |
+| `GET`/`PATCH /admin/settings` | `{signup: open|invite|closed}` overrides `CATO_SIGNUP` (`""` returns to it). |
+| `GET /admin/invites` | Every invite. |
+| `GET /admin/reports`, `POST /admin/reports/{id}/resolve` | Open reports with an excerpt; `{hide}` hides the review or list (its author still sees it, marked). |
+| `POST /admin/hide` | `{kind: review|list, id, hidden}`. |
+| `GET /admin/audit` | Admin actions, newest first. |
+| `GET /admin/system` | Database and WAL size, last backup, cover queue, IGDB lanes, background jobs and lag. `POST /admin/jobs/{name}/run` runs one now. |
+| `POST /admin/games/merge` | `{custom_id, into_id}`: fold a custom game into its catalog entry. |

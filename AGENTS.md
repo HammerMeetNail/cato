@@ -32,6 +32,8 @@ internal/catalog/ Game search, store, service, IGDB rate limiter (two lanes), ba
 internal/library/ The library domain: typed items, filters/sorts, writes with the journal
                  (playthroughs, sessions), undo, compact index, bulk, timer, stats, prefs, export.
 internal/discover/ Discover shelves, Up Next scoring, estimates at your pace (reads catalog + library).
+internal/social/ People (plan §7): visibility rules, profiles, follows/blocks, reviews, lists, feed,
+                 notifications, invites, reset links, sign-up, admin tools and the audit log.
 internal/integrations/wikidata/ Opt-in ID crosswalk for HowLongToBeat / PCGamingWiki links.
 internal/jobs/   Background job runner (persisted schedule, jitter, cancellation).
 internal/metrics/ In-process counters/histograms in Prometheus text format.
@@ -164,6 +166,13 @@ tests/js/        node --test suites for the pure frontend modules
   inline `<script>`, inline event handlers (`onerror=`), or `javascript:` URLs; cover
   images fall back via delegated `error` listeners + `data-cover-fallback`, and the
   theme/login bootstrap scripts are external (`js/theme-init.js`, `js/login.js`).
+  The CSP also enforces **Trusted Types** (`require-trusted-types-for 'script';
+  trusted-types lit-html cato-sw`): DOM XSS sinks only accept values from lit-html's own
+  policy and `cato-sw` (which allows exactly `/service-worker.js`). Never assign
+  `innerHTML`/`outerHTML`, `insertAdjacentHTML`, `document.write` or script URLs directly;
+  render through lit-html (`scripts/lint-js.cjs` checks). A new script-URL sink needs its
+  own narrowly scoped policy added to the CSP. `img-src` allows `https://www.gravatar.com`
+  (people opt in per account).
 - **Rich catalog (v20)**: genres/themes/modes/perspectives/game types are `lookups`; time to
   beat lives on `games` (minutes); relations, release dates, companies, series and external
   IDs have tables; media/links/ratings/languages/multiplayer are one JSON row in
@@ -180,10 +189,27 @@ tests/js/        node --test suites for the pure frontend modules
   `/api/games/search`; `auth.LoginThrottle` for per-account login backoff;
   `games.IGDBRateLimiter` (~1 req/sec) for the IGDB API. Anonymous searches run with
   `games.LocalOnly(ctx)` and never refresh from IGDB.
-- **Signup**: `CATO_SIGNUP` (`open|invite|closed`, default `closed`). Account creation goes
-  through `AuthHandler.createUser`, which enforces the mode atomically (first account on an
-  empty DB always allowed) for both email and Google sign-up. `GET /api/config` tells the
-  login page whether to show sign-up and the Google button.
+- **Signup**: `CATO_SIGNUP` (`open|invite|closed`, default `closed`); an admin can override
+  it on the Admin page (`instance_settings.signup`), and `social.EffectiveSignup` decides.
+  Account creation goes through `AuthHandler.createUser` → `social.CreateUser`, one
+  transaction for email and Google sign-up: the first account on an empty DB is always
+  allowed and becomes the admin; `open` lets anyone in; `invite` needs a valid invite from
+  anyone, `closed` one from an admin. An invite is single-use, 7 days, stored as a SHA-256
+  hash, and makes the inviter and the new person follow each other. Google sign-up carries
+  the invite in the OAuth state cookie (`state.invite`). Usernames come from the email's
+  local part (`_2`, `_3`… on clashes). `GET /api/config?invite=` reports `invite_valid` and
+  `invited_by`. Admin-made reset links (`/login?reset=…`, 24 h) go to `POST /api/auth/reset`.
+- **People (P4, `internal/social`)**: visibility is decided only by `Service.CanSee` and the
+  SQL fragment `visibleSQL` (self always; blocks either way and disabled owners hide
+  everything; `private` / `followers` (accepted follow) / `instance`; reviews and lists can
+  override with `inherit` meaning the profile level). Every query that returns someone
+  else's content must use them — `TestAuthorizationMatrix` walks every combination. The
+  feed is fan-out on read: `activity` rows are written with library writes
+  (`library/activity.go`, carrying the write's `undo_id` so undo deletes them) and by
+  reviews and list additions. Avatars are uploaded to `data/avatars` (re-encoded 256 px
+  JPEG) and served by `/avatars/` to signed-in people only. Admin endpoints check the role
+  per request and write `audit_log`; the last admin can't be demoted or disabled. User text
+  limits: bio 500, review 10,000, list title 100 / description 2,000 / note 500.
 - **App shell (docs/cato_smooth.md §3.4; the 4-tab Nabu layout is retired)**:
   `web/static/index.html` is the only authenticated page; `js/app.js` renders the shell with
   lit-html: a header with the one search box (library first, then all games; on the Library
@@ -194,7 +220,9 @@ tests/js/        node --test suites for the pure frontend modules
   grid row, not `position: fixed` (avoids the iOS PWA cold-open gap). Routes (`js/core/router.js`):
   `#home` (also the empty hash), `#library?shelf=&q=&sort=&view=&dense=`, `#game/<id>`, `#log`
   (opens the Log sheet), `#discover`, `#discover/search?q=…`, `#you`, `#you/stats`, `#you/diary`,
-  `#you/settings`, `#you/help`, `#dev/ui` (component gallery, only with `CATO_DEV=1`). Legacy
+  `#you/settings`, `#you/help`, `#you/lists`, `#you/people`, `#you/inbox`, `#u/<username>`
+  (profiles), `#list/<id>`, `#admin?tab=` (admins), `#dev/ui` (component gallery, only with
+  `CATO_DEV=1`). Legacy
   hashes redirect (`#now`→`#home`, `#stats`→`#you/stats`, `#settings`→`#you/settings`, status
   hashes→`#library?shelf=…`, `#search/<q>`→`#library?q=…`). Home and the Log sheet load
   eagerly; every other screen is a dynamic `import()` on first visit (`SCREENS` in app.js).
