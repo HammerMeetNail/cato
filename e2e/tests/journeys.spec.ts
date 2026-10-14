@@ -155,6 +155,12 @@ test('Settings saves profile and theme, rejects invalid passwords, and requires 
   await expect(page.locator('#deleteConfirmInput')).toHaveValue('');
   await expect(page.locator('#confirmDeleteBtn')).toBeDisabled();
   await page.locator('#deleteConfirmInput').fill('DELETE');
+  // Deletion re-authenticates: a wrong password keeps the account.
+  await page.locator('#deletePasswordInput').fill('wrong-current-password');
+  await page.locator('#confirmDeleteBtn').click();
+  await expect(page.locator('#deleteFeedback')).toContainText('current password');
+  expect((await page.request.get('/api/library/1')).status()).toBe(200);
+  await page.locator('#deletePasswordInput').fill(password);
   await page.locator('#confirmDeleteBtn').click();
   await expect(page).toHaveURL(/\/login$/);
   expect((await page.request.get('/api/library')).status()).toBe(401);

@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"cato/internal/auth"
 	"cato/internal/config"
@@ -15,21 +16,42 @@ import (
 )
 
 type GameHandler struct {
-	service *games.Service
-	db      *db.DB
-	cookies auth.Cookies
+	service       *games.Service
+	db            *db.DB
+	cookies       auth.Cookies
+	searchLimiter *auth.RateLimiter
 }
 
+// maxSearchQueryLen caps q on /api/games/search (characters).
+const maxSearchQueryLen = 100
+
+// defaultSearchRateLimit is the per-IP search requests per minute. Typeahead
+// sends one request per debounced keystroke, so this leaves ample room for
+// people while bounding scripted use.
+const defaultSearchRateLimit = 120
+
 func NewGameHandler(db *db.DB, cfg *config.Config) *GameHandler {
-	store := games.NewStore(db)
 	var igdbClient games.IGDBClient
 	if cfg.IGDBClientID != "" {
 		igdbClient = igdb.NewClient(cfg.IGDBClientID, cfg.IGDBClientSecret)
 	} else {
 		igdbClient = &noopIGDBClient{}
 	}
-	svc := games.NewService(store, igdbClient, db)
-	return &GameHandler{service: svc, db: db, cookies: auth.Cookies{Secure: cfg.SecureCookies()}}
+	return newGameHandlerWithClient(db, cfg, igdbClient)
+}
+
+func newGameHandlerWithClient(db *db.DB, cfg *config.Config, igdbClient games.IGDBClient) *GameHandler {
+	svc := games.NewService(games.NewStore(db), igdbClient, db)
+	limit := defaultSearchRateLimit
+	if cfg.SearchRateLimit > 0 {
+		limit = cfg.SearchRateLimit
+	}
+	return &GameHandler{
+		service:       svc,
+		db:            db,
+		cookies:       auth.Cookies{Secure: cfg.SecureCookies()},
+		searchLimiter: auth.NewRateLimiter(limit, time.Minute),
+	}
 }
 
 func (h *GameHandler) startBackground(cfg *config.Config) {
@@ -50,7 +72,7 @@ func (h *GameHandler) startBackground(cfg *config.Config) {
 }
 
 func (h *GameHandler) Register(mux *http.ServeMux) {
-	mux.HandleFunc("/api/games/search", h.handleSearch)
+	mux.Handle("/api/games/search", h.searchLimiter.Middleware(http.HandlerFunc(h.handleSearch)))
 	mux.HandleFunc("/api/platforms", h.handlePlatforms)
 	mux.HandleFunc("/api/games/", h.handleGameByID)
 }
@@ -152,6 +174,17 @@ func (h *GameHandler) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if query == "" {
 		writeJSON(w, http.StatusOK, []interface{}{})
 		return
+	}
+	if utf8.RuneCountInString(query) > maxSearchQueryLen {
+		writeJSON(w, http.StatusBadRequest, errResp("query_too_long", "Search text must be at most 100 characters"))
+		return
+	}
+
+	// The endpoint stays public (login-page and anonymous typeahead), but only
+	// signed-in searches may refresh from IGDB: an anonymous caller must not
+	// spend the IGDB quota or write games, cover jobs and cache rows.
+	if tryGetUserID(r, h.db, h.cookies) == "" {
+		r = r.WithContext(games.LocalOnly(r.Context()))
 	}
 
 	includeEditions := parseIncludeEditions(r)

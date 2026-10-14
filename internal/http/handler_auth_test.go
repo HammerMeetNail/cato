@@ -35,6 +35,7 @@ func newTestAuthHandler(database *db.DB) *AuthHandler {
 	cfg := &config.Config{
 		ListenAddr:   ":7080",
 		CookieSecure: false,
+		Signup:       config.SignupOpen,
 	}
 	return NewAuthHandler(database, cfg)
 }
@@ -116,8 +117,10 @@ func TestSignupDuplicateEmail(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("expected 409 conflict, got %d", rec.Code)
+	// Generic 400 (not 409 email_taken): the response must not confirm that
+	// the email has an account (plan S8).
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "signup_failed") {
+		t.Fatalf("expected 400 signup_failed, got %d %s", rec.Code, rec.Body)
 	}
 }
 
@@ -584,7 +587,7 @@ func TestDeleteAccount(t *testing.T) {
 		t.Fatalf("create second session: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/me", strings.NewReader(`{"confirm":"DELETE"}`))
+	req := httptest.NewRequest(http.MethodDelete, "/api/me", strings.NewReader(`{"confirm":"DELETE","password":"password123"}`))
 	req.AddCookie(&http.Cookie{Name: "cato_session", Value: cookie})
 	req.Header.Set("X-CSRF-Token", csrfToken)
 	rec := httptest.NewRecorder()

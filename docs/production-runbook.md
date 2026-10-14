@@ -59,8 +59,12 @@ user out once. HSTS (`max-age=31536000`, no preload) and
 `upgrade-insecure-requests` are sent whenever `CATO_BASE_URL` is https or Cato
 serves a non-dev certificate.
 
+Sign-up is closed by default (`CATO_SIGNUP=closed`): the first account on an
+empty database can register, nobody else can (email or Google). Set
+`CATO_SIGNUP=open` temporarily to add people, then close it again.
+
 Register `<CATO_BASE_URL>/api/auth/google/callback` with Google. Do not set the
-test-only `CATO_AUTH_RATE_LIMIT` override in production. Forwarded IP headers are
+test-only `CATO_AUTH_RATE_LIMIT`/`CATO_SEARCH_RATE_LIMIT` overrides in production. Forwarded IP headers are
 trusted only from `CATO_TRUSTED_PROXIES`; without it, every client behind a proxy
 shares one auth rate-limit bucket.
 

@@ -363,7 +363,7 @@ func TestGoogleStateCookieInHTTPSMode(t *testing.T) {
 	}
 	// The legacy name is not accepted for the state check; the prefixed one
 	// gets past it (to the missing-code check).
-	for name, want := range map[string]string{"cato_oauth_state": "invalid_state", "__Host-cato_oauth_state": "missing_code"} {
+	for name, want := range map[string]string{"cato_oauth_state": "link expired", "__Host-cato_oauth_state": "didn&#39;t complete"} {
 		req := httptest.NewRequest(http.MethodGet, "/api/auth/google/callback?state="+state.Value, nil)
 		req.AddCookie(&http.Cookie{Name: name, Value: state.Value})
 		rec := httptest.NewRecorder()

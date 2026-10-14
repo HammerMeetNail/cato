@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"time"
 )
@@ -103,4 +104,10 @@ func (c Cookies) OAuthState(r *http.Request) string {
 		return ""
 	}
 	return cookie.Value
+}
+
+// TokensEqual compares secret tokens (CSRF) in constant time and exactly:
+// no case folding, no early exit on the first differing byte.
+func TokensEqual(a, b string) bool {
+	return a != "" && subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }

@@ -195,11 +195,13 @@ func TestGoogleCallbackAccountProtection(t *testing.T) {
 		status               int
 		code                 string
 	}{
-		{"email_collision", `{"sub":"new-sub","email":"same@example.com","email_verified":true}`, `INSERT INTO users(id,email,password_hash) VALUES('existing','same@example.com','hash')`, 409, "email_taken"},
-		{"disabled", `{"sub":"known-sub","email":"same@example.com","email_verified":true}`, `INSERT INTO users(id,email,google_subject,disabled) VALUES('existing','same@example.com','known-sub',1)`, 403, "account_disabled"},
+		// Callback errors render HTML pages (top-level navigation); match on
+		// their human-readable text.
+		{"email_collision", `{"sub":"new-sub","email":"same@example.com","email_verified":true}`, `INSERT INTO users(id,email,password_hash) VALUES('existing','same@example.com','hash')`, 409, "already uses this email"},
+		{"disabled", `{"sub":"known-sub","email":"same@example.com","email_verified":true}`, `INSERT INTO users(id,email,google_subject,disabled) VALUES('existing','same@example.com','known-sub',1)`, 403, "disabled"},
 		{"existing_subject", `{"sub":"known-sub","email":"changed@example.com","email_verified":true}`, `INSERT INTO users(id,email,google_subject) VALUES('existing','same@example.com','known-sub')`, 302, ""},
-		{"unverified", `{"sub":"new-sub","email":"same@example.com","email_verified":false}`, "", 500, "google_error"},
-		{"missing_subject", `{"email":"same@example.com","email_verified":true}`, "", 500, "google_error"},
+		{"unverified", `{"sub":"new-sub","email":"same@example.com","email_verified":false}`, "", 500, "couldn&#39;t verify your Google account"},
+		{"missing_subject", `{"email":"same@example.com","email_verified":true}`, "", 500, "couldn&#39;t verify your Google account"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			database := setupAuthTestDB(t)

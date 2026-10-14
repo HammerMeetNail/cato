@@ -1,6 +1,6 @@
 // login.js — login/signup page controller (was an inline module in
 // login.html; externalized so the CSP can use script-src 'self').
-import { checkAuth, login, signup } from './api.js';
+import { checkAuth, login, signup, publicConfig } from './api.js';
 
 const form = document.getElementById('loginForm');
 const errorMsg = document.getElementById('errorMsg');
@@ -17,6 +17,13 @@ if (auth.authenticated) {
   window.location.href = '/' + window.location.hash;
   throw new Error('Already authenticated');
 }
+
+// Only offer what this server supports: Google sign-in when configured, and
+// the sign-up toggle while CATO_SIGNUP allows another account.
+const config = await publicConfig();
+googleBtn.hidden = !config.google_enabled;
+document.getElementById('googleDivider').hidden = !config.google_enabled;
+document.getElementById('signupFooter').hidden = config.signup_allowed === false;
 
 toggleLink.addEventListener('click', () => {
   isSignup = !isSignup;

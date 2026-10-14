@@ -75,6 +75,10 @@ function buildSettingsHTML(auth) {
             <input type="text" id="deleteConfirmInput" class="settings-input" autocomplete="off"
                    autocapitalize="characters" spellcheck="false" placeholder="DELETE">
           </div>
+          ${hasPassword ? `<div class="settings-row settings-edit-row">
+            <label for="deletePasswordInput" class="settings-label">Current password</label>
+            <input type="password" id="deletePasswordInput" class="settings-input" autocomplete="current-password">
+          </div>` : `<p class="settings-danger-text">For your security, sign in again first if it has been more than 10 minutes.</p>`}
           <div class="settings-feedback settings-feedback-error" id="deleteFeedback"></div>
           <button type="button" class="btn btn-danger settings-btn" id="confirmDeleteBtn" disabled>Permanently delete my account</button>
           <button type="button" class="btn btn-secondary settings-btn" id="cancelDeleteBtn">Cancel</button>
@@ -183,7 +187,7 @@ function wireSettings(container, auth) {
     confirmDeleteBtn.addEventListener('click', async () => {
       if (deleteFeedback) deleteFeedback.textContent = '';
       try {
-        await deleteAccount();
+        await deleteAccount(container.querySelector('#deletePasswordInput')?.value || '');
         // Personal search history must not outlive the account.
         clearRecentSearches();
         window.location.href = '/login';

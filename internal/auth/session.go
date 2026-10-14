@@ -168,3 +168,17 @@ func ChangePassword(db interface{ Begin() (*sql.Tx, error) }, userID, currentSes
 	}
 	return tx.Commit()
 }
+
+// SessionAge reports how long ago the session was created (its sign-in), for
+// actions that need a recent authentication.
+func SessionAge(db Querier, sessionID string) (time.Duration, error) {
+	var created string
+	if err := db.QueryRow("SELECT created_at FROM sessions WHERE id = ?", hashToken(sessionID)).Scan(&created); err != nil {
+		return 0, err
+	}
+	t, err := time.Parse("2006-01-02 15:04:05", created)
+	if err != nil {
+		return 0, fmt.Errorf("parse session created_at: %w", err)
+	}
+	return time.Since(t), nil
+}

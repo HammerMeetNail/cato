@@ -1,6 +1,6 @@
 // Bump on any release that changes shipped static assets so the new SW purges
 // the previous static cache on activate. Covers have their own stable cache.
-const CACHE_NAME = "cato-static-v25";
+const CACHE_NAME = "cato-static-v26";
 const COVER_CACHE_NAME = "cato-covers-v1";
 const STATIC_CACHE_PREFIX = "cato-static-";
 const OFFLINE_URL = "/offline.html";

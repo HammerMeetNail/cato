@@ -34,12 +34,12 @@ type Service struct {
 	refreshTimeout time.Duration
 	// Initial delay before the first query-cache sweep (test seam; see NewService).
 	queryCacheInitialDelay time.Duration
-	lifecycleMu    sync.Mutex
-	stopping       bool
-	workers        sync.WaitGroup
-	ctx            context.Context
-	cancel         context.CancelFunc
-	stopped        chan struct{}
+	lifecycleMu            sync.Mutex
+	stopping               bool
+	workers                sync.WaitGroup
+	ctx                    context.Context
+	cancel                 context.CancelFunc
+	stopped                chan struct{}
 }
 
 func NewService(store *Store, igdb IGDBClient, db *db.DB) *Service {
@@ -985,8 +985,23 @@ func (s *Service) refreshStaleGamesContext(ctx context.Context, maxPerDay int) {
 	log.Printf("stale refresh: refreshed %d/%d games", refreshed, len(ids))
 }
 
+type localOnlyKey struct{}
+
+// LocalOnly marks a search context as local-catalog only: no IGDB refresh is
+// scheduled, so nothing is fetched or written on the caller's behalf. Used
+// for anonymous searches, which must not spend the IGDB quota or grow the
+// database.
+func LocalOnly(ctx context.Context) context.Context {
+	return context.WithValue(ctx, localOnlyKey{}, true)
+}
+
+func isLocalOnly(ctx context.Context) bool {
+	v, _ := ctx.Value(localOnlyKey{}).(bool)
+	return v
+}
+
 func (s *Service) shouldAskIGDB(ctx context.Context, query string, includeEditions bool) bool {
-	if ctx.Err() != nil {
+	if ctx.Err() != nil || isLocalOnly(ctx) {
 		return false
 	}
 	cached, err := getCachedSearchDB(ctx, s.db, query, includeEditions)

@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"html/template"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +27,9 @@ type AuthHandler struct {
 	loginLimiter    *auth.RateLimiter
 	signupLimiter   *auth.RateLimiter
 	passwordLimiter *auth.RateLimiter
+	loginThrottle   *auth.LoginThrottle
+	// checkPassword is auth.CheckPassword; tests count calls through it.
+	checkPassword func(password, hash string) bool
 }
 
 func NewAuthHandler(db *db.DB, cfg *config.Config) *AuthHandler {
@@ -42,6 +47,8 @@ func NewAuthHandler(db *db.DB, cfg *config.Config) *AuthHandler {
 		loginLimiter:    auth.NewRateLimiter(loginLimit, time.Minute),
 		signupLimiter:   auth.NewRateLimiter(signupLimit, time.Minute),
 		passwordLimiter: auth.NewRateLimiter(passwordLimit, time.Minute),
+		loginThrottle:   auth.NewLoginThrottle(),
+		checkPassword:   auth.CheckPassword,
 	}
 
 	if cfg.GoogleKey != "" && cfg.GoogleSecret != "" {
@@ -70,6 +77,7 @@ func NewAuthHandler(db *db.DB, cfg *config.Config) *AuthHandler {
 
 func (h *AuthHandler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/me", h.handleMe)
+	mux.HandleFunc("/api/config", h.handleConfig)
 
 	signupChain := h.signupLimiter.Middleware(http.HandlerFunc(h.handleSignup))
 	mux.Handle("/api/auth/signup", signupChain)
@@ -162,7 +170,7 @@ func (h *AuthHandler) updateMe(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, errResp("unauthorized", "Invalid or expired session"))
 		return
 	}
-	if !strings.EqualFold(session.CSRFToken, r.Header.Get("X-CSRF-Token")) {
+	if !auth.TokensEqual(session.CSRFToken, r.Header.Get("X-CSRF-Token")) {
 		writeJSON(w, http.StatusForbidden, errResp("csrf_mismatch", "CSRF token mismatch"))
 		return
 	}
@@ -294,16 +302,34 @@ func (h *AuthHandler) deleteMe(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, errResp("unauthorized", "Invalid or expired session"))
 		return
 	}
-	if !strings.EqualFold(session.CSRFToken, r.Header.Get("X-CSRF-Token")) {
+	if !auth.TokensEqual(session.CSRFToken, r.Header.Get("X-CSRF-Token")) {
 		writeJSON(w, http.StatusForbidden, errResp("csrf_mismatch", "CSRF token mismatch"))
 		return
 	}
 
 	var req struct {
-		Confirm string `json:"confirm"`
+		Confirm  string `json:"confirm"`
+		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Confirm != "DELETE" {
 		writeJSON(w, http.StatusBadRequest, errResp("confirm_required", `Type DELETE to confirm: send {"confirm":"DELETE"}`))
+		return
+	}
+	// Re-authenticate: a stolen or forgotten-open session alone must not be
+	// able to destroy the account. Password accounts confirm the password;
+	// accounts without one (Google) need a sign-in from the last 10 minutes.
+	var passwordHash string
+	if err := h.db.QueryRow("SELECT COALESCE(password_hash, '') FROM users WHERE id = ?", session.UserID).Scan(&passwordHash); err != nil {
+		writeJSON(w, http.StatusNotFound, errResp("not_found", "Account not found"))
+		return
+	}
+	if passwordHash != "" {
+		if req.Password == "" || !h.checkPassword(req.Password, passwordHash) {
+			writeJSON(w, http.StatusUnauthorized, errResp("invalid_credentials", "Enter your current password to delete the account"))
+			return
+		}
+	} else if age, err := auth.SessionAge(h.db, sessionID); err != nil || age > recentSignIn {
+		writeJSON(w, http.StatusUnauthorized, errResp("reauth_required", "Sign in again, then delete the account within 10 minutes"))
 		return
 	}
 
@@ -321,6 +347,59 @@ func (h *AuthHandler) deleteMe(w http.ResponseWriter, r *http.Request) {
 	h.cookies.ClearSession(w)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Account deleted",
+	})
+}
+
+// recentSignIn is how fresh a session must be to delete an account that has
+// no password to confirm.
+const recentSignIn = 10 * time.Minute
+
+// errSignupClosed: CATO_SIGNUP does not allow another account.
+var errSignupClosed = errors.New("signup closed")
+
+// createUser inserts a user, honouring CATO_SIGNUP: unless signup is open,
+// only the first account on an empty instance may be created. The emptiness
+// check is part of the INSERT, so two racing first signups can't both win.
+func (h *AuthHandler) createUser(userID, email, passwordHash, displayName, avatarURL string, googleSubject any) error {
+	query := `INSERT INTO users (id, email, password_hash, display_name, avatar_url, google_subject)
+		SELECT ?, ?, ?, ?, ?, ?`
+	if !h.cfg.SignupIsOpen() {
+		query += ` WHERE NOT EXISTS (SELECT 1 FROM users)`
+	}
+	var hash any
+	if passwordHash != "" {
+		hash = passwordHash
+	}
+	res, err := h.db.Exec(query, userID, email, hash, displayName, avatarURL, googleSubject)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errSignupClosed
+	}
+	return nil
+}
+
+// signupAllowed reports whether a new account could be created right now.
+func (h *AuthHandler) signupAllowed() bool {
+	if h.cfg.SignupIsOpen() {
+		return true
+	}
+	var any int
+	err := h.db.QueryRow("SELECT 1 FROM users LIMIT 1").Scan(&any)
+	return err == sql.ErrNoRows
+}
+
+// handleConfig serves GET /api/config: public settings the login page needs.
+func (h *AuthHandler) handleConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, errResp("method_not_allowed", "Method not allowed"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"google_enabled": h.googleCfg != nil,
+		"signup":         h.cfg.SignupMode(),
+		"signup_allowed": h.signupAllowed(),
 	})
 }
 
@@ -360,13 +439,14 @@ func (h *AuthHandler) handleSignup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID := uuid.New().String()
-	_, err = h.db.Exec(
-		"INSERT INTO users (id, email, password_hash) VALUES (?, ?, ?)",
-		userID, req.Email, passwordHash,
-	)
-	if err != nil {
+	if err := h.createUser(userID, req.Email, passwordHash, "", "", nil); err != nil {
+		if errors.Is(err, errSignupClosed) {
+			writeJSON(w, http.StatusForbidden, errResp("signup_closed", "Sign-up is closed on this server"))
+			return
+		}
 		if strings.Contains(err.Error(), "UNIQUE") {
-			writeJSON(w, http.StatusConflict, errResp("email_taken", "A user with that email already exists"))
+			// Deliberately generic: don't confirm that the email has an account.
+			writeJSON(w, http.StatusBadRequest, errResp("signup_failed", "Couldn't create an account with those details. If you already have one, sign in instead."))
 			return
 		}
 		writeJSON(w, http.StatusInternalServerError, errResp("internal_error", "Failed to create user"))
@@ -409,18 +489,36 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Per-account backoff (any email, existing or not) on top of the per-IP
+	// limiter: guessing one account's password from many addresses slows down.
+	if wait := h.loginThrottle.Wait(req.Email); wait > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Round(time.Second)/time.Second)+1))
+		writeJSON(w, http.StatusTooManyRequests, errResp("rate_limited", "Too many failed sign-ins for this account. Try again shortly."))
+		return
+	}
+
 	var userID, passwordHash, displayName string
 	var disabled int
 	err := h.db.QueryRow(
 		"SELECT id, COALESCE(password_hash, ''), COALESCE(display_name, ''), disabled FROM users WHERE email = ?",
 		req.Email,
 	).Scan(&userID, &passwordHash, &displayName, &disabled)
-	if err == sql.ErrNoRows {
-		writeJSON(w, http.StatusUnauthorized, errResp("invalid_credentials", "Invalid email or password"))
+	if err != nil && err != sql.ErrNoRows {
+		writeJSON(w, http.StatusInternalServerError, errResp("internal_error", "Login failed"))
 		return
 	}
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, errResp("internal_error", "Login failed"))
+
+	// Unknown emails and password-less accounts still pay for a bcrypt
+	// compare, so timing doesn't reveal which emails have accounts. The
+	// password is checked before "disabled", which only someone who knows
+	// the password gets to see.
+	hash := passwordHash
+	if hash == "" {
+		hash = auth.DummyHash()
+	}
+	if !h.checkPassword(req.Password, hash) || passwordHash == "" {
+		h.loginThrottle.Failure(req.Email)
+		writeJSON(w, http.StatusUnauthorized, errResp("invalid_credentials", "Invalid email or password"))
 		return
 	}
 
@@ -428,11 +526,7 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, errResp("account_disabled", "Account is disabled"))
 		return
 	}
-
-	if passwordHash == "" || !auth.CheckPassword(req.Password, passwordHash) {
-		writeJSON(w, http.StatusUnauthorized, errResp("invalid_credentials", "Invalid email or password"))
-		return
-	}
+	h.loginThrottle.Success(req.Email)
 
 	session, err := auth.CreatePasswordSession(h.db, userID, passwordHash)
 	if err != nil {
@@ -471,9 +565,26 @@ func (h *AuthHandler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// authErrorPage is what a browser sees when the Google sign-in redirect
+// flow fails: these are top-level navigations, so JSON would be shown raw.
+var authErrorPage = template.Must(template.New("auth-error").Parse(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign-in problem · Cato</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#1a1a2e;color:#eee;font:16px/1.5 system-ui,sans-serif}
+main{max-width:28rem;padding:2rem;text-align:center}a{color:#e94560}</style></head>
+<body><main><h1>Couldn't sign you in</h1><p>{{.}}</p><p><a href="/login">Back to sign in</a></p></main></body></html>
+`))
+
+func writeAuthErrorPage(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_ = authErrorPage.Execute(w, message)
+}
+
 func (h *AuthHandler) handleGoogleStart(w http.ResponseWriter, r *http.Request) {
 	if h.googleCfg == nil {
-		writeJSON(w, http.StatusServiceUnavailable, errResp("google_unavailable", "Google auth is not configured"))
+		writeAuthErrorPage(w, http.StatusServiceUnavailable, "Google sign-in is not set up on this server.")
 		return
 	}
 
@@ -490,13 +601,13 @@ func (h *AuthHandler) handleGoogleStart(w http.ResponseWriter, r *http.Request) 
 
 func (h *AuthHandler) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 	if h.googleCfg == nil {
-		writeJSON(w, http.StatusServiceUnavailable, errResp("google_unavailable", "Google auth is not configured"))
+		writeAuthErrorPage(w, http.StatusServiceUnavailable, "Google sign-in is not set up on this server.")
 		return
 	}
 
 	state := r.URL.Query().Get("state")
 	if stateCookie := h.cookies.OAuthState(r); state == "" || stateCookie != state {
-		writeJSON(w, http.StatusBadRequest, errResp("invalid_state", "Invalid OAuth state"))
+		writeAuthErrorPage(w, http.StatusBadRequest, "The sign-in link expired or was opened in a different browser. Please try again.")
 		return
 	}
 
@@ -504,34 +615,34 @@ func (h *AuthHandler) handleGoogleCallback(w http.ResponseWriter, r *http.Reques
 
 	code := r.URL.Query().Get("code")
 	if code == "" {
-		writeJSON(w, http.StatusBadRequest, errResp("missing_code", "Authorization code missing"))
+		writeAuthErrorPage(w, http.StatusBadRequest, "Google didn't complete the sign-in. Please try again.")
 		return
 	}
 
 	googleUser, err := auth.FetchGoogleUser(r.Context(), h.googleCfg, code)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, errResp("google_error", "Failed to verify Google account"))
+		writeAuthErrorPage(w, http.StatusInternalServerError, "We couldn't verify your Google account. Please try again.")
 		return
 	}
 
 	userID, err := h.findOrCreateGoogleUser(googleUser)
 	if err != nil {
-		if errors.Is(err, errGoogleEmailConflict) {
-			writeJSON(w, http.StatusConflict, errResp("email_taken", "An account already uses this email. Sign in using its existing method; automatic Google linking is not supported"))
-			return
+		switch {
+		case errors.Is(err, errGoogleEmailConflict):
+			writeAuthErrorPage(w, http.StatusConflict, "An account already uses this email. Sign in with its existing method; automatic Google linking is not supported.")
+		case errors.Is(err, errGoogleDisabled):
+			writeAuthErrorPage(w, http.StatusForbidden, "This account is disabled.")
+		case errors.Is(err, errSignupClosed):
+			writeAuthErrorPage(w, http.StatusForbidden, "Sign-up is closed on this server.")
+		default:
+			writeAuthErrorPage(w, http.StatusInternalServerError, "Something went wrong while signing you in. Please try again.")
 		}
-		if errors.Is(err, errGoogleDisabled) {
-			writeJSON(w, http.StatusForbidden, errResp("account_disabled", "Account is disabled"))
-			return
-		}
-
-		writeJSON(w, http.StatusInternalServerError, errResp("internal_error", "Failed to process account"))
 		return
 	}
 
 	session, err := auth.CreateSession(h.db, userID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, errResp("internal_error", "Failed to create session"))
+		writeAuthErrorPage(w, http.StatusInternalServerError, "Something went wrong while signing you in. Please try again.")
 		return
 	}
 
@@ -567,7 +678,10 @@ func (h *AuthHandler) findOrCreateGoogleUser(gu *auth.GoogleUser) (string, error
 		return "", err
 	}
 	userID = uuid.New().String()
-	_, err = h.db.Exec("INSERT INTO users (id, email, display_name, avatar_url, google_subject) VALUES (?, ?, ?, ?, ?)", userID, email, gu.Name, gu.Picture, gu.Sub)
+	err = h.createUser(userID, email, "", gu.Name, gu.Picture, gu.Sub)
+	if errors.Is(err, errSignupClosed) {
+		return "", err
+	}
 	if err != nil {
 		// A concurrent callback/signup may have won the unique-key race.
 		if strings.Contains(err.Error(), "UNIQUE") {

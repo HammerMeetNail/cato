@@ -7,11 +7,14 @@
 # in Chromium); standalone runs get a throwaway one under the temp dir. No
 # trust store is touched.
 #
-# Two E2E-specific settings, and why:
-# - CATO_AUTH_RATE_LIMIT=1000: every Playwright client shares one IP
-#   (127.0.0.1), so the production login/signup buckets (10/5 per minute)
-#   would 429 legitimate signups mid-suite. 429 semantics themselves are
-#   covered deterministically in Go (auth.TestRateLimiterMiddleware).
+# E2E-specific settings, and why:
+# - CATO_AUTH_RATE_LIMIT=1000 / CATO_SEARCH_RATE_LIMIT=1000: every Playwright
+#   client shares one IP (127.0.0.1), so the production per-IP buckets
+#   (10 login / 5 signup / 120 searches per minute) would 429 legitimate
+#   traffic mid-suite. 429 semantics themselves are covered deterministically
+#   in Go (auth.TestRateLimiterMiddleware, http.TestSearchIsRateLimitedPerIP).
+# - CATO_SIGNUP=open: each test creates its own account (production defaults
+#   to closed after the first account).
 # - Seed catalog (games 1-2): the fresh DB has an empty catalog and IGDB is
 #   unconfigured in E2E, so library/search specs insert against these rows.
 #   The games_fts triggers keep full-text search consistent on plain INSERTs.
@@ -53,7 +56,7 @@ IGDB_CLIENT_ID= IGDB_CLIENT_SECRET= TWITCH_OAUTH_ID= TWITCH_OAUTH_SECRET= \
 GOOGLE_KEY= GOOGLE_SECRET= CATO_BASE_URL= CATO_SECURE_COOKIES=false \
 CATO_DEV_TLS= CATO_ALLOW_INSECURE= CATO_HTTP_REDIRECT_ADDR= CATO_TRUSTED_PROXIES= \
 CATO_TLS_CERT_FILE="$E2E_TLS_DIR/cert.pem" CATO_TLS_KEY_FILE="$E2E_TLS_DIR/key.pem" \
-CATO_AUTH_RATE_LIMIT=1000 \
+CATO_AUTH_RATE_LIMIT=1000 CATO_SEARCH_RATE_LIMIT=1000 CATO_SIGNUP=open \
 CATO_DB_PATH="$E2E_TMP/cato.db" \
 CATO_COVER_DIR="$E2E_TMP/covers" \
 CATO_STATIC_DIR="$E2E_TMP/static" \

@@ -7,10 +7,13 @@ import (
 )
 
 type RateLimiter struct {
-	mu       sync.Mutex
-	attempts map[string][]time.Time
-	limit    int
-	window   time.Duration
+	mu        sync.Mutex
+	attempts  map[string][]time.Time
+	limit     int
+	window    time.Duration
+	lastSweep time.Time
+	// Now is the clock; tests replace it.
+	Now func() time.Time
 }
 
 func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
@@ -18,6 +21,7 @@ func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
 		attempts: make(map[string][]time.Time),
 		limit:    limit,
 		window:   window,
+		Now:      time.Now,
 	}
 }
 
@@ -25,8 +29,18 @@ func (rl *RateLimiter) Allow(key string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	now := time.Now()
+	now := rl.Now()
 	cutoff := now.Add(-rl.window)
+	// Once per window, drop keys with no attempts left in it, so the map is
+	// bounded by recent clients rather than every address ever seen.
+	if now.Sub(rl.lastSweep) >= rl.window {
+		rl.lastSweep = now
+		for k, times := range rl.attempts {
+			if len(times) == 0 || !times[len(times)-1].After(cutoff) {
+				delete(rl.attempts, k)
+			}
+		}
+	}
 
 	recent := make([]time.Time, 0)
 	for _, t := range rl.attempts[key] {
@@ -43,6 +57,13 @@ func (rl *RateLimiter) Allow(key string) bool {
 	recent = append(recent, now)
 	rl.attempts[key] = recent
 	return true
+}
+
+// Len reports how many keys are tracked.
+func (rl *RateLimiter) Len() int {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	return len(rl.attempts)
 }
 
 func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {

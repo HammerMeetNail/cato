@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strings"
 )
 
 type contextKey string
@@ -62,7 +61,7 @@ func CSRFRequired(db Querier, cookies Cookies) func(http.Handler) http.Handler {
 				return
 			}
 
-			if !strings.EqualFold(session.CSRFToken, csrfToken) {
+			if !TokensEqual(session.CSRFToken, csrfToken) {
 				writeJSON(w, http.StatusForbidden, errResp("csrf_mismatch", "CSRF token mismatch"))
 				return
 			}

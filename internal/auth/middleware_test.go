@@ -140,12 +140,20 @@ func TestCSRFRequiredMiddleware(t *testing.T) {
 		t.Errorf("POST wrong token: got %d called=%v", rec.Code, called)
 	}
 
-	// POST with correct token (case-insensitive) → pass.
+	// POST with the exact token → pass.
+	called = false
+	rec = httptest.NewRecorder()
+	mw.ServeHTTP(rec, reqWith(http.MethodPost, sess.CSRFToken))
+	if rec.Code != http.StatusOK || !called {
+		t.Errorf("POST correct token: got %d called=%v", rec.Code, called)
+	}
+
+	// The comparison is exact (constant time, no case folding).
 	called = false
 	rec = httptest.NewRecorder()
 	mw.ServeHTTP(rec, reqWith(http.MethodPost, strings.ToUpper(sess.CSRFToken)))
-	if rec.Code != http.StatusOK || !called {
-		t.Errorf("POST correct token: got %d called=%v", rec.Code, called)
+	if rec.Code != http.StatusForbidden || called {
+		t.Errorf("POST case-changed token: got %d called=%v", rec.Code, called)
 	}
 
 	// POST with garbage session → 403.

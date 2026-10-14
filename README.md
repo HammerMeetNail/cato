@@ -49,6 +49,8 @@ and production environment using the runbook before cutting a release tag.
 | `CATO_HTTP_REDIRECT_ADDR` | — | Optional plain-HTTP listener that answers every request with a 308 to HTTPS. Needs native TLS. |
 | `CATO_TRUSTED_PROXIES` | — | Comma-separated CIDRs/IPs whose `X-Forwarded-For`/`X-Forwarded-Proto` are believed (rate limiting, scheme). Ignored from anyone else. |
 | `CATO_ALLOW_INSECURE` | — | `1` permits plain HTTP. For tests only. |
+| `CATO_SIGNUP` | `closed` | `open`, `invite` or `closed`. Every mode allows the first account on an empty server; `closed` blocks the rest (email and Google). `invite` behaves like `closed` until invites ship. |
+| `CATO_SEARCH_RATE_LIMIT` | `120` | Per-IP `/api/games/search` requests per minute. |
 | `CATO_SECURE_COOKIES` | `false` | Legacy override; HTTPS already forces `Secure`. |
 
 Over HTTPS the session cookie is `__Host-cato_session` (`Secure`, `Path=/`, no
@@ -87,7 +89,13 @@ At startup Cato also repairs cover data poisoned by earlier bugs: URLs pointing 
 
 ## Auth
 
-Email/password signup and login, plus Google OAuth. Sessions are stored as opaque hashed tokens. Unsafe methods require a CSRF token returned by `GET /api/me`. Expired sessions and cache entries are swept daily by a background job.
+Email/password signup and login, plus Google OAuth. Sessions are stored as opaque hashed tokens. Unsafe methods require a CSRF token returned by `GET /api/me` (compared exactly, in constant time). Expired sessions and cache entries are swept daily by a background job.
+
+- Sign-up follows `CATO_SIGNUP` (default `closed`: only the first account). Set `CATO_SIGNUP=open` temporarily to let more people register.
+- Login is limited per IP and per account: after 5 consecutive failures an account waits 1 s, 2 s, 4 s… (up to 15 minutes) whether or not it exists. Unknown emails cost a bcrypt compare, and duplicate sign-ups get a generic error, so responses don't reveal which emails have accounts.
+- Deleting an account needs the current password (or, for Google-only accounts, a sign-in within the last 10 minutes).
+- Anonymous catalog searches are local only; only signed-in searches refresh from IGDB. Queries are capped at 100 characters.
+- Library notes are limited to 10,000 characters, with at most 32 tags of 40 characters each. CSV export prefixes cells that start with `= + - @`, tab or CR with `'`.
 
 Google OAuth needs `CATO_BASE_URL` set to the `https://` address users type into their browser (a warning is logged at startup otherwise). Google also accepts `https://localhost` redirect URIs for development.
 
@@ -97,15 +105,18 @@ Google OAuth needs `CATO_BASE_URL` set to the `https://` address users type into
 |---|---|---|---|
 | `GET` | `/healthz` | No | Health check |
 | `GET` | `/api/me` | No | Current user info + CSRF token |
+| `GET` | `/api/config` | No | `{google_enabled, signup, signup_allowed}` for the login page |
+| `DELETE` | `/api/me` | Session+CSRF | Delete account; body `{"confirm":"DELETE","password":"…"}` |
 | `POST` | `/api/auth/signup` | No | Create account |
 | `POST` | `/api/auth/login` | No | Login |
 | `POST` | `/api/auth/logout` | No | Logout |
 | `GET` | `/api/auth/google/start` | No | Google OAuth start |
 | `GET` | `/api/auth/google/callback` | No | Google OAuth callback |
-| `GET` | `/api/games/search?q=zelda` | No | Search games (`full=1` enables paginated results with `limit`/`offset`) |
+| `GET` | `/api/games/search?q=zelda` | No | Search games (`full=1` enables paginated results with `limit`/`offset`). Anonymous: local catalog only. 120/min per IP. |
 | `GET` | `/api/games/{id}` | No | Get game detail |
 | `GET` | `/api/library?status=backlog&limit=&offset=&tag=` | Session | List library (paginated; returns `X-Total-Count` / `X-Has-More` headers) |
 | `GET` | `/api/library/{gameID}` | Session | Get one library item (404 if not owned) |
+| `PATCH` | `/api/library/{gameID}` | Session+CSRF | Update only the fields sent; `playtime_delta_minutes` adds time atomically. Returns the item. |
 | `POST`/`PUT` | `/api/library/{gameID}` | Session+CSRF | Add/update item. Omitted timestamps are preserved and auto-tracked on status changes; `""` clears them. Timestamps accept RFC3339 or `YYYY-MM-DD`. |
 | `DELETE` | `/api/library/{gameID}` | Session+CSRF | Remove item |
 | `GET` | `/api/library/check?ids=1,2,3` | Session | Which of these game IDs are in the library |

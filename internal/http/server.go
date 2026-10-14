@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -79,8 +81,33 @@ func (s *Server) routes() {
 	})
 
 	// Static files with cache headers
-	fs := http.FileServer(http.Dir(s.cfg.StaticDir))
+	fs := http.FileServer(noListingFS{http.Dir(s.cfg.StaticDir)})
 	s.mux.Handle("/", staticCacheMiddleware(fs))
+}
+
+// noListingFS hides directories that have no index.html, so http.FileServer
+// answers 404 instead of generating a listing of the static tree.
+type noListingFS struct{ fs http.FileSystem }
+
+func (n noListingFS) Open(name string) (http.File, error) {
+	f, err := n.fs.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	if info.IsDir() {
+		index, err := n.fs.Open(path.Join(name, "index.html"))
+		if err != nil {
+			f.Close()
+			return nil, fs.ErrNotExist
+		}
+		index.Close()
+	}
+	return f, nil
 }
 
 // staticCacheMiddleware sets caching policy for static assets. JS/CSS use

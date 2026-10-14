@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"cato/internal/auth"
 	"cato/internal/db"
@@ -693,6 +694,13 @@ func toInt64(v interface{}) int64 {
 	}
 }
 
+// Size limits for user-supplied library text (characters, not bytes).
+const (
+	maxNotesChars = 10000
+	maxTags       = 32
+	maxTagChars   = 40
+)
+
 // writeLibraryItem validates and persists a full library item state. Both the
 // POST upsert and the PATCH merge funnel through here so validation and
 // timestamp semantics can never diverge. A non-nil playtimeDelta is applied
@@ -715,6 +723,21 @@ func (h *LibraryHandler) writeLibraryItem(ctx context.Context, w http.ResponseWr
 	if req.PlaytimeMinutes < 0 {
 		writeJSON(w, http.StatusBadRequest, errResp("invalid_playtime", "Playtime must be non-negative"))
 		return false
+	}
+
+	if utf8.RuneCountInString(req.Notes) > maxNotesChars {
+		writeJSON(w, http.StatusBadRequest, errResp("invalid_notes", "Notes must be at most 10,000 characters"))
+		return false
+	}
+	if len(req.Tags) > maxTags {
+		writeJSON(w, http.StatusBadRequest, errResp("invalid_tags", "At most 32 tags per game"))
+		return false
+	}
+	for _, t := range req.Tags {
+		if utf8.RuneCountInString(strings.TrimSpace(t)) > maxTagChars {
+			writeJSON(w, http.StatusBadRequest, errResp("invalid_tags", "Tags must be at most 40 characters"))
+			return false
+		}
 	}
 
 	// Validate ownership fields
@@ -1156,6 +1179,16 @@ func (h *LibraryHandler) handleLibraryCounts(w http.ResponseWriter, r *http.Requ
 // handleLibraryExport handles GET /api/library/export — the caller's entire
 // library as a CSV download (spreadsheet-friendly backup). Auth via session
 // cookie, so a plain link works; no CSRF needed for a read-only GET.
+// csvSafe defuses spreadsheet formula injection: a cell starting with
+// = + - @ tab or carriage return is evaluated as a formula by Excel, Sheets
+// and LibreOffice, so it gets a leading apostrophe (OWASP CSV injection).
+func csvSafe(cell string) string {
+	if cell != "" && strings.ContainsRune("=+-@\t\r", rune(cell[0])) {
+		return "'" + cell
+	}
+	return cell
+}
+
 func (h *LibraryHandler) handleLibraryExport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, errResp("method_not_allowed", "Method not allowed"))
@@ -1200,10 +1233,14 @@ func (h *LibraryHandler) handleLibraryExport(w http.ResponseWriter, r *http.Requ
 		json.Unmarshal([]byte(ownedJSON), &ownedPlatforms)
 
 		hours := fmt.Sprintf("%.2f", float64(playtime)/60)
-		_ = csv.Write([]string{name, status, strings.Join(ownedPlatforms, "; "), medium,
+		record := []string{name, status, strings.Join(ownedPlatforms, "; "), medium,
 			strconv.FormatInt(rating, 10), hours,
 			startedAt, completedAt, createdAt,
-			strings.Join(tags, "; "), notes})
+			strings.Join(tags, "; "), notes}
+		for i := range record {
+			record[i] = csvSafe(record[i])
+		}
+		_ = csv.Write(record)
 	}
 	csv.Flush()
 }

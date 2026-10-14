@@ -67,6 +67,26 @@ test.describe('security & platform behavior', () => {
     expect(signup.status()).toBe(201);
   });
 
+  test('login page only offers what the server supports (S11, S3)', async ({ page, request }) => {
+    const config = await (await request.get('/api/config')).json();
+    expect(config).toEqual({ google_enabled: false, signup: 'open', signup_allowed: true });
+    await page.goto('/login');
+    await expect(page.locator('#signupFooter')).toBeVisible();
+    await expect(page.locator('#googleBtn')).toBeHidden();
+    await expect(page.locator('#googleDivider')).toBeHidden();
+    // Visiting the Google endpoints anyway shows a page, not raw JSON.
+    await page.goto('/api/auth/google/start');
+    await expect(page.locator('h1')).toHaveText("Couldn't sign you in");
+    await expect(page.getByRole('link', { name: 'Back to sign in' })).toHaveAttribute('href', '/login');
+  });
+
+  test('directory listings are disabled (S6)', async ({ request }) => {
+    for (const path of ['/js/', '/css/', '/icons/']) {
+      const res = await request.get(path);
+      expect(res.status(), path).toBe(404);
+    }
+  });
+
   test('healthz reports database status', async ({ request }) => {
     const res = await request.get('/healthz');
     expect(res.status()).toBe(200);

@@ -101,8 +101,15 @@ web/static/      HTML, CSS, JS (vanilla, no bundler)
   theme/login bootstrap scripts are external (`js/theme-init.js`, `js/login.js`).
 - **IGDB is optional**: when `IGDB_CLIENT_ID` is empty a `noopIGDBClient` is used; IGDB calls
   fall back to local results on error.
-- **Rate limiting**: in-memory only (not shared across processes). `auth.RateLimiter` for
-  login/signup; `games.IGDBRateLimiter` (~1 req/sec) for the IGDB API.
+- **Rate limiting**: in-memory only (not shared across processes). `auth.RateLimiter`
+  (per IP, idle keys evicted each window) for login/signup/password and
+  `/api/games/search`; `auth.LoginThrottle` for per-account login backoff;
+  `games.IGDBRateLimiter` (~1 req/sec) for the IGDB API. Anonymous searches run with
+  `games.LocalOnly(ctx)` and never refresh from IGDB.
+- **Signup**: `CATO_SIGNUP` (`open|invite|closed`, default `closed`). Account creation goes
+  through `AuthHandler.createUser`, which enforces the mode atomically (first account on an
+  empty DB always allowed) for both email and Google sign-up. `GET /api/config` tells the
+  login page whether to show sign-up and the Google button.
 - **PWA shell & bottom navigation (Nabu parity)**: `web/static/index.html` is the only
   authenticated page. It uses a `height: var(--app-h)` flex-column shell (see
   `web/static/js/head-init.js` for iOS standalone `screen.height` vs `innerHeight`

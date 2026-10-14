@@ -126,9 +126,19 @@ export function changePassword(currentPassword, newPassword) {
 }
 
 // deleteAccount permanently removes the account and all its data (library,
-// sessions). The server requires the typed confirmation.
-export function deleteAccount() {
-  return api.del('/api/me', { confirm: 'DELETE' });
+// sessions). The server requires the typed confirmation plus the current
+// password (accounts without one need a sign-in from the last 10 minutes).
+export function deleteAccount(password = '') {
+  return api.del('/api/me', password ? { confirm: 'DELETE', password } : { confirm: 'DELETE' });
+}
+
+// publicConfig returns login-page settings: {google_enabled, signup, signup_allowed}.
+export async function publicConfig() {
+  try {
+    return await api.get('/api/config');
+  } catch {
+    return { google_enabled: false, signup_allowed: true };
+  }
 }
 
 export async function getGame(id) {

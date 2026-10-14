@@ -10,6 +10,15 @@ import (
 	"strings"
 )
 
+// Signup modes (CATO_SIGNUP). Until invites exist (plan phase P4), "invite"
+// behaves like "closed". Every mode lets the first account on an empty
+// instance be created, so a fresh install can always be bootstrapped.
+const (
+	SignupOpen   = "open"
+	SignupInvite = "invite"
+	SignupClosed = "closed"
+)
+
 type Config struct {
 	ListenAddr       string
 	DBPath           string
@@ -26,6 +35,12 @@ type Config struct {
 	// minute); test harnesses raise it so parallel API clients aren't
 	// rate-limited as a single shared IP.
 	AuthRateLimit int
+	// SearchRateLimit is the per-IP limit on /api/games/search per minute
+	// (CATO_SEARCH_RATE_LIMIT, default 120).
+	SearchRateLimit int
+	// Signup is one of SignupOpen, SignupInvite, SignupClosed (CATO_SIGNUP,
+	// default closed). The zero value behaves as closed.
+	Signup string
 
 	// TLSCertFile/TLSKeyFile make Cato serve HTTPS itself. DevTLS generates
 	// (and reuses) a self-signed certificate under DevTLSDir instead; main
@@ -61,6 +76,8 @@ func Load() *Config {
 		CookieSecure:      os.Getenv("CATO_SECURE_COOKIES") == "true",
 		BaseURL:           getEnv("CATO_BASE_URL", ""),
 		AuthRateLimit:     intFromEnv("CATO_AUTH_RATE_LIMIT", 0),
+		SearchRateLimit:   intFromEnv("CATO_SEARCH_RATE_LIMIT", 0),
+		Signup:            strings.ToLower(getEnv("CATO_SIGNUP", SignupClosed)),
 		TLSCertFile:       os.Getenv("CATO_TLS_CERT_FILE"),
 		TLSKeyFile:        os.Getenv("CATO_TLS_KEY_FILE"),
 		DevTLS:            boolFromEnv("CATO_DEV_TLS"),
@@ -70,6 +87,18 @@ func Load() *Config {
 		AllowInsecure:     boolFromEnv("CATO_ALLOW_INSECURE"),
 		trustedProxiesErr: proxiesErr,
 	}
+}
+
+// SignupIsOpen reports whether anyone may create an account (not just the
+// first one on an empty instance).
+func (c *Config) SignupIsOpen() bool { return c.Signup == SignupOpen }
+
+// SignupMode is the effective mode name ("closed" for the zero value).
+func (c *Config) SignupMode() string {
+	if c.Signup == "" {
+		return SignupClosed
+	}
+	return c.Signup
 }
 
 // ServesTLS reports whether Cato terminates TLS itself.
@@ -99,6 +128,11 @@ func (c *Config) SecureCookies() bool {
 func (c *Config) Validate() error {
 	if c.trustedProxiesErr != nil {
 		return c.trustedProxiesErr
+	}
+	switch c.Signup {
+	case "", SignupOpen, SignupInvite, SignupClosed:
+	default:
+		return fmt.Errorf("CATO_SIGNUP %q must be open, invite or closed", c.Signup)
 	}
 	if (c.TLSCertFile == "") != (c.TLSKeyFile == "") {
 		return errors.New("CATO_TLS_CERT_FILE and CATO_TLS_KEY_FILE must be set together")
