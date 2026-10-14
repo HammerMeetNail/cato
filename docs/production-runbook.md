@@ -60,8 +60,20 @@ user out once. HSTS (`max-age=31536000`, no preload) and
 serves a non-dev certificate.
 
 Sign-up is closed by default (`CATO_SIGNUP=closed`): the first account on an
-empty database can register, nobody else can (email or Google). Set
-`CATO_SIGNUP=open` temporarily to add people, then close it again.
+empty database can register and becomes the admin; after that, people join with
+invite links. In `closed` mode only admins' invites work; `CATO_SIGNUP=invite`
+lets anyone invite. An admin can override the mode on the Admin page (recorded in
+the audit log). On upgrade, the oldest existing account becomes the admin. An
+admin can also make one-time password reset links (Admin → People), since Cato
+sends no password emails.
+
+Optional integrations each need only their key in `.env` (see `.env.example`):
+`STEAM_WEB_API_KEY` (Steam import and daily play time sync), `ITAD_API_KEY`
+(wishlist price alerts), `UPCITEMDB_KEY` (more barcode lookups), `CATO_SMTP_*`
+(weekly email digest) and `CATO_WIKIDATA_LINKS=1`. Web Push needs nothing: VAPID
+keys are generated on first use and stored in the database, and the host needs
+outbound HTTPS to the browsers' push services. Passkeys need Cato to be reached
+by a host name (`CATO_BASE_URL`), not an IP address.
 
 Register `<CATO_BASE_URL>/api/auth/google/callback` with Google. Do not set the
 test-only `CATO_AUTH_RATE_LIMIT`/`CATO_SEARCH_RATE_LIMIT` overrides in production. Forwarded IP headers are
@@ -108,7 +120,16 @@ tag are separate operator actions. Configure required reviewers on the GitHub
 
 `Containerfile` builds amd64/arm64 release images from source. Trivy scans both
 architectures at the returned digest; Cosign signs that digest using GitHub OIDC
-before release notes and deployment. Main/PR image builds do not log into Quay or
+before release notes and deployment, and the deploy job runs `cosign verify`
+(certificate identity: this repository's `ci.yml` at the release tag, issuer
+`token.actions.githubusercontent.com`) before it touches the host. To check an
+image by hand:
+
+```bash
+cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity "https://github.com/<owner>/<repo>/.github/workflows/ci.yml@refs/tags/vX.Y.Z" \
+  quay.io/<repository>@sha256:<digest>
+``` Main/PR image builds do not log into Quay or
 publish. The old NAS `Dockerfile` remains a separate binary-packaging path.
 
 Prepare the target with Docker Compose v2 supporting `up --wait`, Bash,
