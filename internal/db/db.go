@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"runtime"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -24,6 +25,21 @@ import (
 type DB struct {
 	Read  *sql.DB
 	Write *sql.DB
+
+	// observe, when set, sees every proxied statement's duration (the
+	// slow-query log and metrics). Statements on Read/Write directly and
+	// inside transactions are not observed.
+	observe func(query string, d time.Duration)
+}
+
+// SetObserver installs fn to receive each proxied statement's duration.
+// Call it before serving traffic.
+func (db *DB) SetObserver(fn func(query string, d time.Duration)) { db.observe = fn }
+
+func (db *DB) track(query string, start time.Time) {
+	if db.observe != nil {
+		db.observe(query, time.Since(start))
+	}
 }
 
 // dsn builds a modernc.org/sqlite DSN. IMPORTANT: modernc.org/sqlite does NOT
@@ -116,28 +132,34 @@ func (db *DB) Ping() error { return db.Read.Ping() }
 // --- read routing ---
 
 func (db *DB) Query(query string, args ...any) (*sql.Rows, error) {
+	defer db.track(query, time.Now())
 	return db.Read.Query(query, args...)
 }
 
 func (db *DB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	defer db.track(query, time.Now())
 	return db.Read.QueryContext(ctx, query, args...)
 }
 
 func (db *DB) QueryRow(query string, args ...any) *sql.Row {
+	defer db.track(query, time.Now())
 	return db.Read.QueryRow(query, args...)
 }
 
 func (db *DB) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	defer db.track(query, time.Now())
 	return db.Read.QueryRowContext(ctx, query, args...)
 }
 
 // --- write routing ---
 
 func (db *DB) Exec(query string, args ...any) (sql.Result, error) {
+	defer db.track(query, time.Now())
 	return db.Write.Exec(query, args...)
 }
 
 func (db *DB) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	defer db.track(query, time.Now())
 	return db.Write.ExecContext(ctx, query, args...)
 }
 

@@ -21,6 +21,8 @@ import (
 	"cato/internal/config"
 	"cato/internal/covers"
 	"cato/internal/db"
+	"cato/internal/jobs"
+	"cato/internal/metrics"
 )
 
 type Server struct {
@@ -32,6 +34,8 @@ type Server struct {
 	gameHandler    *GameHandler
 	libraryHandler *LibraryHandler
 	static         *gzipStatic
+	jobs           *jobs.Runner
+	metrics        *metrics.Registry
 
 	// certReloadInterval bounds how often the TLS certificate files are
 	// re-checked for renewal.
@@ -48,7 +52,10 @@ func NewServer(cfg *config.Config, db *db.DB) *Server {
 		db:                 db,
 		mux:                http.NewServeMux(),
 		certReloadInterval: time.Minute,
+		metrics:            metrics.NewRegistry(),
 	}
+	db.SetObserver(s.observeQuery)
+	s.metrics.Collect(s.collectGauges)
 	s.routes()
 	s.httpServer = &http.Server{Addr: cfg.ListenAddr, Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	if cfg.HTTPRedirectAddr != "" {
@@ -60,6 +67,7 @@ func NewServer(cfg *config.Config, db *db.DB) *Server {
 func (s *Server) routes() {
 	s.static = newGzipStatic(s.cfg.StaticDir, http.FileServer(noListingFS{http.Dir(s.cfg.StaticDir)}))
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
+	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
 
 	authHandler := NewAuthHandler(s.db, s.cfg)
 	authHandler.Register(s.mux)
@@ -241,9 +249,18 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 		dbStatus = "unreachable"
 	}
 
-	resp := map[string]string{
+	resp := map[string]any{
 		"status":   status,
 		"database": dbStatus,
+	}
+	// Job lag is reported, not fatal: a stuck job shouldn't get the
+	// container restarted, but the operator should see it.
+	if s.jobs != nil {
+		lag, job := s.jobs.MaxLag(ctx)
+		resp["job_lag_seconds"] = int64(lag.Seconds())
+		if job != "" {
+			resp["most_overdue_job"] = job
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -254,7 +271,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) Handler() http.Handler {
-	return s.clientMiddleware(securityMiddleware(s.cfg, gzipMiddleware(apiBodyLimitMiddleware(s.mux))))
+	return s.clientMiddleware(s.observeMiddleware(securityMiddleware(s.cfg, gzipMiddleware(apiBodyLimitMiddleware(muxRoute(s.mux))))))
 }
 
 // clientMiddleware resolves the client IP and scheme once per request,
@@ -264,6 +281,13 @@ func (s *Server) clientMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(w, auth.ResolveClient(r, s.cfg.TrustedProxies))
 	})
 }
+
+// Jobs returns the server-owned recurring tasks (catalog refresh and
+// repair) for the shared job runner.
+func (s *Server) Jobs() []jobs.Job { return s.gameHandler.Jobs(s.cfg) }
+
+// SetJobRunner lets /healthz and the admin pages report job health.
+func (s *Server) SetJobRunner(r *jobs.Runner) { s.jobs = r }
 
 // SetCoverNotifier registers a callback (the cover worker's Wake) run after
 // library writes that may have queued a cover job.
@@ -335,7 +359,6 @@ func (s *Server) Start() error {
 	if err := s.Listen(); err != nil {
 		return err
 	}
-	s.gameHandler.startBackground(s.cfg)
 	s.mu.Lock()
 	ln, rln := s.ln, s.redirectLn
 	s.mu.Unlock()

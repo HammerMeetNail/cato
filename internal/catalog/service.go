@@ -33,7 +33,6 @@ type Service struct {
 	refreshSlots   chan struct{}
 	refreshTimeout time.Duration
 	// Initial delay before the first query-cache sweep (test seam; see NewService).
-	queryCacheInitialDelay time.Duration
 	lifecycleMu            sync.Mutex
 	stopping               bool
 	workers                sync.WaitGroup
@@ -52,9 +51,6 @@ func NewService(store *Store, igdb IGDBClient, db *db.DB) *Service {
 		refreshing:     make(map[string]chan struct{}),
 		refreshSlots:   make(chan struct{}, 2),
 		refreshTimeout: 15 * time.Second,
-		// Initial delay before the first query-cache sweep; a seam so tests
-		// don't sleep 30s. Production keeps the default.
-		queryCacheInitialDelay: 30 * time.Second,
 	}
 }
 
@@ -205,7 +201,9 @@ func (s *Service) startAsyncRefresh(query string, includeEditions bool) {
 			s.refreshMu.Unlock()
 		}()
 
-		ctx, cancel := context.WithTimeout(s.ctx, s.refreshTimeout)
+		// Someone is typing this query: it goes in the interactive lane,
+		// ahead of background refreshes and backfills.
+		ctx, cancel := context.WithTimeout(WithLane(s.ctx, LaneInteractive), s.refreshTimeout)
 		defer cancel()
 		s.refreshFromIGDB(ctx, query, includeEditions)
 	}()
@@ -274,62 +272,6 @@ func (s *Service) SyncPlatforms(ctx context.Context) error {
 	return s.store.ApplyPlatformShortnames(ctx)
 }
 
-// StartPlatformSync runs SyncPlatforms in the background with bounded
-// retries, so a transient network failure at container start doesn't leave
-// platforms missing until the next deploy.
-func (s *Service) StartPlatformSync() {
-	s.startWorker(func(ctx context.Context) {
-		var err error
-		for attempt := 0; attempt < 3; attempt++ {
-			if attempt > 0 {
-				if !waitContext(ctx, 15*time.Second) {
-					return
-				}
-			}
-			if err = s.SyncPlatforms(ctx); err == nil {
-				return
-			}
-		}
-		log.Printf("platform sync: giving up after retries: %v", err)
-	})
-}
-
-func (s *Service) StartStaleRefresh() {
-	const maxPerDay = 100
-	const interval = 6 * time.Hour
-
-	s.startWorker(func(ctx context.Context) {
-		for ctx.Err() == nil {
-			s.refreshStaleGamesContext(ctx, maxPerDay)
-			if !waitContext(ctx, interval) {
-				return
-			}
-		}
-	})
-}
-
-// StartQueryCacheRefresh proactively refreshes stale igdb_query_cache entries
-// once per day in the background (up to 50 per cycle, rate-limited via the
-// IGDB limiter). This keeps popular search queries fresh without waiting for
-// a user to trigger the stale-while-revalidate path, so the first search
-// after the 24h window still hits a fresh cache. Only call it when a real
-// IGDB client is configured.
-func (s *Service) StartQueryCacheRefresh() {
-	s.startWorker(func(ctx context.Context) {
-		// Run once shortly after startup so a restart doesn't wait a full day
-		// to refresh queries that expired while the container was down.
-		if !waitContext(ctx, s.queryCacheInitialDelay) {
-			return
-		}
-		for {
-			s.refreshStaleQueriesContext(ctx, 50)
-			if !waitContext(ctx, 24*time.Hour) {
-				return
-			}
-		}
-	})
-}
-
 func (s *Service) refreshStaleQueries(limit int) { s.refreshStaleQueriesContext(s.ctx, limit) }
 func (s *Service) refreshStaleQueriesContext(ctx context.Context, limit int) {
 	keys, err := s.store.GetStaleQueries(ctx, limit)
@@ -362,13 +304,6 @@ func parseCacheKey(key string) (string, bool) {
 		return strings.TrimSuffix(trimmed, ":editions"), true
 	}
 	return trimmed, false
-}
-
-// StartCoverRepair runs RepairCovers once in the background at startup.
-// Only call it when a real IGDB client is configured — without one there is
-// nothing to re-fetch metadata from.
-func (s *Service) StartCoverRepair() {
-	s.startWorker(func(ctx context.Context) { s.RepairCovers(ctx) })
 }
 
 // RepairCovers fixes cover data poisoned by earlier bugs:
@@ -520,87 +455,6 @@ func (s *Service) repairGuessedCoverBatch(ctx context.Context, limit int) error 
 	return nil
 }
 
-// BackfillCovers walks every game whose cover_url looks guessed (co<digits>)
-// and re-fetches it from IGDB in batches, correcting the URL from
-// cover.image_id. Resumable: only rows where the fetched URL differs are
-// updated, and the GLOB filter narrows the candidate set so re-running after
-// a partial run skips already-fixed rows. `progress` is called after each
-// batch with (done, total) for logging.
-func (s *Service) BackfillCovers(ctx context.Context, batchSize int, progress func(done, total int)) (int, error) {
-	if batchSize <= 0 {
-		batchSize = 500
-	}
-	if batchSize > 500 {
-		batchSize = 500
-	}
-	pending, err := s.store.CountPendingCoverRepair(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("count pending: %w", err)
-	}
-	total := int(pending)
-	done := 0
-	progress(done, total)
-	if total == 0 {
-		return 0, nil
-	}
-	var afterID int64
-	for {
-		if ctx.Err() != nil {
-			return done, ctx.Err()
-		}
-		ids, err := s.store.GetCoverRepairCandidatesAfter(ctx, afterID, batchSize)
-		if err != nil {
-			return done, fmt.Errorf("get candidates: %w", err)
-		}
-		if len(ids) == 0 {
-			break
-		}
-		afterID = ids[len(ids)-1]
-		games, err := s.fetchBatchWithRetry(ctx, ids)
-		if err != nil {
-			return done, fmt.Errorf("batch fetch at %d/%d: %w", done, total, err)
-		}
-		byID := make(map[int64]Game, len(games))
-		for _, g := range games {
-			byID[g.ID] = g
-		}
-		for _, id := range ids {
-			if ctx.Err() != nil {
-				return done, ctx.Err()
-			}
-			g, ok := byID[id]
-			if !ok {
-				// Deleted upstream — count it as done and move on. The stale
-				// cover_url will be left as-is; it will be cleared on next
-				// full refresh or left to show the placeholder.
-				done++
-				continue
-			}
-			var storedURL string
-			var storedCoverID int64
-			_ = s.db.QueryRowContext(ctx, `SELECT cover_url, cover_id FROM games WHERE id = ?`, id).Scan(&storedURL, &storedCoverID)
-			if g.CoverURL != storedURL || g.CoverID != storedCoverID {
-				if err := s.store.SetCoverAndMarkFetched(ctx, id, g.CoverID, g.CoverURL); err != nil {
-					log.Printf("backfill-covers: update %d failed: %v", id, err)
-				}
-				if g.CoverURL != "" {
-					s.store.EnqueueCoverJob(ctx, id, g.CoverURL)
-				}
-			}
-			done++
-		}
-		progress(done, total)
-		// Re-count remaining to keep total accurate if new rows were inserted
-		// concurrently (unlikely, but keeps the log honest).
-		if done%5000 == 0 {
-			if n, err := s.store.CountPendingCoverRepair(ctx); err == nil {
-				total = done + int(n)
-			}
-		}
-	}
-	return done, nil
-}
-
 // PurgeDeadCoverSources clears cover URLs pointing at the defunct
 // images.cato.com host (legacy Postgres import) and removes matching
 // cover_jobs. Safe to run repeatedly; returns the number of games updated.
@@ -615,31 +469,6 @@ func PurgeDeadCoverSources(database *db.DB) (int64, error) {
 	return n, nil
 }
 
-// StartNormalizationRepair runs the accent-stripping normalization fix
-// in the background. Older rows stored normalized_name with accents
-// (e.g. "pokémon go") so a query for "pokemon go" missed them via
-// FTS/LIKE. The new NormalizeName strips diacritics, so we update any
-// mismatched rows. Safe to run repeatedly; idempotent.
-func (s *Service) StartNormalizationRepair() {
-	s.startWorker(func(ctx context.Context) {
-		var cnt int
-		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='games'`).Scan(&cnt); err != nil || cnt == 0 {
-			return
-		}
-
-		if n, err := s.store.RepairNormalizedNames(ctx); err != nil {
-			log.Printf("normalization repair: games failed: %v", err)
-		} else if n > 0 {
-			log.Printf("normalization repair: fixed %d game names", n)
-		}
-		if n, err := s.store.RepairNormalizedAliases(ctx); err != nil {
-			log.Printf("normalization repair: aliases failed: %v", err)
-		} else if n > 0 {
-			log.Printf("normalization repair: fixed %d aliases", n)
-		}
-	})
-}
-
 // RepairNormalization is the synchronous variant used by tests and the
 // backfill subcommand. It returns the total number of rows updated.
 func (s *Service) RepairNormalization(ctx context.Context) (int64, error) {
@@ -652,62 +481,6 @@ func (s *Service) RepairNormalization(ctx context.Context) (int64, error) {
 		return n1 + n2, err
 	}
 	return n1 + n2, nil
-}
-
-// BackfillPopularity walks backfill-candidate rows (see GetBackfillCandidates)
-// and re-fetches each from IGDB so the new popularity fields (follows, hypes,
-// total_rating_count, category, status) get populated. Respects the IGDB rate
-// limiter baked into the client (~1 req/sec). Resumable: each successfully
-// upserted row gets popularity_fetched_at set, so re-running skips done rows.
-// `progress` is called after each batch with (done, total) for logging.
-func (s *Service) BackfillPopularity(ctx context.Context, batchSize, recentYears int, progress func(done, total int)) (int, error) {
-	pending, err := s.store.CountPendingBackfill(ctx, recentYears)
-	if err != nil {
-		return 0, fmt.Errorf("count pending: %w", err)
-	}
-	total := int(pending)
-	done := 0
-	progress(done, total)
-
-	for {
-		if ctx.Err() != nil {
-			return done, ctx.Err()
-		}
-		ids, err := s.store.GetBackfillCandidates(ctx, batchSize, recentYears)
-		if err != nil {
-			return done, fmt.Errorf("get candidates: %w", err)
-		}
-		if len(ids) == 0 {
-			break
-		}
-
-		for _, id := range ids {
-			if ctx.Err() != nil {
-				return done, ctx.Err()
-			}
-
-			game, err := s.igdb.GetGame(ctx, id)
-			if err != nil {
-				log.Printf("backfill: game %d failed: %v", id, err)
-				continue
-			}
-			if game == nil {
-				// IGDB no longer knows this ID; mark fetched so we don't
-				// retry it forever.
-				s.store.MarkPopularityFetched(ctx, id)
-				done++
-				continue
-			}
-
-			if err := s.store.UpsertIGDBGame(ctx, *game); err != nil {
-				log.Printf("backfill: upsert game %d failed: %v", id, err)
-				continue
-			}
-			done++
-		}
-		progress(done, total)
-	}
-	return done, nil
 }
 
 // backfillRetryDelays spaces out retries when IGDB rejects a batch (e.g. a
@@ -736,203 +509,6 @@ func (s *Service) fetchBatchWithRetry(ctx context.Context, ids []int64) ([]Game,
 			return nil, ctx.Err()
 		}
 	}
-}
-
-// BackfillAliases populates game_aliases for every catalog row in bulk,
-// fetching up to `batchSize` (max 500, IGDB's per-query id cap) games per
-// rate-limited request. Resumable: each processed row gets aliases_fetched_at
-// stamped — including rows IGDB no longer knows — so re-running skips done
-// rows and interrupted runs continue where they left off. Unlike
-// BackfillPopularity this never touches other game columns. `progress` is
-// called after each batch with (done, total) for logging.
-func (s *Service) BackfillAliases(ctx context.Context, batchSize int, progress func(done, total int)) (int, error) {
-	if batchSize <= 0 {
-		batchSize = 500
-	}
-	if batchSize > 500 {
-		batchSize = 500
-	}
-
-	pending, err := s.store.CountPendingAliasBackfill(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("count pending: %w", err)
-	}
-	total := int(pending)
-	done := 0
-	progress(done, total)
-
-	for {
-		if ctx.Err() != nil {
-			return done, ctx.Err()
-		}
-		ids, err := s.store.GetAliasBackfillCandidates(ctx, batchSize)
-		if err != nil {
-			return done, fmt.Errorf("get candidates: %w", err)
-		}
-		if len(ids) == 0 {
-			break
-		}
-
-		games, err := s.fetchBatchWithRetry(ctx, ids)
-		if err != nil {
-			// Persistent failure (retries exhausted): stop and let the
-			// operator re-run — the marker column makes that cheap and
-			// race-free.
-			return done, fmt.Errorf("batch fetch at %d/%d: %w", done, total, err)
-		}
-
-		returned := make(map[int64]bool, len(games))
-		for _, g := range games {
-			if err := s.store.SetAliasesAndMarkFetched(ctx, g.ID, g.Name, g.Aliases); err != nil {
-				log.Printf("backfill: set aliases for %d failed: %v", g.ID, err)
-				continue
-			}
-			returned[g.ID] = true
-			done++
-		}
-		// IDs absent from the response are gone upstream; stamp them so the
-		// queue advances instead of re-selecting the same head rows forever.
-		for _, id := range ids {
-			if !returned[id] {
-				if err := s.store.MarkAliasesFetched(ctx, id); err != nil {
-					log.Printf("backfill: mark %d failed: %v", id, err)
-					continue
-				}
-				done++
-			}
-		}
-		progress(done, total)
-	}
-	return done, nil
-}
-
-// BackfillEditions populates version_parent for every catalog row in bulk,
-// fetching up to `batchSize` (max 500) games per rate-limited request.
-// Resumable via version_parent_fetched_at — each processed row gets the
-// marker stamped, including rows IGDB no longer knows, so re-running skips
-// done rows. Like BackfillAliases it never touches other game columns.
-func (s *Service) BackfillEditions(ctx context.Context, batchSize int, progress func(done, total int)) (int, error) {
-	if batchSize <= 0 {
-		batchSize = 500
-	}
-	if batchSize > 500 {
-		batchSize = 500
-	}
-
-	pending, err := s.store.CountPendingEditionBackfill(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("count pending: %w", err)
-	}
-	total := int(pending)
-	done := 0
-	progress(done, total)
-
-	for {
-		if ctx.Err() != nil {
-			return done, ctx.Err()
-		}
-		ids, err := s.store.GetEditionBackfillCandidates(ctx, batchSize)
-		if err != nil {
-			return done, fmt.Errorf("get candidates: %w", err)
-		}
-		if len(ids) == 0 {
-			break
-		}
-
-		games, err := s.fetchBatchWithRetry(ctx, ids)
-		if err != nil {
-			return done, fmt.Errorf("batch fetch at %d/%d: %w", done, total, err)
-		}
-
-		returned := make(map[int64]bool, len(games))
-		for _, g := range games {
-			if err := s.store.SetEditionInfoAndMarkFetched(ctx, g.ID, g.VersionParent, g.Category, g.ParentGame); err != nil {
-				log.Printf("backfill-editions: set edition info for %d failed: %v", g.ID, err)
-				continue
-			}
-			returned[g.ID] = true
-			done++
-		}
-		for _, id := range ids {
-			if !returned[id] {
-				if err := s.store.MarkEditionFetched(ctx, id); err != nil {
-					log.Printf("backfill-editions: mark %d failed: %v", id, err)
-					continue
-				}
-				done++
-			}
-		}
-		progress(done, total)
-	}
-	return done, nil
-}
-
-// BackfillCategories walks the entire catalog and corrects stale
-// category/parent_game values (the Postgres import left most packs as
-// category 0). It fetches every game in id order in batches of up to 500,
-// updating the row when the fetched values differ. Unlike
-// BackfillEditions it ignores the fetched marker and touches every row,
-// so already-edition-fetched packs like 26042 get fixed. Resumable via
-// afterID pagination; progress is reported as done/total.
-func (s *Service) BackfillCategories(ctx context.Context, batchSize int, progress func(done, total int)) (int, error) {
-	if batchSize <= 0 {
-		batchSize = 500
-	}
-	if batchSize > 500 {
-		batchSize = 500
-	}
-	total64, err := s.store.CountTotalGames(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("count total: %w", err)
-	}
-	total := int(total64)
-	done := 0
-	progress(done, total)
-	var afterID int64
-	for {
-		if ctx.Err() != nil {
-			return done, ctx.Err()
-		}
-		ids, err := s.store.GetGameIDsAfter(ctx, afterID, batchSize)
-		if err != nil {
-			return done, fmt.Errorf("get ids: %w", err)
-		}
-		if len(ids) == 0 {
-			break
-		}
-		afterID = ids[len(ids)-1]
-		games, err := s.fetchBatchWithRetry(ctx, ids)
-		if err != nil {
-			return done, fmt.Errorf("batch fetch at %d/%d: %w", done, total, err)
-		}
-		byID := make(map[int64]Game, len(games))
-		for _, g := range games {
-			byID[g.ID] = g
-		}
-		for _, id := range ids {
-			if ctx.Err() != nil {
-				return done, ctx.Err()
-			}
-			g, ok := byID[id]
-			if !ok {
-				done++
-				continue
-			}
-			// Only write when something changed to avoid touching every row
-			// unnecessarily (still counts as done for progress).
-			if err := s.store.UpdateCategoryAndParentGame(ctx, id, g.Category, g.ParentGame); err != nil {
-				log.Printf("backfill-categories: update %d failed: %v", id, err)
-			}
-			// Also ensure version_parent is correct if it was previously
-			// missed (e.g. pack that is also an edition).
-			if g.VersionParent != 0 {
-				_ = s.store.SetVersionParentAndMarkFetched(ctx, id, g.VersionParent)
-			}
-			done++
-		}
-		progress(done, total)
-	}
-	return done, nil
 }
 
 func (s *Service) refreshStaleGames(maxPerDay int) { s.refreshStaleGamesContext(s.ctx, maxPerDay) }

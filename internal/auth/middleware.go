@@ -30,6 +30,9 @@ func AuthRequired(db Querier, cookies Cookies) func(http.Handler) http.Handler {
 
 			ctx := context.WithValue(r.Context(), SessionKey, session)
 			ctx = context.WithValue(ctx, UserIDKey, session.UserID)
+			if info := RequestInfoFrom(ctx); info != nil {
+				info.UserID = session.UserID
+			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -49,16 +52,21 @@ func CSRFRequired(db Querier, cookies Cookies) func(http.Handler) http.Handler {
 				return
 			}
 
-			sessionID := cookies.SessionID(r)
-			if sessionID == "" {
-				writeJSON(w, http.StatusForbidden, errResp("csrf_missing", "CSRF token required"))
-				return
-			}
-
-			session, err := GetSession(db, sessionID)
-			if err != nil || session == nil {
-				writeJSON(w, http.StatusForbidden, errResp("csrf_invalid", "Invalid session"))
-				return
+			// AuthRequired already loaded the session: reuse it instead of a
+			// second lookup per mutation.
+			session, _ := r.Context().Value(SessionKey).(*Session)
+			if session == nil {
+				sessionID := cookies.SessionID(r)
+				if sessionID == "" {
+					writeJSON(w, http.StatusForbidden, errResp("csrf_missing", "CSRF token required"))
+					return
+				}
+				var err error
+				session, err = GetSession(db, sessionID)
+				if err != nil || session == nil {
+					writeJSON(w, http.StatusForbidden, errResp("csrf_invalid", "Invalid session"))
+					return
+				}
 			}
 
 			if !TokensEqual(session.CSRFToken, csrfToken) {
@@ -92,4 +100,24 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 
 func errResp(code, message string) map[string]string {
 	return map[string]string{"error": code, "message": message}
+}
+
+// RequestInfo collects per-request facts for the access log; handlers deep
+// in the chain fill it in (the log middleware owns it).
+type RequestInfo struct {
+	UserID string
+}
+
+type requestInfoKey struct{}
+
+// WithRequestInfo attaches a fresh RequestInfo to ctx.
+func WithRequestInfo(ctx context.Context) (context.Context, *RequestInfo) {
+	info := &RequestInfo{}
+	return context.WithValue(ctx, requestInfoKey{}, info), info
+}
+
+// RequestInfoFrom returns ctx's RequestInfo, or nil.
+func RequestInfoFrom(ctx context.Context) *RequestInfo {
+	info, _ := ctx.Value(requestInfoKey{}).(*RequestInfo)
+	return info
 }

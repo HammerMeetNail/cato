@@ -125,6 +125,19 @@ var migrations = []Migration{
 		     );
 		     CREATE INDEX idx_undo_log_user ON undo_log(user_id, created_at);
 
+		     -- Background job schedule (internal/jobs): when each job next
+		     -- runs survives restarts, so a daily job stays daily.
+		     CREATE TABLE jobs (
+		       name TEXT PRIMARY KEY,
+		       next_run_at TEXT NOT NULL,
+		       last_started_at TEXT,
+		       last_finished_at TEXT,
+		       last_duration_ms INTEGER NOT NULL DEFAULT 0,
+		       last_error TEXT NOT NULL DEFAULT '',
+		       runs INTEGER NOT NULL DEFAULT 0,
+		       failures INTEGER NOT NULL DEFAULT 0
+		     );
+
 		     -- Backfill: one playthrough per item with dates, one legacy session
 		     -- per item with time, so totals are unchanged.
 		     INSERT INTO playthroughs (user_id, game_id, platform, started_on, finished_on, completion, rating)
@@ -690,8 +703,10 @@ func SchemaVersion(database *DB) (int, error) {
 	return getCurrentVersion(database.Write)
 }
 
-// migrateTo applies pending migrations up to and including version target.
+// MigrateTo applies pending migrations up to and including version target.
 // Tests use it to build a database at an older schema.
+func MigrateTo(database *DB, target int) error { return migrateTo(database, target) }
+
 func migrateTo(database *DB, target int) error {
 	w := database.Write
 

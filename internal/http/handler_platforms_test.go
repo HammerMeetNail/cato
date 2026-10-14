@@ -165,30 +165,23 @@ func TestTryGetUserID(t *testing.T) {
 	}
 }
 
-func TestStartBackgroundNoopClient(t *testing.T) {
-	// Without IGDB config only the normalization repair may start; the IGDB
-	// background loops must stay off (no network calls, no goroutines).
+func TestCatalogJobsWithoutIGDB(t *testing.T) {
+	// Without IGDB config only the normalization repair is scheduled; the
+	// IGDB-backed jobs stay off (no network calls).
 	database := setupGamesTestDB(t)
 	defer database.Close()
-	database.Exec(`INSERT INTO games (id, name, slug, normalized_name) VALUES
-		(1, 'Pokémon GO', 'pokemon-go', 'pokémon go')`)
-
 	handler := NewGameHandler(database, &config.Config{})
-	handler.startBackground(&config.Config{})
-
-	// Normalization repair runs immediately: poll briefly for the fix.
-	normalized := ""
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if err := database.QueryRow("SELECT normalized_name FROM games WHERE id = 1").Scan(&normalized); err == nil && normalized == "pokemon go" {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
+	var names []string
+	for _, j := range handler.Jobs(&config.Config{}) {
+		names = append(names, j.Name)
 	}
-	if normalized != "pokemon go" {
-		t.Errorf("expected accent-stripped normalized_name, got %q", normalized)
+	if len(names) != 1 || names[0] != "catalog.normalization-repair" {
+		t.Errorf("jobs without IGDB = %v", names)
 	}
-
+	with := handler.Jobs(&config.Config{IGDBClientID: "id"})
+	if len(with) < 4 {
+		t.Errorf("IGDB jobs missing: %d", len(with))
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := handler.service.Shutdown(ctx); err != nil {

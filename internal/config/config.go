@@ -57,6 +57,18 @@ type Config struct {
 	// AllowInsecure permits running without HTTPS. Unit tests only.
 	AllowInsecure bool
 
+	// BackupDir receives the automatic pre-migration snapshots
+	// (CATO_BACKUP_DIR, default "backups" next to the database).
+	BackupDir string
+	// LogFormat is "text" (default) or "json"; LogLevel debug|info|warn|error.
+	LogFormat string
+	LogLevel  string
+	// MetricsToken, when set, is required as a Bearer token on /metrics.
+	// Without it /metrics answers only private-network and loopback clients.
+	MetricsToken string
+	// Dev enables developer pages such as the component gallery (#dev/ui).
+	Dev bool
+
 	// trustedProxiesErr is reported by Validate so a typo in
 	// CATO_TRUSTED_PROXIES fails startup instead of silently trusting nothing.
 	trustedProxiesErr error
@@ -86,6 +98,38 @@ func Load() *Config {
 		TrustedProxies:    proxies,
 		AllowInsecure:     boolFromEnv("CATO_ALLOW_INSECURE"),
 		trustedProxiesErr: proxiesErr,
+		BackupDir:         os.Getenv("CATO_BACKUP_DIR"),
+		LogFormat:         strings.ToLower(getEnv("CATO_LOG_FORMAT", "text")),
+		LogLevel:          strings.ToLower(getEnv("CATO_LOG_LEVEL", "info")),
+		MetricsToken:      os.Getenv("CATO_METRICS_TOKEN"),
+		Dev:               boolFromEnv("CATO_DEV"),
+	}
+}
+
+// Summary describes the configuration for the startup log, without secrets
+// (credentials are reported only as configured or not).
+func (c *Config) Summary() []any {
+	set := func(v string) string {
+		if v == "" {
+			return "unset"
+		}
+		return "set"
+	}
+	tls := "proxy"
+	switch {
+	case c.DevTLS:
+		tls = "dev-self-signed"
+	case c.ServesTLS():
+		tls = "files"
+	case !c.HTTPS():
+		tls = "insecure"
+	}
+	return []any{
+		"listen", c.ListenAddr, "base_url", c.BaseURL, "tls", tls,
+		"http_redirect", c.HTTPRedirectAddr, "trusted_proxies", len(c.TrustedProxies),
+		"db", c.DBPath, "covers", c.CoverDir, "static", c.StaticDir, "backups", c.BackupDir,
+		"signup", c.SignupMode(), "igdb", set(c.IGDBClientID), "google", set(c.GoogleKey),
+		"metrics_token", set(c.MetricsToken), "dev", c.Dev,
 	}
 }
 

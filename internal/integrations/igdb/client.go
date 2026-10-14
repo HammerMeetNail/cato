@@ -194,6 +194,9 @@ func (c *Client) GetGame(ctx context.Context, id int64) (*catalog.Game, error) {
 	return &g, nil
 }
 
+// LaneStatus reports the rate limiter's interactive and background lanes.
+func (c *Client) LaneStatus() []catalog.LaneStatus { return c.rateLimiter.Status() }
+
 // GetGamesBatch fetches many games in a single rate-limited request, asking
 // for id/name/alternative_names plus cover.image_id. The extra cover fields
 // let the cover-URL repair batch (RepairCovers) verify and correct URLs that

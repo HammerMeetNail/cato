@@ -3,12 +3,16 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
-	"log"
+	"io"
+	"log/slog"
 	nethttp "net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -20,403 +24,289 @@ import (
 	"cato/internal/http"
 	"cato/internal/importer"
 	"cato/internal/integrations/igdb"
+	"cato/internal/jobs"
+	"cato/internal/library"
 )
 
 func main() {
-	importCmd := flag.NewFlagSet("import-games", flag.ExitOnError)
-	importInput := importCmd.String("input", "", "Postgres COPY dump SQL file")
-	importDB := importCmd.String("db", "data/cato.db", "SQLite database path")
-
-	backfillCmd := flag.NewFlagSet("backfill-popularity", flag.ExitOnError)
-	backfillDB := backfillCmd.String("db", "data/cato.db", "SQLite database path")
-	backfillBatch := backfillCmd.Int("batch", 500, "rows per IGDB fetch cycle")
-	backfillYears := backfillCmd.Int("recent-years", 2, "also backfill games released within this many years")
-
-	aliasBackfillCmd := flag.NewFlagSet("backfill-aliases", flag.ExitOnError)
-	aliasBackfillDB := aliasBackfillCmd.String("db", "data/cato.db", "SQLite database path")
-	aliasBackfillBatch := aliasBackfillCmd.Int("batch", 500, "game IDs per IGDB request (max 500)")
-
-	coverBackfillCmd := flag.NewFlagSet("backfill-covers", flag.ExitOnError)
-	coverBackfillDB := coverBackfillCmd.String("db", "data/cato.db", "SQLite database path")
-	coverBackfillBatch := coverBackfillCmd.Int("batch", 500, "game IDs per IGDB request (max 500)")
-
-	editionBackfillCmd := flag.NewFlagSet("backfill-editions", flag.ExitOnError)
-	editionBackfillDB := editionBackfillCmd.String("db", "data/cato.db", "SQLite database path")
-	editionBackfillBatch := editionBackfillCmd.Int("batch", 500, "game IDs per IGDB request (max 500)")
-
-	categoryBackfillCmd := flag.NewFlagSet("backfill-categories", flag.ExitOnError)
-	categoryBackfillDB := categoryBackfillCmd.String("db", "data/cato.db", "SQLite database path")
-	categoryBackfillBatch := categoryBackfillCmd.Int("batch", 500, "game IDs per IGDB request (max 500)")
-
-	if len(os.Args) >= 2 && os.Args[1] == "dev-cert" {
-		if err := devCertCommand(os.Args[2:], os.Stdout, os.Stderr); err != nil {
-			fmt.Fprintf(os.Stderr, "dev-cert: %v\n", err)
-			os.Exit(1)
-		}
-		return
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	err := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
+	cancel()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cato: %v\n", err)
+		os.Exit(1)
 	}
+}
 
-	if len(os.Args) >= 2 && os.Args[1] == "import-games" {
-		importCmd.Parse(os.Args[2:])
-		if *importInput == "" {
-			fmt.Fprintln(os.Stderr, "usage: cato import-games --input /tmp/games-copy.sql [--db data/cato.db]")
-			os.Exit(1)
-		}
-		count, err := importer.Import(*importInput, *importDB)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "import failed: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("imported %d games\n", count)
-		return
+const usage = `usage: cato [command]
+
+  serve (default)          run the web app
+  dev-cert --out DIR       write a self-signed development certificate, print its SPKI pin
+  import-games --input F   import a Postgres COPY dump of games [--db PATH]
+  backfill KIND            refresh catalog rows from IGDB: aliases, popularity, covers,
+                           editions or categories [--db PATH] [--batch N] [--recent-years N]
+`
+
+// run is the whole program behind main, so subcommands are testable.
+func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	cmd := "serve"
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		cmd, args = args[0], args[1:]
 	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "backfill-aliases" {
-		aliasBackfillCmd.Parse(os.Args[2:])
-		cfg := config.Load()
-		if cfg.IGDBClientID == "" {
-			fmt.Fprintln(os.Stderr, "backfill-aliases requires IGDB_CLIENT_ID (or TWITCH_OAUTH_ID)")
-			os.Exit(1)
-		}
-		database, err := db.Open(*aliasBackfillDB)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "open db: %v\n", err)
-			os.Exit(1)
-		}
-		defer database.Close()
-		if err := db.Migrate(database); err != nil {
-			fmt.Fprintf(os.Stderr, "migrate: %v\n", err)
-			os.Exit(1)
-		}
-		store := catalog.NewStore(database)
-		igdbClient := igdb.NewClient(cfg.IGDBClientID, cfg.IGDBClientSecret)
-		svc := catalog.NewService(store, igdbClient, database)
-
-		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-		defer cancel()
-
-		progress := func(done, total int) {
-			if total == 0 {
-				fmt.Println("backfill: no pending rows")
-				return
-			}
-			log.Printf("backfill: %d/%d (%.1f%%)", done, total, 100*float64(done)/float64(total))
-		}
-		done, err := svc.BackfillAliases(ctx, *aliasBackfillBatch, progress)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "backfill stopped: %v (completed %d — safe to re-run)\n", err, done)
-			os.Exit(1)
-		}
-		fmt.Printf("backfill: fetched aliases for %d games\n", done)
-		return
+	// Legacy names: backfill-aliases → backfill aliases.
+	if kind, ok := strings.CutPrefix(cmd, "backfill-"); ok {
+		cmd, args = "backfill", append([]string{kind}, args...)
 	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "backfill-popularity" {
-		backfillCmd.Parse(os.Args[2:])
-		cfg := config.Load()
-		if cfg.IGDBClientID == "" {
-			fmt.Fprintln(os.Stderr, "backfill-popularity requires IGDB_CLIENT_ID (or TWITCH_OAUTH_ID)")
-			os.Exit(1)
-		}
-		database, err := db.Open(*backfillDB)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "open db: %v\n", err)
-			os.Exit(1)
-		}
-		defer database.Close()
-		if err := db.Migrate(database); err != nil {
-			fmt.Fprintf(os.Stderr, "migrate: %v\n", err)
-			os.Exit(1)
-		}
-		store := catalog.NewStore(database)
-		igdbClient := igdb.NewClient(cfg.IGDBClientID, cfg.IGDBClientSecret)
-		svc := catalog.NewService(store, igdbClient, database)
-
-		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-		defer cancel()
-
-		progress := func(done, total int) {
-			if total == 0 {
-				log.Printf("backfill: no pending rows")
-				return
-			}
-			log.Printf("backfill: %d/%d (%.1f%%)", done, total, 100*float64(done)/float64(total))
-		}
-		done, err := svc.BackfillPopularity(ctx, *backfillBatch, *backfillYears, progress)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "backfill stopped: %v (completed %d)\n", err, done)
-			os.Exit(1)
-		}
-		fmt.Printf("backfill: refreshed popularity for %d games\n", done)
-		return
+	switch cmd {
+	case "serve":
+		return serve(ctx, config.Load(), stderr)
+	case "dev-cert":
+		return devCertCommand(args, stdout, stderr)
+	case "import-games":
+		return importCommand(args, stdout, stderr)
+	case "backfill":
+		return backfillCommand(ctx, args, stdout, stderr)
+	case "help", "-h", "--help":
+		fmt.Fprint(stdout, usage)
+		return nil
 	}
+	fmt.Fprint(stderr, usage)
+	return fmt.Errorf("unknown command %q", cmd)
+}
 
-	if len(os.Args) >= 2 && os.Args[1] == "backfill-covers" {
-		coverBackfillCmd.Parse(os.Args[2:])
-		cfg := config.Load()
-		if cfg.IGDBClientID == "" {
-			fmt.Fprintln(os.Stderr, "backfill-covers requires IGDB_CLIENT_ID (or TWITCH_OAUTH_ID)")
-			os.Exit(1)
-		}
-		database, err := db.Open(*coverBackfillDB)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "open db: %v\n", err)
-			os.Exit(1)
-		}
-		defer database.Close()
-		if err := db.Migrate(database); err != nil {
-			fmt.Fprintf(os.Stderr, "migrate: %v\n", err)
-			os.Exit(1)
-		}
-		store := catalog.NewStore(database)
-		igdbClient := igdb.NewClient(cfg.IGDBClientID, cfg.IGDBClientSecret)
-		svc := catalog.NewService(store, igdbClient, database)
-
-		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-		defer cancel()
-
-		progress := func(done, total int) {
-			if total == 0 {
-				log.Printf("backfill: no pending rows")
-				return
-			}
-			log.Printf("backfill: %d/%d (%.1f%%)", done, total, 100*float64(done)/float64(total))
-		}
-		done, err := svc.BackfillCovers(ctx, *coverBackfillBatch, progress)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "backfill stopped: %v (completed %d — safe to re-run)\n", err, done)
-			os.Exit(1)
-		}
-		fmt.Printf("backfill: corrected covers for %d games\n", done)
-		return
+func importCommand(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("import-games", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	input := fs.String("input", "", "Postgres COPY dump SQL file")
+	dbPath := fs.String("db", "data/cato.db", "SQLite database path")
+	if err := fs.Parse(args); err != nil {
+		return err
 	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "backfill-editions" {
-		editionBackfillCmd.Parse(os.Args[2:])
-		cfg := config.Load()
-		if cfg.IGDBClientID == "" {
-			fmt.Fprintln(os.Stderr, "backfill-editions requires IGDB_CLIENT_ID (or TWITCH_OAUTH_ID)")
-			os.Exit(1)
-		}
-		database, err := db.Open(*editionBackfillDB)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "open db: %v\n", err)
-			os.Exit(1)
-		}
-		defer database.Close()
-		if err := db.Migrate(database); err != nil {
-			fmt.Fprintf(os.Stderr, "migrate: %v\n", err)
-			os.Exit(1)
-		}
-		store := catalog.NewStore(database)
-		igdbClient := igdb.NewClient(cfg.IGDBClientID, cfg.IGDBClientSecret)
-		svc := catalog.NewService(store, igdbClient, database)
-
-		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-		defer cancel()
-
-		progress := func(done, total int) {
-			if total == 0 {
-				log.Printf("backfill: no pending rows")
-				return
-			}
-			log.Printf("backfill: %d/%d (%.1f%%)", done, total, 100*float64(done)/float64(total))
-		}
-		done, err := svc.BackfillEditions(ctx, *editionBackfillBatch, progress)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "backfill stopped: %v (completed %d — safe to re-run)\n", err, done)
-			os.Exit(1)
-		}
-		fmt.Printf("backfill: fetched editions for %d games\n", done)
-		return
+	if *input == "" {
+		return errors.New("usage: cato import-games --input /tmp/games-copy.sql [--db data/cato.db]")
 	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "backfill-categories" {
-		categoryBackfillCmd.Parse(os.Args[2:])
-		cfg := config.Load()
-		if cfg.IGDBClientID == "" {
-			fmt.Fprintln(os.Stderr, "backfill-categories requires IGDB_CLIENT_ID (or TWITCH_OAUTH_ID)")
-			os.Exit(1)
-		}
-		database, err := db.Open(*categoryBackfillDB)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "open db: %v\n", err)
-			os.Exit(1)
-		}
-		defer database.Close()
-		if err := db.Migrate(database); err != nil {
-			fmt.Fprintf(os.Stderr, "migrate: %v\n", err)
-			os.Exit(1)
-		}
-		store := catalog.NewStore(database)
-		igdbClient := igdb.NewClient(cfg.IGDBClientID, cfg.IGDBClientSecret)
-		svc := catalog.NewService(store, igdbClient, database)
-
-		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-		defer cancel()
-
-		progress := func(done, total int) {
-			if total == 0 {
-				log.Printf("backfill: no pending rows")
-				return
-			}
-			log.Printf("backfill: %d/%d (%.1f%%)", done, total, 100*float64(done)/float64(total))
-		}
-		done, err := svc.BackfillCategories(ctx, *categoryBackfillBatch, progress)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "backfill stopped: %v (completed %d — safe to re-run)\n", err, done)
-			os.Exit(1)
-		}
-		fmt.Printf("backfill: corrected categories for %d games\n", done)
-		return
+	count, err := importer.Import(*input, *dbPath)
+	if err != nil {
+		return fmt.Errorf("import failed: %w", err)
 	}
+	fmt.Fprintf(stdout, "imported %d games\n", count)
+	return nil
+}
 
+func backfillCommand(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("usage: cato backfill aliases|popularity|covers|editions|categories [--db PATH] [--batch N]")
+	}
+	kind := args[0]
+	switch kind {
+	case "aliases", "popularity", "covers", "editions", "categories":
+	default:
+		return fmt.Errorf("unknown backfill %q (aliases, popularity, covers, editions, categories)", kind)
+	}
+	fs := flag.NewFlagSet("backfill "+kind, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dbPath := fs.String("db", "data/cato.db", "SQLite database path")
+	batch := fs.Int("batch", 500, "game IDs per IGDB request (max 500)")
+	recentYears := fs.Int("recent-years", 2, "popularity: also backfill games released within this many years")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
 	cfg := config.Load()
+	if cfg.IGDBClientID == "" {
+		return fmt.Errorf("backfill %s requires IGDB_CLIENT_ID (or TWITCH_OAUTH_ID)", kind)
+	}
+	database, err := db.Open(*dbPath)
+	if err != nil {
+		return fmt.Errorf("open db: %w", err)
+	}
+	defer database.Close()
+	if err := db.Migrate(database); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+	svc := catalog.NewService(catalog.NewStore(database), igdb.NewClient(cfg.IGDBClientID, cfg.IGDBClientSecret), database)
+	progress := func(done, total int) {
+		if total == 0 {
+			fmt.Fprintln(stdout, "backfill: no pending rows")
+			return
+		}
+		slog.Info("backfill", "kind", kind, "done", done, "total", total,
+			"percent", fmt.Sprintf("%.1f", 100*float64(done)/float64(total)))
+	}
+	var done int
+	switch kind {
+	case "aliases":
+		done, err = svc.BackfillAliases(ctx, *batch, progress)
+	case "popularity":
+		done, err = svc.BackfillPopularity(ctx, *batch, *recentYears, progress)
+	case "covers":
+		done, err = svc.BackfillCovers(ctx, *batch, progress)
+	case "editions":
+		done, err = svc.BackfillEditions(ctx, *batch, progress)
+	case "categories":
+		done, err = svc.BackfillCategories(ctx, *batch, progress)
+	}
+	if err != nil {
+		return fmt.Errorf("backfill %s stopped after %d rows (safe to re-run): %w", kind, done, err)
+	}
+	fmt.Fprintf(stdout, "backfill %s: %d games\n", kind, done)
+	return nil
+}
+
+// newLogger configures structured logging. slog.SetDefault also routes the
+// standard log package through it, so older log.Printf calls share the format.
+func newLogger(cfg *config.Config, w io.Writer) *slog.Logger {
+	level := slog.LevelInfo
+	_ = level.UnmarshalText([]byte(cfg.LogLevel))
+	opts := &slog.HandlerOptions{Level: level}
+	var h slog.Handler = slog.NewTextHandler(w, opts)
+	if cfg.LogFormat == "json" {
+		h = slog.NewJSONHandler(w, opts)
+	}
+	return slog.New(h)
+}
+
+func serve(ctx context.Context, cfg *config.Config, stderr io.Writer) error {
+	logger := newLogger(cfg, stderr)
+	slog.SetDefault(logger)
 	if err := prepareTLS(cfg); err != nil {
-		log.Fatalf("config: %v", err)
+		return fmt.Errorf("config: %w", err)
 	}
+	if cfg.BackupDir == "" {
+		cfg.BackupDir = filepath.Join(filepath.Dir(cfg.DBPath), "backups")
+	}
+	logger.Info("cato starting", cfg.Summary()...)
 
-	if err := os.MkdirAll(cfg.CoverDir, 0755); err != nil {
-		log.Fatalf("create cover dir: %v", err)
+	if err := os.MkdirAll(cfg.CoverDir, 0o755); err != nil {
+		return fmt.Errorf("create cover dir: %w", err)
 	}
-	if err := os.MkdirAll("data", 0755); err != nil {
-		log.Fatalf("create data dir: %v", err)
+	if err := os.MkdirAll(filepath.Dir(cfg.DBPath), 0o755); err != nil {
+		return fmt.Errorf("create data dir: %w", err)
 	}
-
 	database, err := db.Open(cfg.DBPath)
 	if err != nil {
-		log.Fatalf("open db: %v", err)
+		return fmt.Errorf("open db: %w", err)
 	}
 	defer database.Close()
 
-	if err := db.Migrate(database); err != nil {
-		log.Fatalf("migrate: %v", err)
+	from, _ := db.SchemaVersion(database)
+	if path, err := db.BackupBeforeMigrate(ctx, database, cfg.BackupDir, 5); err != nil {
+		return fmt.Errorf("pre-migration backup: %w", err)
+	} else if path != "" {
+		logger.Info("snapshot taken before schema upgrade", "path", path, "from_version", from, "to_version", db.LatestVersion())
 	}
+	if err := db.Migrate(database); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+	startupRepairs(ctx, database, logger)
 
 	// Bind before starting background owners: a bad certificate or a busy
 	// port fails startup with nothing to unwind.
 	srv := http.NewServer(cfg, database)
 	if err := srv.Listen(); err != nil {
-		log.Fatalf("listen: %v", err)
+		return fmt.Errorf("listen: %w", err)
 	}
-
 	coverWorker := covers.NewWorker(database, cfg.CoverDir)
 	srv.SetCoverNotifier(coverWorker.Wake)
 	coverWorker.Start()
 
-	// One-time cleanup of cover URLs pointing at the defunct
-	// images.cato.com host (legacy import). Cheap, idempotent SQL —
-	// runs regardless of IGDB configuration.
-	if n, err := catalog.PurgeDeadCoverSources(database); err != nil {
-		log.Printf("startup: dead cover source purge failed: %v", err)
-	} else if n > 0 {
-		log.Printf("startup: cleared %d games pointing at dead cover host", n)
+	runner := jobs.NewRunner(database, logger)
+	for _, j := range srv.Jobs() {
+		runner.Add(j)
 	}
-
-	// One-time migration: ownership encoded as tags ("Switch", "PS5", …)
-	// moves into library_items.platform, tag removed after the move.
-	// Idempotent — no-ops once every mappable tag is gone.
-	if n, err := catalog.MigratePlatformTags(database); err != nil {
-		log.Printf("startup: platform tag migration failed: %v", err)
-	} else if n > 0 {
-		log.Printf("startup: migrated %d items from platform tags to ownership field", n)
-	}
-
-	// One-time dedupe: tags are now case-insensitive ("RPG" = "rpg") for
-	// filtering and autocomplete. Older items may contain both cases as
-	// separate entries; keep the first occurrence's casing and drop the rest.
-	if n, err := catalog.NewStore(database).RepairTagCaseDuplicates(context.Background()); err != nil {
-		log.Printf("startup: tag case dedupe failed: %v", err)
-	} else if n > 0 {
-		log.Printf("startup: deduplicated tags on %d items", n)
-	}
+	runner.Add(jobs.Job{Name: "maintenance", Interval: 24 * time.Hour, Jitter: 30 * time.Minute,
+		Run: func(ctx context.Context) error { return maintenance(ctx, database, logger) }})
+	srv.SetJobRunner(runner)
+	runner.Start(context.Background())
 
 	scheme := "http"
 	if cfg.ServesTLS() {
 		scheme = "https"
 	}
-	log.Printf("cato listening on %s://%s", scheme, srv.Addr())
+	logger.Info("cato listening", "url", fmt.Sprintf("%s://%s", scheme, srv.Addr()))
 	if a := srv.RedirectAddr(); a != nil {
-		log.Printf("cato redirecting http://%s to https", a)
+		logger.Info("redirecting http to https", "addr", a.String())
 	}
 
 	serverErr := make(chan error, 1)
-	go func() {
-		serverErr <- srv.Start()
-	}()
+	go func() { serverErr <- srv.Start() }()
 
-	// Periodic maintenance: expired sessions and expired IGDB cache entries
-	// are otherwise only removed lazily (or never). Run one sweep at startup,
-	// then daily.
-	maintenance := func(ctx context.Context) {
-		if n, err := auth.CleanupExpiredSessions(maintenanceDB{DB: database, ctx: ctx}); err != nil {
-			log.Printf("maintenance: session cleanup failed: %v", err)
-		} else if n > 0 {
-			log.Printf("maintenance: deleted %d expired sessions", n)
-		}
-		if n, err := catalog.PurgeExpiredQueryCacheContext(ctx, database); err != nil {
-			log.Printf("maintenance: query cache purge failed: %v", err)
-		} else if n > 0 {
-			log.Printf("maintenance: purged %d expired cache entries", n)
-		}
-		if n, err := covers.PruneJobs(ctx, database); err != nil {
-			log.Printf("maintenance: cover job prune failed: %v", err)
-		} else if n > 0 {
-			log.Printf("maintenance: pruned %d cover jobs for games in no library", n)
-		}
-		if err := database.Optimize(ctx); err != nil && ctx.Err() == nil {
-			log.Printf("maintenance: optimize failed: %v", err)
-		}
-	}
-	maintenanceCtx, cancelMaintenance := context.WithCancel(context.Background())
-	maintenanceDone := runMaintenance(maintenanceCtx, 24*time.Hour, maintenance)
-
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sig)
-
-	serverFailed := false
+	var failed error
 	select {
 	case err := <-serverErr:
-		if err != nil && err != nethttp.ErrServerClosed {
-			log.Printf("server: %v", err)
-			serverFailed = true
+		if err != nil && !errors.Is(err, nethttp.ErrServerClosed) {
+			failed = fmt.Errorf("server: %w", err)
 		}
-	case s := <-sig:
-		log.Printf("received %v, shutting down", s)
+	case <-ctx.Done():
+		logger.Info("shutting down")
 	}
-	// Drain admitted HTTP requests first, then cancel/join all background owners.
-	// Leave five seconds of the overall budget for background work to stop.
-	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancelShutdown()
+	// Drain admitted HTTP requests first, then stop background owners,
+	// leaving five seconds of the budget for them.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
 	drainCtx, cancelDrain := context.WithTimeout(shutdownCtx, 15*time.Second)
 	shutdownErr := srv.Shutdown(drainCtx)
 	cancelDrain()
-	cancelMaintenance()
+	jobsErr := runner.Shutdown(shutdownCtx)
 	coverErr := coverWorker.Shutdown(shutdownCtx)
-	select {
-	case <-maintenanceDone:
-	case <-shutdownCtx.Done():
-		log.Printf("maintenance shutdown: %v", shutdownCtx.Err())
-		os.Exit(1) // Do not close the DB while any owner may still be using it.
+	if err := errors.Join(shutdownErr, jobsErr, coverErr); err != nil {
+		// Don't close the database while an owner may still use it.
+		return errors.Join(failed, fmt.Errorf("shutdown: %w", err))
 	}
-	if shutdownErr != nil || coverErr != nil {
-		log.Printf("shutdown failed: HTTP/catalog=%v covers=%v", shutdownErr, coverErr)
-		os.Exit(1)
-	}
-	// Refresh planner statistics on the way out (cheap; see db.Optimize).
 	optimizeCtx, cancelOptimize := context.WithTimeout(context.Background(), 5*time.Second)
 	if err := database.Optimize(optimizeCtx); err != nil {
-		log.Printf("shutdown: optimize failed: %v", err)
+		logger.Warn("shutdown: optimize failed", "err", err)
 	}
 	cancelOptimize()
-	if serverFailed {
-		_ = database.Close()
-		os.Exit(1)
+	return failed
+}
+
+// startupRepairs runs cheap, idempotent data fixes once per start.
+func startupRepairs(ctx context.Context, database *db.DB, logger *slog.Logger) {
+	if n, err := catalog.PurgeDeadCoverSources(database); err != nil {
+		logger.Warn("startup: dead cover source purge failed", "err", err)
+	} else if n > 0 {
+		logger.Info("startup: cleared games pointing at dead cover host", "count", n)
+	}
+	// Ownership once encoded as tags ("Switch", "PS5") moves into the
+	// platform list; no-ops once every mappable tag is gone.
+	if n, err := catalog.MigratePlatformTags(database); err != nil {
+		logger.Warn("startup: platform tag migration failed", "err", err)
+	} else if n > 0 {
+		logger.Info("startup: migrated platform tags to ownership", "count", n)
+	}
+	if n, err := catalog.NewStore(database).RepairTagCaseDuplicates(ctx); err != nil {
+		logger.Warn("startup: tag case dedupe failed", "err", err)
+	} else if n > 0 {
+		logger.Info("startup: deduplicated tags", "count", n)
 	}
 }
 
-// Bind the legacy auth maintenance interface to the owned cancellation context.
+// maintenance is the daily sweep: expired sessions, IGDB cache entries,
+// orphaned cover jobs and undo snapshots, then planner statistics.
+func maintenance(ctx context.Context, database *db.DB, logger *slog.Logger) error {
+	var errs []error
+	step := func(name string, n int64, err error) {
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
+		} else if n > 0 {
+			logger.Info("maintenance", "step", name, "removed", n)
+		}
+	}
+	n, err := auth.CleanupExpiredSessions(maintenanceDB{DB: database, ctx: ctx})
+	step("sessions", n, err)
+	n, err = catalog.PurgeExpiredQueryCacheContext(ctx, database)
+	step("query-cache", n, err)
+	n, err = covers.PruneJobs(ctx, database)
+	step("cover-jobs", n, err)
+	n, err = library.PruneUndo(ctx, database)
+	step("undo-log", n, err)
+	if err := database.Optimize(ctx); err != nil {
+		errs = append(errs, fmt.Errorf("optimize: %w", err))
+	}
+	return errors.Join(errs...)
+}
+
+// maintenanceDB binds the auth cleanup's Exec to the sweep's context.
 type maintenanceDB struct {
 	*db.DB
 	ctx context.Context
@@ -424,25 +314,4 @@ type maintenanceDB struct {
 
 func (d maintenanceDB) Exec(query string, args ...any) (sql.Result, error) {
 	return d.DB.ExecContext(d.ctx, query, args...)
-}
-
-func runMaintenance(ctx context.Context, interval time.Duration, sweep func(context.Context)) <-chan struct{} {
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			if ctx.Err() != nil {
-				return
-			}
-			sweep(ctx)
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-			}
-		}
-	}()
-	return done
 }

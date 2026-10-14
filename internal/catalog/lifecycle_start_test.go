@@ -20,6 +20,14 @@ func waitFor(t *testing.T, timeout time.Duration, fn func() bool, msg string) {
 	t.Fatal(msg)
 }
 
+// runJob runs one of the service's scheduled jobs synchronously.
+func runJob(t *testing.T, svc *Service, name string) {
+	t.Helper()
+	if err := svc.jobNamed(name).Run(context.Background()); err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+}
+
 func shutdownService(t *testing.T, svc *Service) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -29,7 +37,7 @@ func shutdownService(t *testing.T, svc *Service) {
 	}
 }
 
-func TestStartPlatformSyncPopulatesLookup(t *testing.T) {
+func TestJobPlatformSyncPopulatesLookup(t *testing.T) {
 	database, store := setupGameDB(t)
 	defer database.Close()
 
@@ -43,7 +51,7 @@ func TestStartPlatformSyncPopulatesLookup(t *testing.T) {
 	svc := NewService(store, igdb, database)
 	defer shutdownService(t, svc)
 
-	svc.StartPlatformSync()
+	runJob(t, svc, "catalog.platform-sync")
 
 	waitFor(t, 5*time.Second, func() bool {
 		n, err := store.CountPlatforms(context.Background())
@@ -70,7 +78,7 @@ func TestStartPlatformSyncPopulatesLookup(t *testing.T) {
 	}
 }
 
-func TestStartStaleRefreshRefreshesOldGame(t *testing.T) {
+func TestJobStaleRefreshRefreshesOldGame(t *testing.T) {
 	database, store := setupGameDB(t)
 	defer database.Close()
 
@@ -89,7 +97,7 @@ func TestStartStaleRefreshRefreshesOldGame(t *testing.T) {
 	svc := NewService(store, igdb, database)
 	defer shutdownService(t, svc)
 
-	svc.StartStaleRefresh()
+	runJob(t, svc, "catalog.stale-refresh")
 
 	var refreshedAt int64
 	waitFor(t, 5*time.Second, func() bool {
@@ -106,7 +114,7 @@ func TestStartStaleRefreshRefreshesOldGame(t *testing.T) {
 	}
 }
 
-func TestStartStaleRefreshMarksDeletedGames(t *testing.T) {
+func TestJobStaleRefreshMarksDeletedGames(t *testing.T) {
 	database, store := setupGameDB(t)
 	defer database.Close()
 
@@ -122,7 +130,7 @@ func TestStartStaleRefreshMarksDeletedGames(t *testing.T) {
 	svc := NewService(store, &fakeIGDB{}, database)
 	defer shutdownService(t, svc)
 
-	svc.StartStaleRefresh()
+	runJob(t, svc, "catalog.stale-refresh")
 
 	var refreshedAt int64
 	waitFor(t, 5*time.Second, func() bool {
@@ -130,7 +138,7 @@ func TestStartStaleRefreshMarksDeletedGames(t *testing.T) {
 	}, "deleted game was not marked refreshed")
 }
 
-func TestStartCoverRepairRevivesExhaustedJob(t *testing.T) {
+func TestJobCoverRepairRevivesExhaustedJob(t *testing.T) {
 	database, store := setupGameDB(t)
 	defer database.Close()
 
@@ -151,7 +159,7 @@ func TestStartCoverRepairRevivesExhaustedJob(t *testing.T) {
 	svc := NewService(store, igdb, database)
 	defer shutdownService(t, svc)
 
-	svc.StartCoverRepair()
+	runJob(t, svc, "catalog.cover-repair")
 
 	var attempts int
 	var sourceURL string
@@ -163,7 +171,7 @@ func TestStartCoverRepairRevivesExhaustedJob(t *testing.T) {
 	}, "exhausted cover job was not revived with the corrected URL")
 }
 
-func TestStartNormalizationRepairFixesAccents(t *testing.T) {
+func TestJobNormalizationRepairFixesAccents(t *testing.T) {
 	database, store := setupGameDB(t)
 	defer database.Close()
 
@@ -175,7 +183,7 @@ func TestStartNormalizationRepairFixesAccents(t *testing.T) {
 	svc := NewService(store, &fakeIGDB{}, database)
 	defer shutdownService(t, svc)
 
-	svc.StartNormalizationRepair()
+	runJob(t, svc, "catalog.normalization-repair")
 
 	var normalized string
 	waitFor(t, 5*time.Second, func() bool {
@@ -183,7 +191,7 @@ func TestStartNormalizationRepairFixesAccents(t *testing.T) {
 	}, "normalization repair did not fix the accented name")
 }
 
-func TestStartQueryCacheRefreshSweepsStaleEntries(t *testing.T) {
+func TestJobQueryCacheRefreshSweepsStaleEntries(t *testing.T) {
 	database, store := setupGameDB(t)
 	defer database.Close()
 
@@ -198,10 +206,9 @@ func TestStartQueryCacheRefreshSweepsStaleEntries(t *testing.T) {
 		return []Game{{ID: 1, Name: "Stale Game", Slug: "stale-game", SafeName: "Stale Game", NormalizedName: "stale game"}}, nil
 	}}
 	svc := NewService(store, igdb, database)
-	svc.queryCacheInitialDelay = 10 * time.Millisecond // test seam: skip the 30s startup wait
 	defer shutdownService(t, svc)
 
-	svc.StartQueryCacheRefresh()
+	runJob(t, svc, "catalog.query-cache-refresh")
 
 	waitFor(t, 5*time.Second, func() bool {
 		return igdb.searchCount() >= 1

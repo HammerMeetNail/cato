@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
@@ -73,56 +74,155 @@ type GameResult struct {
 	Platforms        []string `json:"platforms,omitempty"`
 }
 
+// Lane is an IGDB request priority. Interactive requests (a person is
+// waiting: search, opening a game page) are served before background ones
+// (refresh, backfills, sync) whenever both are queued.
+type Lane int
+
+const (
+	LaneBackground Lane = iota
+	LaneInteractive
+)
+
+type laneKey struct{}
+
+// WithLane tags ctx's IGDB requests with a priority lane.
+func WithLane(ctx context.Context, lane Lane) context.Context {
+	return context.WithValue(ctx, laneKey{}, lane)
+}
+
+// LaneOf reports ctx's lane (background unless tagged).
+func LaneOf(ctx context.Context) Lane {
+	if l, ok := ctx.Value(laneKey{}).(Lane); ok {
+		return l
+	}
+	return LaneBackground
+}
+
+// IGDBRateLimiter spaces IGDB requests to the documented limit (4 requests
+// per second) with two priority lanes: a waiting interactive request always
+// takes the next slot before any background one.
 type IGDBRateLimiter struct {
-	lastRequest time.Time
-	mu          chan struct{}
-	interval    time.Duration
+	interval time.Duration
+
+	mu      sync.Mutex
+	next    time.Time        // earliest time the next request may start
+	queues  [2][]*laneWaiter // indexed by Lane
+	changed chan struct{}    // closed and replaced whenever a slot is taken or a waiter leaves
+	stats   [2]laneStats
+}
+
+type laneWaiter struct{}
+
+type laneStats struct {
+	requests int64
+	waited   time.Duration
+}
+
+// LaneStatus is a snapshot for the admin System page.
+type LaneStatus struct {
+	Lane       string  `json:"lane"`
+	Queued     int     `json:"queued"`
+	Requests   int64   `json:"requests"`
+	AvgWaitSec float64 `json:"avg_wait_seconds"`
 }
 
 func NewIGDBRateLimiter() *IGDBRateLimiter {
-	return NewIGDBRateLimiterWithInterval(time.Second)
+	return NewIGDBRateLimiterWithInterval(250 * time.Millisecond)
 }
 
 // NewIGDBRateLimiterWithInterval builds a limiter with a custom request
-// spacing. Production uses 1s (IGDB's ~4 req/s limit, with margin); tests
-// pass 0 to run unthrottled against a local server.
+// spacing. Production uses 250ms (IGDB's 4 req/s); tests pass 0 to run
+// unthrottled against a local server.
 func NewIGDBRateLimiterWithInterval(interval time.Duration) *IGDBRateLimiter {
-	return &IGDBRateLimiter{
-		mu:       make(chan struct{}, 1),
-		interval: interval,
+	return &IGDBRateLimiter{interval: interval, changed: make(chan struct{})}
+}
+
+// WaitContext waits for the next slot in ctx's lane, returning early when
+// ctx is canceled (search requests are made per keystroke and abandoned).
+func (rl *IGDBRateLimiter) WaitContext(ctx context.Context) error {
+	lane := LaneOf(ctx)
+	w := &laneWaiter{}
+	start := time.Now()
+	rl.mu.Lock()
+	rl.queues[lane] = append(rl.queues[lane], w)
+	for {
+		if err := ctx.Err(); err != nil {
+			rl.remove(lane, w)
+			rl.mu.Unlock()
+			return err
+		}
+		ahead := len(rl.queues[lane]) > 0 && rl.queues[lane][0] == w
+		if lane == LaneBackground && len(rl.queues[LaneInteractive]) > 0 {
+			ahead = false
+		}
+		now := time.Now()
+		if ahead && !now.Before(rl.next) {
+			rl.queues[lane] = rl.queues[lane][1:]
+			rl.next = now.Add(rl.interval)
+			rl.stats[lane].requests++
+			rl.stats[lane].waited += now.Sub(start)
+			rl.broadcast()
+			rl.mu.Unlock()
+			return nil
+		}
+		changed := rl.changed
+		var timer *time.Timer
+		var timeout <-chan time.Time
+		if ahead {
+			timer = time.NewTimer(rl.next.Sub(now))
+			timeout = timer.C
+		}
+		rl.mu.Unlock()
+		select {
+		case <-ctx.Done():
+		case <-changed:
+		case <-timeout:
+		}
+		if timer != nil {
+			timer.Stop()
+		}
+		rl.mu.Lock()
 	}
 }
 
-// WaitContext waits for the next rate-limit slot, returning early when the
-// request has been canceled. Search requests are created on every debounced
-// keystroke; without cancellation, browser-aborted requests still occupied a
-// slot for a full second and delayed the query the user actually wants.
-func (rl *IGDBRateLimiter) WaitContext(ctx context.Context) error {
-	select {
-	case rl.mu <- struct{}{}:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	defer func() { <-rl.mu }()
-
-	if elapsed := time.Since(rl.lastRequest); elapsed < rl.interval {
-		timer := time.NewTimer(rl.interval - elapsed)
-		defer timer.Stop()
-		select {
-		case <-timer.C:
-		case <-ctx.Done():
-			return ctx.Err()
+func (rl *IGDBRateLimiter) remove(lane Lane, w *laneWaiter) {
+	q := rl.queues[lane]
+	for i, x := range q {
+		if x == w {
+			rl.queues[lane] = append(q[:i:i], q[i+1:]...)
+			break
 		}
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	rl.lastRequest = time.Now()
-	return nil
+	rl.broadcast()
 }
 
-// Wait retains the non-cancelable form for callers that do not have a request
-// context, such as maintenance jobs.
+func (rl *IGDBRateLimiter) broadcast() {
+	close(rl.changed)
+	rl.changed = make(chan struct{})
+}
+
+// Wait is the non-cancelable form for callers without a request context.
 func (rl *IGDBRateLimiter) Wait() {
 	_ = rl.WaitContext(context.Background())
+}
+
+// Status reports queue depth and average wait per lane.
+func (rl *IGDBRateLimiter) Status() []LaneStatus {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	out := make([]LaneStatus, 0, 2)
+	for _, lane := range []Lane{LaneInteractive, LaneBackground} {
+		st := rl.stats[lane]
+		avg := 0.0
+		if st.requests > 0 {
+			avg = st.waited.Seconds() / float64(st.requests)
+		}
+		name := "background"
+		if lane == LaneInteractive {
+			name = "interactive"
+		}
+		out = append(out, LaneStatus{Lane: name, Queued: len(rl.queues[lane]), Requests: st.requests, AvgWaitSec: avg})
+	}
+	return out
 }

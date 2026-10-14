@@ -13,9 +13,11 @@ import (
 	"cato/internal/config"
 	"cato/internal/db"
 	"cato/internal/integrations/igdb"
+	"cato/internal/jobs"
 )
 
 type GameHandler struct {
+	igdb          catalog.IGDBClient
 	service       *catalog.Service
 	db            *db.DB
 	cookies       auth.Cookies
@@ -47,6 +49,7 @@ func newGameHandlerWithClient(db *db.DB, cfg *config.Config, igdbClient catalog.
 		limit = cfg.SearchRateLimit
 	}
 	return &GameHandler{
+		igdb:          igdbClient,
 		service:       svc,
 		db:            db,
 		cookies:       auth.Cookies{Secure: cfg.SecureCookies()},
@@ -54,21 +57,17 @@ func newGameHandlerWithClient(db *db.DB, cfg *config.Config, igdbClient catalog.
 	}
 }
 
-func (h *GameHandler) startBackground(cfg *config.Config) {
-	// Fix legacy accent-bearing normalized_name values (e.g. "pokémon go"
-	// stored with é) so searching "pokemon go" without the accent finds
-	// the game. Idempotent and cheap; runs even without IGDB.
-	h.service.StartNormalizationRepair()
-	if cfg.IGDBClientID != "" {
-		// Populates the platform ID→name lookup table once (single IGDB
-		// request) so game platforms render as names, not bare IDs.
-		h.service.StartPlatformSync()
-		h.service.StartStaleRefresh()
-		h.service.StartQueryCacheRefresh()
-		// One-shot startup repair of covers broken by the old URL guessing
-		// and the dead cato host (needs a real IGDB client).
-		h.service.StartCoverRepair()
+// LaneStatus reports the IGDB limiter's lanes (empty without IGDB).
+func (h *GameHandler) LaneStatus() []catalog.LaneStatus {
+	if c, ok := h.igdb.(interface{ LaneStatus() []catalog.LaneStatus }); ok {
+		return c.LaneStatus()
 	}
+	return nil
+}
+
+// Jobs are the catalog's recurring tasks for the shared job runner.
+func (h *GameHandler) Jobs(cfg *config.Config) []jobs.Job {
+	return h.service.Jobs(cfg.IGDBClientID != "")
 }
 
 func (h *GameHandler) Register(mux *http.ServeMux) {
