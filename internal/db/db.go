@@ -57,11 +57,9 @@ func dsn(path string, writer bool) string {
 }
 
 // Optimize keeps the query planner's statistics current as the catalog and
-// libraries grow: the first call on a database without statistics runs a
-// bounded ANALYZE (analysis_limit samples each index), later calls run
-// PRAGMA optimize, which only re-analyzes tables that need it. Cheap enough
-// for startup, a daily sweep and shutdown. (The bundled SQLite is 3.41, which
-// predates PRAGMA optimize's 0x10000 "analyze everything stale" flag.)
+// libraries grow. PRAGMA optimize=0x10002 (SQLite 3.46+) analyzes every table
+// whose statistics are missing or stale, bounded by analysis_limit samples per
+// index, so it is cheap enough for startup, the daily sweep and shutdown.
 func (db *DB) Optimize(ctx context.Context) error {
 	conn, err := db.Write.Conn(ctx)
 	if err != nil {
@@ -71,16 +69,7 @@ func (db *DB) Optimize(ctx context.Context) error {
 	if _, err := conn.ExecContext(ctx, "PRAGMA analysis_limit=400"); err != nil {
 		return err
 	}
-	var analyzed int
-	if err := conn.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM sqlite_master WHERE name = 'sqlite_stat1'").Scan(&analyzed); err != nil {
-		return err
-	}
-	stmt := "PRAGMA optimize"
-	if analyzed == 0 {
-		stmt = "ANALYZE"
-	}
-	_, err = conn.ExecContext(ctx, stmt)
+	_, err = conn.ExecContext(ctx, "PRAGMA optimize=0x10002")
 	return err
 }
 

@@ -50,7 +50,7 @@ web/static/      HTML, CSS, JS (vanilla, no bundler)
   - `Write` is a single connection (`SetMaxOpenConns(1)` — SQLite allows only one writer).
     Its transactions are `BEGIN IMMEDIATE`. Inside a writer transaction use the `*sql.Tx` for
     every statement: calling `db.Exec` while holding it deadlocks on the single connection.
-  - `db.Optimize` (bounded `ANALYZE` the first time, then `PRAGMA optimize`) runs in the daily
+  - `db.Optimize` (`PRAGMA optimize=0x10002`, bounded by `analysis_limit`) runs in the daily
     maintenance sweep and at shutdown.
   - `*db.DB` exposes proxy methods so it is a near drop-in for `*sql.DB`:
     `Query*/QueryRow*` route to the read pool; `Exec*` and `Begin*` route to the writer.
