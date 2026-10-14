@@ -3,6 +3,14 @@
 // with an invite link).
 import { api, setCSRF } from './core/api.js';
 
+// Trusted Types (CSP require-trusted-types-for 'script'): registering the
+// service worker needs a TrustedScriptURL, from a policy that allows only it.
+const swURL = window.trustedTypes
+  ? window.trustedTypes.createPolicy('cato-sw', {
+    createScriptURL: (u) => { if (u !== '/service-worker.js') throw new TypeError('blocked script URL'); return u; },
+  }).createScriptURL('/service-worker.js')
+  : '/service-worker.js';
+
 const $ = id => document.getElementById(id);
 const form = $('loginForm');
 const errorMsg = $('errorMsg');
@@ -10,6 +18,7 @@ const submitBtn = $('submitBtn');
 const password = $('password');
 const params = new URLSearchParams(location.search);
 const invite = params.get('invite') || '';
+const reset = params.get('reset') || '';
 let isSignup = false;
 
 function showError(msg) {
@@ -35,6 +44,31 @@ async function main() {
       return;
     }
   } catch { /* offline or server down: still show the form */ }
+
+  if (reset) {
+    // An admin-made reset link: only a new password is needed.
+    $('formTitle').textContent = 'Choose a new password';
+    $('pitch').textContent = 'Setting a new password signs you out on your other devices.';
+    $('email').closest('label').hidden = true;
+    $('email').required = false;
+    password.autocomplete = 'new-password';
+    submitBtn.textContent = 'Set password';
+    $('googleBtn').hidden = $('googleDivider').hidden = $('signupFooter').hidden = true;
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      showError('');
+      submitBtn.disabled = true;
+      try {
+        const res = await api.post('/api/auth/reset', { token: reset, password: password.value });
+        setCSRF(res.csrf_token);
+        location.href = '/';
+      } catch (err) {
+        showError(err.message || 'Could not reset the password');
+        submitBtn.disabled = false;
+      }
+    });
+    return;
+  }
 
   let config = { google_enabled: false, signup_allowed: false };
   try { config = await api.get('/api/config' + (invite ? `?invite=${encodeURIComponent(invite)}` : '')); } catch { /* defaults */ }
@@ -68,5 +102,5 @@ async function main() {
   });
 }
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/service-worker.js').catch(() => {});
+if ('serviceWorker' in navigator) navigator.serviceWorker.register(swURL).catch(() => {});
 main();

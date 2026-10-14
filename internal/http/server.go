@@ -26,6 +26,7 @@ import (
 	"cato/internal/jobs"
 	"cato/internal/library"
 	"cato/internal/metrics"
+	"cato/internal/social"
 )
 
 type Server struct {
@@ -110,7 +111,11 @@ func (s *Server) routes() {
 		SearchLimiter: s.catalog.searchLimiter,
 		Discover:      disc,
 		CoverDir:      s.cfg.CoverDir,
+		Social:        social.New(s.db, avatarDir(s.cfg.CoverDir)),
+		System:        s.systemStatus,
+		RunJob:        s.runJob,
 	})
+	s.mux.Handle("/avatars/", serveAvatars(s.db, auth.Cookies{Secure: s.cfg.SecureCookies()}, avatarDir(s.cfg.CoverDir)))
 
 	s.mux.HandleFunc("/covers/", covers.ServeCover(s.cfg.CoverDir))
 
@@ -465,9 +470,12 @@ func securityMiddleware(cfg *config.Config, scriptHash func() string, next http.
 	// frame-src: only the privacy-enhanced YouTube player, and only after
 	// a click (game page trailers load nothing from YouTube until then).
 	cspTail := "; style-src 'self' 'unsafe-inline'; " +
-		"img-src 'self' https://images.igdb.com data: blob:; connect-src 'self'; " +
+		"img-src 'self' https://images.igdb.com https://www.gravatar.com data: blob:; connect-src 'self'; " +
 		"frame-src https://www.youtube-nocookie.com; " +
-		"frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+		"frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; " +
+		// Trusted Types: DOM XSS sinks only take values from lit-html's
+		// policy (templates) and cato-sw (the service worker URL).
+		"require-trusted-types-for 'script'; trusted-types lit-html cato-sw"
 	https := cfg.HTTPS()
 	if https {
 		cspTail += "; upgrade-insecure-requests"

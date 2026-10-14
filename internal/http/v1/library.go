@@ -29,8 +29,17 @@ func (a *API) getMe(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
+	me := map[string]any{"id": uid, "email": email, "display_name": name, "has_password": hasPassword}
+	unread := 0
+	if a.Social != nil {
+		if p, err := a.Social.MyProfile(r.Context(), uid); err == nil {
+			me["username"], me["avatar"], me["role"], me["visibility"] = p.Username, p.Avatar, p.Role, p.Visibility
+		}
+		unread, _ = a.Social.Unread(r.Context(), uid)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user":        map[string]any{"id": uid, "email": email, "display_name": name, "has_password": hasPassword},
+		"user":        me,
+		"unread":      unread,
 		"csrf_token":  auth.GetCSRFToken(r.Context()),
 		"prefs":       prefs,
 		"library_rev": rev,

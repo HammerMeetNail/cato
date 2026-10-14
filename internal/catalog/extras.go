@@ -288,7 +288,7 @@ func (s *Store) GameExtras(ctx context.Context, id int64) (*Extras, error) {
 		}
 	}
 	// Outbound links found through the Wikidata crosswalk.
-	rows, err = s.db.QueryContext(ctx, `SELECT source, uid FROM game_external_ids WHERE game_id = ? AND source IN (?, ?)`,
+	rows, err = s.db.QueryContext(ctx, `SELECT source, uid FROM game_external_ids WHERE game_id = ? AND source IN (?, ?) ORDER BY source`,
 		id, WebsiteHLTB, WebsitePCGamingWiki)
 	if err != nil {
 		return nil, err

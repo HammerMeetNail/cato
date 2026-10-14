@@ -131,12 +131,12 @@ func TestFindOrCreateGoogleUser(t *testing.T) {
 	h := newTestAuthHandler(database)
 
 	// New Google user with fresh email → created.
-	id1, err := h.findOrCreateGoogleUser(&auth.GoogleUser{EmailVerified: true, Sub: "sub-1", Email: "g1@example.com", Name: "G One"})
+	id1, err := h.findOrCreateGoogleUser(context.Background(), &auth.GoogleUser{EmailVerified: true, Sub: "sub-1", Email: "g1@example.com", Name: "G One"}, "")
 	if err != nil || id1 == "" {
 		t.Fatalf("create: (%q, %v)", id1, err)
 	}
 	// Same subject again → same user (no duplicate).
-	id2, err := h.findOrCreateGoogleUser(&auth.GoogleUser{EmailVerified: true, Sub: "sub-1", Email: "g1@example.com", Name: "G One"})
+	id2, err := h.findOrCreateGoogleUser(context.Background(), &auth.GoogleUser{EmailVerified: true, Sub: "sub-1", Email: "g1@example.com", Name: "G One"}, "")
 	if err != nil || id2 != id1 {
 		t.Errorf("subject lookup: (%q, %v), want %q", id2, err, id1)
 	}
@@ -144,7 +144,7 @@ func TestFindOrCreateGoogleUser(t *testing.T) {
 	if _, err := database.Exec(`INSERT INTO users (id, email, password_hash) VALUES ('plain-1', 'plain@example.com', 'x')`); err != nil {
 		t.Fatal(err)
 	}
-	id3, err := h.findOrCreateGoogleUser(&auth.GoogleUser{EmailVerified: true, Sub: "sub-plain", Email: "PLAIN@example.com"})
+	id3, err := h.findOrCreateGoogleUser(context.Background(), &auth.GoogleUser{EmailVerified: true, Sub: "sub-plain", Email: "PLAIN@example.com"}, "")
 	if !errors.Is(err, errGoogleEmailConflict) || id3 != "" {
 		t.Fatalf("collision: (%q, %v)", id3, err)
 	}
@@ -156,22 +156,22 @@ func TestFindOrCreateGoogleUser(t *testing.T) {
 		t.Fatal("password account was linked")
 	}
 	// An email already owned by a different Google subject also cannot merge.
-	if _, err := h.findOrCreateGoogleUser(&auth.GoogleUser{EmailVerified: true, Sub: "other", Email: "g1@example.com"}); !errors.Is(err, errGoogleEmailConflict) {
+	if _, err := h.findOrCreateGoogleUser(context.Background(), &auth.GoogleUser{EmailVerified: true, Sub: "other", Email: "g1@example.com"}, ""); !errors.Is(err, errGoogleEmailConflict) {
 		t.Fatalf("Google collision: %v", err)
 	}
 	for _, profile := range []*auth.GoogleUser{nil, {}, {EmailVerified: true, Email: "x@example.com"}, {Sub: "bad", Email: "x@example.com"}, {Sub: " ", Email: "x@example.com", EmailVerified: true}} {
-		if _, err := h.findOrCreateGoogleUser(profile); err == nil {
+		if _, err := h.findOrCreateGoogleUser(context.Background(), profile, ""); err == nil {
 			t.Fatalf("accepted invalid profile: %+v", profile)
 		}
 	}
 	if _, err := database.Exec("UPDATE users SET disabled = 1 WHERE id = ?", id1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.findOrCreateGoogleUser(&auth.GoogleUser{EmailVerified: true, Sub: "sub-1", Email: "g1@example.com"}); !errors.Is(err, errGoogleDisabled) {
+	if _, err := h.findOrCreateGoogleUser(context.Background(), &auth.GoogleUser{EmailVerified: true, Sub: "sub-1", Email: "g1@example.com"}, ""); !errors.Is(err, errGoogleDisabled) {
 		t.Fatalf("disabled: %v", err)
 	}
 	// Google user without email and unknown subject → error, not a blank row.
-	if _, err := h.findOrCreateGoogleUser(&auth.GoogleUser{EmailVerified: true, Sub: "sub-noemail"}); err == nil {
+	if _, err := h.findOrCreateGoogleUser(context.Background(), &auth.GoogleUser{EmailVerified: true, Sub: "sub-noemail"}, ""); err == nil {
 		t.Error("expected error for email-less unknown Google user")
 	}
 	var n int

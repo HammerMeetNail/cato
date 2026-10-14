@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -62,7 +63,7 @@ func TestClosedSignupBlocksNewGoogleAccounts(t *testing.T) {
 	defer database.Close()
 	database.Exec(`INSERT INTO users (id, email) VALUES ('existing', 'owner@example.com')`)
 	h := NewAuthHandler(database, &config.Config{Signup: config.SignupClosed})
-	_, err := h.findOrCreateGoogleUser(&auth.GoogleUser{Sub: "g-1", Email: "new@example.com", EmailVerified: true})
+	_, err := h.findOrCreateGoogleUser(context.Background(), &auth.GoogleUser{Sub: "g-1", Email: "new@example.com", EmailVerified: true}, "")
 	if err == nil || err != errSignupClosed {
 		t.Fatalf("err = %v, want errSignupClosed", err)
 	}

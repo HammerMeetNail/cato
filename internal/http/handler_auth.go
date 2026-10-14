@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"cato/internal/auth"
 	"cato/internal/config"
 	"cato/internal/db"
+	"cato/internal/social"
 
 	"github.com/google/uuid"
 	"golang.org/x/oauth2"
@@ -28,6 +30,7 @@ type AuthHandler struct {
 	signupLimiter   *auth.RateLimiter
 	passwordLimiter *auth.RateLimiter
 	loginThrottle   *auth.LoginThrottle
+	social          *social.Service
 	// checkPassword is auth.CheckPassword; tests count calls through it.
 	checkPassword func(password, hash string) bool
 }
@@ -49,6 +52,7 @@ func NewAuthHandler(db *db.DB, cfg *config.Config) *AuthHandler {
 		passwordLimiter: auth.NewRateLimiter(passwordLimit, time.Minute),
 		loginThrottle:   auth.NewLoginThrottle(),
 		checkPassword:   auth.CheckPassword,
+		social:          social.New(db, ""),
 	}
 
 	if cfg.GoogleKey != "" && cfg.GoogleSecret != "" {
@@ -92,6 +96,10 @@ func (h *AuthHandler) Register(mux *http.ServeMux) {
 	passwordChain := h.passwordLimiter.Middleware(
 		auth.AuthRequired(h.db, h.cookies)(auth.CSRFRequired(h.db, h.cookies)(http.HandlerFunc(h.handleChangePassword))))
 	mux.Handle("/api/auth/password", passwordChain)
+
+	// Password reset with an admin-made link: rate limited like sign-in.
+	resetChain := h.passwordLimiter.Middleware(http.HandlerFunc(h.handleReset))
+	mux.Handle("/api/auth/reset", resetChain)
 
 	mux.HandleFunc("/api/auth/google/start", h.handleGoogleStart)
 	mux.HandleFunc("/api/auth/google/callback", h.handleGoogleCallback)
@@ -357,32 +365,26 @@ const recentSignIn = 10 * time.Minute
 // errSignupClosed: CATO_SIGNUP does not allow another account.
 var errSignupClosed = errors.New("signup closed")
 
-// createUser inserts a user, honouring CATO_SIGNUP: unless signup is open,
-// only the first account on an empty instance may be created. The emptiness
-// check is part of the INSERT, so two racing first signups can't both win.
-func (h *AuthHandler) createUser(userID, email, passwordHash, displayName, avatarURL string, googleSubject any) error {
-	query := `INSERT INTO users (id, email, password_hash, display_name, avatar_url, google_subject)
-		SELECT ?, ?, ?, ?, ?, ?`
-	if !h.cfg.SignupIsOpen() {
-		query += ` WHERE NOT EXISTS (SELECT 1 FROM users)`
-	}
-	var hash any
-	if passwordHash != "" {
-		hash = passwordHash
-	}
-	res, err := h.db.Exec(query, userID, email, hash, displayName, avatarURL, googleSubject)
-	if err != nil {
-		return err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
+// createUser inserts a user under the effective signup mode (the admin's
+// choice, else CATO_SIGNUP): the first account on an empty server is
+// always allowed and becomes the admin; otherwise "open" lets anyone in and
+// "invite"/"closed" need a valid invite. It is one transaction, so two
+// racing first sign-ups can't both win and an invite is used once.
+func (h *AuthHandler) createUser(ctx context.Context, userID, email, passwordHash, displayName, avatarURL string, googleSubject any, invite string) error {
+	err := h.social.CreateUser(ctx, h.cfg.SignupMode(), social.NewUser{
+		ID: userID, Email: email, PasswordHash: passwordHash, DisplayName: displayName,
+		AvatarURL: avatarURL, GoogleSubject: googleSubject, Invite: invite,
+	})
+	if errors.Is(err, social.ErrSignupClosed) {
 		return errSignupClosed
 	}
-	return nil
+	return err
 }
 
-// signupAllowed reports whether a new account could be created right now.
-func (h *AuthHandler) signupAllowed() bool {
-	if h.cfg.SignupIsOpen() {
+// signupAllowed reports whether a new account could be created right now
+// without an invite.
+func (h *AuthHandler) signupAllowed(ctx context.Context) bool {
+	if h.social.EffectiveSignup(ctx, h.cfg.SignupMode()) == config.SignupOpen {
 		return true
 	}
 	var any int
@@ -396,12 +398,20 @@ func (h *AuthHandler) handleConfig(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, errResp("method_not_allowed", "Method not allowed"))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	resp := map[string]interface{}{
 		"google_enabled": h.googleCfg != nil,
-		"signup":         h.cfg.SignupMode(),
-		"signup_allowed": h.signupAllowed(),
+		"signup":         h.social.EffectiveSignup(r.Context(), h.cfg.SignupMode()),
+		"signup_allowed": h.signupAllowed(r.Context()),
 		"dev":            h.cfg.Dev,
-	})
+	}
+	if token := r.URL.Query().Get("invite"); token != "" {
+		info := h.social.CheckInvite(r.Context(), token, h.cfg.SignupMode())
+		resp["invite_valid"] = info.Valid
+		if info.Valid {
+			resp["invited_by"] = info.InvitedBy
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *AuthHandler) handleSignup(w http.ResponseWriter, r *http.Request) {
@@ -413,6 +423,7 @@ func (h *AuthHandler) handleSignup(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
+		Invite   string `json:"invite"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, errResp("invalid_body", "Invalid request body"))
@@ -440,9 +451,13 @@ func (h *AuthHandler) handleSignup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID := uuid.New().String()
-	if err := h.createUser(userID, req.Email, passwordHash, "", "", nil); err != nil {
+	if err := h.createUser(r.Context(), userID, req.Email, passwordHash, "", "", nil, req.Invite); err != nil {
 		if errors.Is(err, errSignupClosed) {
-			writeJSON(w, http.StatusForbidden, errResp("signup_closed", "Sign-up is closed on this server"))
+			msg := "Sign-up is closed on this server"
+			if req.Invite != "" {
+				msg = "That invite link has expired or was already used. Ask for a new one."
+			}
+			writeJSON(w, http.StatusForbidden, errResp("signup_closed", msg))
 			return
 		}
 		if strings.Contains(err.Error(), "UNIQUE") {
@@ -592,11 +607,17 @@ func (h *AuthHandler) handleGoogleStart(w http.ResponseWriter, r *http.Request) 
 	}
 
 	state := auth.RandomToken(16)
+	// An invite rides along in the state cookie (never in the URL Google
+	// sees), so a new Google account can use it on the way back.
+	cookieValue := state
+	if invite := r.URL.Query().Get("invite"); invite != "" && len(invite) <= 128 && !strings.Contains(invite, ".") {
+		cookieValue = state + "." + invite
+	}
 
 	// Store state in a dedicated short-lived cookie for CSRF protection.
 	// (This must NOT touch the session cookie — overwriting it here used to
 	// log out any already signed-in user who clicked the Google button.)
-	h.cookies.SetOAuthState(w, state)
+	h.cookies.SetOAuthState(w, cookieValue)
 
 	url := h.googleCfg.AuthCodeURL(state)
 	http.Redirect(w, r, url, http.StatusFound)
@@ -609,7 +630,8 @@ func (h *AuthHandler) handleGoogleCallback(w http.ResponseWriter, r *http.Reques
 	}
 
 	state := r.URL.Query().Get("state")
-	if stateCookie := h.cookies.OAuthState(r); state == "" || stateCookie != state {
+	stateCookie, invite, _ := strings.Cut(h.cookies.OAuthState(r), ".")
+	if state == "" || !auth.TokensEqual(stateCookie, state) {
 		writeAuthErrorPage(w, http.StatusBadRequest, "The sign-in link expired or was opened in a different browser. Please try again.")
 		return
 	}
@@ -628,7 +650,7 @@ func (h *AuthHandler) handleGoogleCallback(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	userID, err := h.findOrCreateGoogleUser(googleUser)
+	userID, err := h.findOrCreateGoogleUser(r.Context(), googleUser, invite)
 	if err != nil {
 		switch {
 		case errors.Is(err, errGoogleEmailConflict):
@@ -651,13 +673,13 @@ func (h *AuthHandler) handleGoogleCallback(w http.ResponseWriter, r *http.Reques
 	auth.NoteSessionClient(h.db, session.ID, r.UserAgent())
 
 	h.cookies.SetSession(w, session.ID)
-	http.Redirect(w, r, "/library", http.StatusFound)
+	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 var errGoogleEmailConflict = errors.New("email belongs to another account")
 var errGoogleDisabled = errors.New("account disabled")
 
-func (h *AuthHandler) findOrCreateGoogleUser(gu *auth.GoogleUser) (string, error) {
+func (h *AuthHandler) findOrCreateGoogleUser(ctx context.Context, gu *auth.GoogleUser, invite string) (string, error) {
 	if err := auth.ValidateGoogleUser(gu); err != nil {
 		return "", err
 	}
@@ -682,7 +704,7 @@ func (h *AuthHandler) findOrCreateGoogleUser(gu *auth.GoogleUser) (string, error
 		return "", err
 	}
 	userID = uuid.New().String()
-	err = h.createUser(userID, email, "", gu.Name, gu.Picture, gu.Sub)
+	err = h.createUser(ctx, userID, email, "", gu.Name, gu.Picture, gu.Sub, invite)
 	if errors.Is(err, errSignupClosed) {
 		return "", err
 	}
@@ -702,4 +724,54 @@ func (h *AuthHandler) findOrCreateGoogleUser(gu *auth.GoogleUser) (string, error
 		return "", err
 	}
 	return userID, nil
+}
+
+// handleReset serves POST /api/auth/reset {token, password}: an
+// admin-made reset link sets a new password and signs the account out
+// everywhere, then signs this browser in.
+func (h *AuthHandler) handleReset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, errResp("method_not_allowed", "Method not allowed"))
+		return
+	}
+	var req struct {
+		Token    string `json:"token"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Token == "" {
+		writeJSON(w, http.StatusBadRequest, errResp("invalid_body", "Invalid request body"))
+		return
+	}
+	if len(req.Password) < 8 || len(req.Password) > 72 {
+		writeJSON(w, http.StatusBadRequest, errResp("weak_password", "Use 8 to 72 characters"))
+		return
+	}
+	hash, err := auth.HashPassword(req.Password)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errResp("internal_error", "Failed to process password"))
+		return
+	}
+	userID, err := h.social.UseResetToken(r.Context(), req.Token, hash)
+	if errors.Is(err, social.ErrBadToken) {
+		writeJSON(w, http.StatusBadRequest, errResp("invalid_token", "That reset link has expired or was already used. Ask an admin for a new one."))
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errResp("internal_error", "Failed to reset password"))
+		return
+	}
+	var disabled int
+	h.db.QueryRow(`SELECT disabled FROM users WHERE id = ?`, userID).Scan(&disabled)
+	if disabled != 0 {
+		writeJSON(w, http.StatusForbidden, errResp("account_disabled", "Account is disabled"))
+		return
+	}
+	session, err := auth.CreatePasswordSession(h.db, userID, hash)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errResp("internal_error", "Failed to create session"))
+		return
+	}
+	auth.NoteSessionClient(h.db, session.ID, r.UserAgent())
+	h.cookies.SetSession(w, session.ID)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"authenticated": true, "csrf_token": session.CSRFToken})
 }

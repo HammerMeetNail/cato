@@ -19,6 +19,14 @@ import { openLogSheet } from './features/log.js';
 import { timerPill, refreshTimer } from './features/timer.js';
 import { searchBox, focusSearch } from './features/search-box.js';
 
+// Trusted Types (CSP require-trusted-types-for 'script'): registering the
+// service worker needs a TrustedScriptURL, from a policy that allows only it.
+const swURL = window.trustedTypes
+  ? window.trustedTypes.createPolicy('cato-sw', {
+    createScriptURL: (u) => { if (u !== '/service-worker.js') throw new TypeError('blocked script URL'); return u; },
+  }).createScriptURL('/service-worker.js')
+  : '/service-worker.js';
+
 // Screens other than Home load on first visit. Each module exports a
 // view(route) and optionally enter(route) (data loading) and init(app).
 const SCREENS = {
@@ -182,7 +190,7 @@ function onKey(e) {
 
 function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
-  navigator.serviceWorker.register('/service-worker.js').catch(() => {});
+  navigator.serviceWorker.register(swURL).catch(() => {});
   let hadController = !!navigator.serviceWorker.controller;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (!hadController) { hadController = true; return; }

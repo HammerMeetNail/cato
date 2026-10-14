@@ -18,6 +18,7 @@ import (
 	"cato/internal/db"
 	"cato/internal/discover"
 	"cato/internal/library"
+	"cato/internal/social"
 )
 
 type client struct {
@@ -65,13 +66,14 @@ func newFixture(t *testing.T) *fixture {
 		DB: database, Cfg: &config.Config{}, Cookies: auth.Cookies{}, Library: lib,
 		Catalog: catalog.NewService(games, noIGDB{}, database), Games: games,
 		Discover: discover.New(database, lib), CoverDir: t.TempDir(),
+		Social: social.New(database, t.TempDir()),
 	})
 	return &fixture{db: database, mux: mux, api: api}
 }
 
 func (f *fixture) user(t *testing.T, id string) *client {
 	t.Helper()
-	if _, err := f.db.Exec(`INSERT INTO users (id, email) VALUES (?, ?)`, id, id+"@example.com"); err != nil {
+	if _, err := f.db.Exec(`INSERT INTO users (id, email, username) VALUES (?, ?, ?)`, id, id+"@example.com", id); err != nil {
 		t.Fatal(err)
 	}
 	s, err := auth.CreateSession(f.db, id)
