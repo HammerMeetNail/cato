@@ -43,13 +43,13 @@ export function empty({ iconName = 'gamepad-2', title, body = '', action = nothi
 }
 
 export function skeletonTiles(n = 9) {
-  return html`<div class="lib-grid" aria-busy="true" aria-label="Loading">
+  return html`<div class="lib-grid" role="status" aria-busy="true" aria-label="Loading">
     ${Array.from({ length: n }, () => html`<div><div class="cover skeleton"></div><div class="skeleton skeleton-line"></div></div>`)}
   </div>`;
 }
 
 export function skeletonRows(n = 4) {
-  return html`<div class="list" aria-busy="true" aria-label="Loading">
+  return html`<div class="list" role="status" aria-busy="true" aria-label="Loading">
     ${Array.from({ length: n }, () => html`<div class="list-row"><div class="thumb cover skeleton"></div><div class="grow"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line" style="width:60%"></div></div></div>`)}
   </div>`;
 }

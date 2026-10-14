@@ -7,6 +7,13 @@ let region;
 let timer;
 let current = null;
 
+// prepareToasts creates the live region up front: screen readers announce
+// changes to a region that already exists, not one inserted with its text
+// (and the first toast then costs no extra layout).
+export function prepareToasts() {
+  ensureRegion();
+}
+
 function ensureRegion() {
   if (region) return region;
   region = document.createElement('div');

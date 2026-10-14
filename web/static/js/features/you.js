@@ -212,7 +212,7 @@ export function diaryView() {
         ${month < today.slice(0, 7) ? html`<a class="btn btn-ghost btn-icon" href=${`#you/diary?month=${shiftMonth(month, 1)}`} aria-label="Next month">${icon('chevron-right')}</a>` : nothing}
       </div></header>
     <p class="muted">${plural(diary.items.length, 'session')} · ${formatMinutes(total)}</p>
-    <div class="calendar section" role="grid" aria-label=${`${monthName(m - 1, true)} ${y}`}>
+    <div class="calendar section" role="group" aria-label=${`${monthName(m - 1, true)} ${y}`}>
       ${dows.map(d => html`<span class="dow" aria-hidden="true">${d}</span>`)}
       ${Array.from({ length: lead }, () => html`<span class="day blank"></span>`)}
       ${Array.from({ length: days }, (_, i) => {

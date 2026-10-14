@@ -1,6 +1,6 @@
 // settings.js — You → Settings: profile, appearance, ratings, library
 // defaults, feedback, devices, data and account.
-import { html, nothing, live } from '../ui/lit.js';
+import { html, nothing } from '../ui/lit.js';
 import { icon } from '../ui/icons.js';
 import { segmented } from '../ui/parts.js';
 import { confirmSheet, openSheet } from '../ui/sheet.js';
@@ -128,7 +128,7 @@ export function settingsView() {
             app.redraw();
           } catch (err) { toastError(err); }
         }}>
-          <label class="field"><span>Display name</span><input class="input" name="name" maxlength="64" .value=${live(app.me?.display_name || '')}></label>
+          <label class="field"><span>Display name</span><input class="input" name="name" maxlength="64" .value=${app.me?.display_name || ''}></label>
           <div class="muted">Signed in as ${app.me?.email}</div>
           <div><button class="btn btn-secondary" type="submit">Save name</button></div>
         </form>

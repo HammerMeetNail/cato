@@ -56,6 +56,14 @@ async function surprise() {
   app.redraw();
 }
 
+// order is the card order for the current visit (see homeView).
+let order = [];
+
+// beginHomeVisit lets the next render order cards by recency again.
+export function beginHomeVisit() {
+  order = [];
+}
+
 export async function enterHome() {
   loadFeed();
   if (state.loading) return;
@@ -128,9 +136,15 @@ function onboarding() {
 }
 
 export function homeView() {
-  const playing = app.store.entries()
+  const fresh = app.store.entries()
     .filter(e => e.status === 'playing' || e.status === 'paused')
     .sort((a, b) => (a.status === b.status ? b.updated - a.updated : a.status === 'playing' ? -1 : 1));
+  // Keep the order stable while Home is open: logging time makes a game
+  // the most recent, and moving its card would put a different game under
+  // the next tap. The order refreshes each time Home is entered.
+  const rank = new Map(order.map((id, i) => [id, i]));
+  const playing = [...fresh].sort((a, b) => (rank.get(a.id) ?? -1) - (rank.get(b.id) ?? -1));
+  order = playing.map(e => e.id);
   const d = state.data;
   const total = app.store.entries().length;
   return html`<div class="page">

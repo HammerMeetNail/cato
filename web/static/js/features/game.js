@@ -1,7 +1,7 @@
 // game.js — the game page, the hub for everything about one game: hero,
 // your status / rating / time, your playthroughs and sessions, details you
 // keep (platforms, format, tags, notes) and what the catalog knows.
-import { html, nothing, repeat, live } from '../ui/lit.js';
+import { html, nothing, repeat } from '../ui/lit.js';
 import { icon } from '../ui/icons.js';
 import { cover, statusControl, empty } from '../ui/parts.js';
 import { ratingInput, stars } from '../ui/stars.js';
@@ -171,6 +171,8 @@ function sessionList(sessions) {
   </section>`;
 }
 
+// Draft fields bind .value without live(): a background redraw (a sync, a
+// write elsewhere) must not reset what's being typed to the saved value.
 function details(e, item, game) {
   const tagSugs = tagSuggestions(app.store.entries(), '', 30);
   const platformChoices = [...new Set([...(game.platforms || []), ...(item.platforms || []), ...(app.prefs.default_platforms || [])])];
@@ -197,7 +199,7 @@ function details(e, item, game) {
       }}>
       <datalist id="tag-options">${tagSugs.map(t => html`<option value=${t}></option>`)}</datalist></div>
     <label class="field"><span>Notes (private)</span>
-      <textarea class="textarea" maxlength="10000" .value=${live(item.notes || '')}
+      <textarea class="textarea" maxlength="10000" .value=${item.notes || ''}
         @change=${ev => ev.target.value !== (item.notes || '') && editChange(e.id, { notes: ev.target.value }, 'Notes saved')}></textarea></label>
     <div class="row row-wrap">
       <label class="field" style="flex:1"><span>Started</span><input class="input" type="date" .value=${(item.started_at || '').slice(0, 10)} max=${localDay()}

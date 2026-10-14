@@ -129,7 +129,11 @@ export function openLogSheet(initial = '') {
       <input type="search" aria-label="Search your library and all games" placeholder="Log a game…" enterkeyhint="search"
         autocomplete="off" autocapitalize="none" spellcheck="false" .value=${live(state.q)}
         @input=${e => { state.q = e.target.value; search(s); s.update(); }}
-        @keydown=${e => { if (e.key === 'Enter' && state.q.trim()) { s.close(); go(`#discover/search?q=${encodeURIComponent(state.q.trim())}`); } }}>
+        @keydown=${e => {
+          if (e.key === 'Enter' && state.q.trim()) { s.close(); go(`#discover/search?q=${encodeURIComponent(state.q.trim())}`); }
+          // A search field's Escape would only clear the text: close the sheet.
+          else if (e.key === 'Escape') { e.preventDefault(); s.close(); }
+        }}>
       </div>
       <button type="button" class="btn btn-ghost btn-icon" aria-label="Close" @click=${() => s.close()}>${icon('x')}</button>
     </div>`;

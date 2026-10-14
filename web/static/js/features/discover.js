@@ -1,6 +1,6 @@
 // discover.js — Discover: shelves of games to find, and the full catalog
 // search results page with facets. Every result shows your status.
-import { html, nothing, repeat, live } from '../ui/lit.js';
+import { html, nothing, repeat } from '../ui/lit.js';
 import { icon } from '../ui/icons.js';
 import { cover, statusPill, empty, skeletonTiles } from '../ui/parts.js';
 import { api } from '../core/api.js';
@@ -122,13 +122,13 @@ export function searchView(route) {
         <form class="search" role="search" @submit=${e => {
           e.preventDefault();
           facet(route, 'q', new FormData(e.target).get('q').trim());
-        }}>${icon('search', 'icon-search')}<input name="q" type="search" aria-label="Search every game" .value=${live(q.q || '')} enterkeyhint="search"></form>
-        <label class="field"><span>Platform</span><input class="input" placeholder="Switch, PS5, PC…" .value=${live(q.platform || '')}
+        }}>${icon('search', 'icon-search')}<input name="q" type="search" aria-label="Search every game" .value=${q.q || ''} enterkeyhint="search"></form>
+        <label class="field"><span>Platform</span><input class="input" placeholder="Switch, PS5, PC…" .value=${q.platform || ''}
           @change=${e => facet(route, 'platform', e.target.value.trim())}></label>
         <div class="row">
-          <label class="field" style="flex:1"><span>From</span><input class="input" type="number" min="1970" max=${year + 5} placeholder="1990" .value=${live(q.year_from || '')}
+          <label class="field" style="flex:1"><span>From</span><input class="input" type="number" min="1970" max=${year + 5} placeholder="1990" .value=${q.year_from || ''}
             @change=${e => facet(route, 'year_from', e.target.value)}></label>
-          <label class="field" style="flex:1"><span>To</span><input class="input" type="number" min="1970" max=${year + 5} placeholder=${String(year)} .value=${live(q.year_to || '')}
+          <label class="field" style="flex:1"><span>To</span><input class="input" type="number" min="1970" max=${year + 5} placeholder=${String(year)} .value=${q.year_to || ''}
             @change=${e => facet(route, 'year_to', e.target.value)}></label>
         </div>
         ${genres?.length ? html`<label class="field"><span>Genre</span>
