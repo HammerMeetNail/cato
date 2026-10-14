@@ -2,10 +2,10 @@ package catalog
 
 import (
 	"context"
-	"net/url"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
