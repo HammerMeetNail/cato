@@ -18,6 +18,14 @@ import (
 // maxBatchIDs is IGDB's hard cap on `where id = (...)` tuple size.
 const maxBatchIDs = 500
 
+// maxResponseBytes bounds every IGDB response body (a 500-game batch with
+// alternative names is well under 1 MiB).
+const maxResponseBytes = 8 << 20
+
+// max429Retries is how many times a rate-limited (429) request is retried,
+// with exponential backoff from Client.backoff or the server's Retry-After.
+const max429Retries = 3
+
 // Default endpoints. Kept as fields (not constants) so tests can point the
 // client at a local httptest server instead of the live API.
 const (
@@ -32,9 +40,10 @@ type Client struct {
 	tokenExpiry  time.Time
 	httpClient   *http.Client
 	rateLimiter  *games.IGDBRateLimiter
-	mu           sync.Mutex
+	mu           sync.Mutex // guards accessToken and tokenExpiry
 	apiBase      string
 	authBase     string
+	backoff      time.Duration
 }
 
 type igdbCover struct {
@@ -106,6 +115,7 @@ func NewClient(clientID, clientSecret string) *Client {
 		httpClient:   &http.Client{Timeout: 10 * time.Second},
 		apiBase:      defaultAPIBase,
 		authBase:     defaultAuthBase,
+		backoff:      time.Second,
 	}
 }
 
@@ -116,6 +126,7 @@ func newTestClient(clientID, clientSecret, apiBase, authBase string) *Client {
 	c.apiBase = apiBase
 	c.authBase = authBase
 	c.rateLimiter = games.NewIGDBRateLimiterWithInterval(0)
+	c.backoff = time.Millisecond
 	return c
 }
 
@@ -333,16 +344,19 @@ func gameCategory(g igdbGame) int64 {
 	return g.Category
 }
 
-func (c *Client) authenticate(ctx context.Context) error {
+// authenticate returns a usable access token, fetching a new one when the
+// cached token is missing or about to expire. The token is returned (read
+// under the lock) so callers never read c.accessToken unsynchronized.
+func (c *Client) authenticate(ctx context.Context) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.accessToken != "" && time.Now().Before(c.tokenExpiry.Add(-5*time.Minute)) {
-		return nil
+		return c.accessToken, nil
 	}
 
 	if c.clientSecret == "" {
-		return nil
+		return c.accessToken, nil
 	}
 
 	data := url.Values{
@@ -354,27 +368,27 @@ func (c *Client) authenticate(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.authBase, strings.NewReader(data.Encode()))
 	if err != nil {
-		return fmt.Errorf("create token request: %w", err)
+		return "", fmt.Errorf("create token request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("token request: %w", err)
+		return "", fmt.Errorf("token request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("token endpoint returned %d: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("token endpoint returned %d: %s", resp.StatusCode, string(body))
 	}
 
 	var tokenResp struct {
 		AccessToken string `json:"access_token"`
 		ExpiresIn   int    `json:"expires_in"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		return fmt.Errorf("decode token response: %w", err)
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&tokenResp); err != nil {
+		return "", fmt.Errorf("decode token response: %w", err)
 	}
 
 	c.accessToken = tokenResp.AccessToken
@@ -382,52 +396,98 @@ func (c *Client) authenticate(ctx context.Context) error {
 		c.tokenExpiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
 	}
 
-	return nil
+	return c.accessToken, nil
+}
+
+// invalidateToken drops the cached token after a 401, unless another request
+// already replaced it.
+func (c *Client) invalidateToken(token string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.accessToken == token {
+		c.accessToken = ""
+	}
+}
+
+// retryDelay honours a numeric Retry-After (capped), else backs off
+// exponentially from c.backoff.
+func (c *Client) retryDelay(retryAfter string, attempt int) time.Duration {
+	if secs, err := strconv.Atoi(strings.TrimSpace(retryAfter)); err == nil && secs >= 0 {
+		return min(time.Duration(secs)*time.Second, 30*time.Second)
+	}
+	return c.backoff << attempt
 }
 
 // do authenticates, POSTs an APIQL query to one IGDB endpoint, and returns
-// the raw response body. Endpoint-specific wrappers decode it.
+// the raw response body. Endpoint-specific wrappers decode it. A 401
+// refreshes the token and retries once; a 429 backs off and retries up to
+// max429Retries times; bodies are capped at maxResponseBytes.
 func (c *Client) do(ctx context.Context, endpoint, body string) ([]byte, error) {
-	if err := c.authenticate(ctx); err != nil {
-		return nil, fmt.Errorf("authenticate: %w", err)
-	}
+	retried401 := false
+	for attempt := 0; ; attempt++ {
+		token, err := c.authenticate(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("authenticate: %w", err)
+		}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.apiBase+endpoint, strings.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+			c.apiBase+endpoint, strings.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
 
-	req.Header.Set("Client-ID", c.clientID)
-	if c.accessToken != "" {
-		req.Header.Set("Authorization", "Bearer "+c.accessToken)
-	}
-	req.Header.Set("Accept", "application/json")
+		req.Header.Set("Client-ID", c.clientID)
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		req.Header.Set("Accept", "application/json")
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("http request: %w", err)
-	}
-	defer resp.Body.Close()
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("http request: %w", err)
+		}
 
-	if resp.StatusCode == http.StatusTooManyRequests {
-		return nil, fmt.Errorf("igdb rate limited (429)")
-	}
-	if resp.StatusCode == http.StatusUnauthorized && c.clientSecret != "" {
-		c.mu.Lock()
-		c.accessToken = ""
-		c.mu.Unlock()
-		return nil, fmt.Errorf("igdb unauthorized — token may have expired, will retry")
-	}
-	if resp.StatusCode >= 500 {
-		return nil, fmt.Errorf("igdb server error: %d", resp.StatusCode)
-	}
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return nil, fmt.Errorf("igdb returned %d: %s", resp.StatusCode, string(respBody))
-	}
+		switch {
+		case resp.StatusCode == http.StatusTooManyRequests:
+			resp.Body.Close()
+			if attempt >= max429Retries {
+				return nil, fmt.Errorf("igdb rate limited (429) after %d retries", max429Retries)
+			}
+			timer := time.NewTimer(c.retryDelay(resp.Header.Get("Retry-After"), attempt))
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
+			continue
+		case resp.StatusCode == http.StatusUnauthorized && c.clientSecret != "":
+			resp.Body.Close()
+			c.invalidateToken(token)
+			if retried401 {
+				return nil, fmt.Errorf("igdb unauthorized after re-authenticating")
+			}
+			retried401 = true
+			continue
+		case resp.StatusCode >= 500:
+			resp.Body.Close()
+			return nil, fmt.Errorf("igdb server error: %d", resp.StatusCode)
+		case resp.StatusCode != http.StatusOK:
+			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+			resp.Body.Close()
+			return nil, fmt.Errorf("igdb returned %d: %s", resp.StatusCode, string(respBody))
+		}
 
-	return io.ReadAll(resp.Body)
+		data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("read response: %w", err)
+		}
+		if len(data) > maxResponseBytes {
+			return nil, fmt.Errorf("igdb response too large (over %d bytes)", maxResponseBytes)
+		}
+		return data, nil
+	}
 }
 
 func (c *Client) post(ctx context.Context, endpoint, body string) ([]igdbGame, error) {

@@ -299,7 +299,7 @@ func TestPostDecodesGames(t *testing.T) {
 
 func TestAuthenticateNoSecretShortCircuit(t *testing.T) {
 	c := NewClient("id", "")
-	if err := c.authenticate(context.Background()); err != nil {
+	if _, err := c.authenticate(context.Background()); err != nil {
 		t.Errorf("authenticate without secret: %v", err)
 	}
 }
