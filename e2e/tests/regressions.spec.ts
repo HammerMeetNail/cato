@@ -82,3 +82,62 @@ test('#10 the Search shortcut opens the library with the search box focused', as
   await expect(page).toHaveURL(/#library$/);
   await expect(page.locator('#lib-search')).toBeFocused();
 });
+
+// Moving between screens must not flash a placeholder: the tabs' code is
+// fetched while the app is idle, and a load that is still quick keeps the
+// current screen instead of drawing the loading grid.
+test('switching tabs for the first time shows no loading placeholder', async ({ page }) => {
+  await account(page);
+  await gotoApp(page, '#home');
+  await expect.poll(() => page.evaluate(() => performance.getEntriesByType('resource').some(r => r.name.includes('/js/features/you.js'))),
+    { message: 'tabs prefetched while idle' }).toBe(true);
+  await page.evaluate(() => {
+    (window as any).__placeholders = 0;
+    new MutationObserver(() => {
+      if (document.querySelector('#main > .page > [aria-busy="true"]')) (window as any).__placeholders++;
+    }).observe(document.getElementById('app')!, { childList: true, subtree: true });
+  });
+  for (const [tab, heading] of [['you', null], ['library', 'Library'], ['home', null]] as const) {
+    await page.locator(`nav.nav a[data-nav="${tab}"]`).click();
+    await expect(page).toHaveURL(new RegExp(`#${tab}`));
+    if (heading) await expect(page.getByRole('heading', { level: 1, name: heading })).toBeVisible();
+  }
+  expect(await page.evaluate(() => (window as any).__placeholders)).toBe(0);
+});
+
+// A tapped tile already shows the game's name and cover: the game page
+// draws them at once, not a placeholder until its details arrive.
+test('a game opened from a tile shows its name before the details load', async ({ page }) => {
+  await account(page);
+  await gotoApp(page, '#discover/search?q=astro');
+  const tile = page.locator(`#main a[href="#game/${G.astro}"]`).first();
+  await expect(tile).toBeVisible();
+  let release!: () => void;
+  const held = new Promise<void>(r => { release = r; });
+  await page.route(new RegExp(`/api/v1/games/${G.astro}$`), async route => { await held; await route.continue(); });
+  await tile.click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Astro Bot' })).toBeVisible();
+  release();
+  await expect(page.getByText('Not in your library yet.')).toBeVisible();
+});
+
+// A page that starts again right after one of its own navigations was
+// reloaded under the app (on an iPhone, for one): it reports that, so the
+// server log says why. A normal start reports nothing.
+test('a reload right after navigating is reported; a normal start is not', async ({ page }) => {
+  await account(page);
+  const reports: any[] = [];
+  page.on('request', r => { if (r.url().endsWith('/api/v1/diagnostics/reload')) reports.push(r.postDataJSON()); });
+  await gotoApp(page, '#home');
+  // Navigations are noted once the shell is idle after the first paint:
+  // idle.js prefetches you.js in the same step that starts listening.
+  await expect.poll(() => page.evaluate(() => performance.getEntriesByType('resource').some(r => r.name.includes('/js/features/you.js')))).toBe(true);
+  await page.locator('nav.nav a[data-nav="you"]').click();
+  await expect(page).toHaveURL(/#you/);
+  const sent = page.waitForRequest(r => r.url().endsWith('/api/v1/diagnostics/reload'));
+  await page.reload();
+  const body = (await sent).postDataJSON();
+  expect(body).toMatchObject({ nav_type: 'reload', clean_exit: true, from: '#home', to: '#you' });
+  expect(body.since_nav_ms).toBeLessThan(5000);
+  expect(reports).toHaveLength(1);
+});

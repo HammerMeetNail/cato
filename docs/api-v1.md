@@ -186,3 +186,9 @@ Notification delivery follows `prefs.notify[kind].push` (release, release_soon a
 | `POST /goals`, `DELETE /goals/{id}` | `{year, kind, target, param?}`; at most ten a year. |
 
 `GET /games/{id}` includes `moods`: suggested tags (`cozy`, `co-op`, `short`, `story-rich`, `challenging`, `spooky`) from IGDB genres, themes, modes and time to beat. `GET /up-next?mood=` keeps picks with that mood, whether suggested or tagged by you.
+
+## Diagnostics
+
+| Method and path | Purpose |
+|---|---|
+| `POST /diagnostics/reload` | `{nav_type, since_nav_ms, clean_exit, from, to, uptime_ms}` → 204. The app sends it when a tab's page starts again within 5 s of one of its own navigations: the browser reloaded it (a killed page, an extension, a gesture). Only written to the server log (`msg="unexpected reload"`, with the user agent). Text fields are capped at 200 characters. |

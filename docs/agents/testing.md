@@ -115,6 +115,16 @@ When you touch layout or forms, run the Firefox project.
 
 **To probe a running Cato container** (for example the local `cato-local` image) instead of the E2E server, run the Playwright image with `--network container:<name>` and open `https://localhost:7080`. The `firefox` export of `@playwright/test` works the same way inside the container.
 
+## Real Mobile Safari (iOS Simulator)
+
+Playwright's `mobile-webkit` is desktop WebKit with an iPhone viewport, not Mobile Safari. For iOS-only behaviour, use the iOS Simulator (Xcode is installed; there's no Simulator window, everything is command line):
+
+1. **Boot a device and open Cato:** `xcrun simctl boot <udid>` (pick a generic iPhone from `xcrun simctl list devices available`), then `xcrun simctl openurl <udid> http://10.0.0.42:7080/login`. Screenshots: `xcrun simctl io <udid> screenshot out.png`.
+2. **Run JavaScript in its Safari:** find the inspector socket with `lsof -U | grep webinspectord_sim`, start `ios_webkit_debug_proxy -s unix:<socket>`, and talk to `ws://127.0.0.1:9222/devtools/page/1`. Newer iOS wraps commands in `Target.sendMessageToTarget` to the target from `Target.targetCreated`. `Runtime.evaluate` can sign in, mark `window` to detect reloads, and read state.
+3. **Real taps** (synthetic `click()` and `TouchEvent`s don't go through UIKit): `idb_companion --udid <udid> --grpc-port 10882` (Homebrew `facebook/fb/idb-companion`), the `fb-idb` client in a scratch venv, then `idb ui tap --udid <udid> X Y` in points (screenshot pixels ÷ 3).
+
+The Simulator has no device memory limits, so a page that iOS kills on a real phone survives there. For that, read the server's `unexpected reload` log lines (see `frontend.md`).
+
 ## Manual checks agents do
 
 - **Real app over HTTPS:** `make run` (dev TLS). Keep your own Playwright scripts in the scratchpad, never in the repo.

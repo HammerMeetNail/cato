@@ -53,6 +53,18 @@ async function reload() {
   }
 }
 
+// tappedTile reads the name and cover off the game tile just tapped (the
+// shell keeps the click target in app.tapped), so the page draws them at
+// once instead of a placeholder while it loads.
+function tappedTile(id) {
+  const link = app.tapped?.closest?.('a[href^="#game/"]');
+  if (!link || link.getAttribute('href') !== `#game/${id}`) return null;
+  const card = link.closest('.upnext-card, .tile, .list-row, .feed-item') || link;
+  const img = link.querySelector('.cover img') || card.querySelector('.cover img');
+  const name = (img?.alt || '').replace(/^Cover of /, '') || link.getAttribute('aria-label')?.replace(/^Open /, '') || link.textContent.trim();
+  return { id, name, cover: img?.getAttribute('src') || '' };
+}
+
 // Writes made from this page refresh it once the server confirms.
 export function watchGameWrites(store) {
   store.addEventListener('sent', ev => {
@@ -245,8 +257,10 @@ export function gameView(route) {
   }
   const local = app.store.get(route.id);
   if (!d) {
-    // Render instantly from the local index while the page loads.
-    return html`<div class="page"><div class="game-hero">${local ? html`<div class="backdrop"></div>${cover(local, { eager: true })}<div><h1>${local.name}</h1></div>` : html`<div class="cover skeleton"></div><div class="skeleton skeleton-line" style="width:60%"></div>`}</div>
+    // Render instantly from the local index, or from the tapped tile,
+    // while the page loads.
+    const seed = local || tappedTile(route.id);
+    return html`<div class="page"><div class="game-hero">${seed ? html`<div class="backdrop" style=${seed.cover ? `background-image:url("${encodeURI(seed.cover)}")` : ''}></div>${cover(seed, { eager: true })}<div><h1>${seed.name}</h1></div>` : html`<div class="cover skeleton"></div><div class="skeleton skeleton-line" style="width:60%"></div>`}</div>
       ${local ? html`<div class="game-layout"><div>${yourRow(local, null)}</div></div>` : nothing}</div>`;
   }
   const game = d.game;

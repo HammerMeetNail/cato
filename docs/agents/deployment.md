@@ -21,6 +21,7 @@ make deploy-full   # disabled: data replacement follows the restore runbook
 ```
 
 - **`deploy-nas`** replaces the NAS `docker-compose.yml` with the repo's, which passes every setting through from `.env`. Before it, take a verified `.backup` of the database (commands below).
+  - Its tar runs with `COPYFILE_DISABLE=1` and excludes `._*` and `.DS_Store`: macOS metadata files otherwise land in `web/static`. The asset versioner ignores dotfiles as a second guard.
 - **Tagged releases** must be reachable from `main`. Normal pushes to `main` and PRs never publish or deploy. Image, SSH and Cloudflare settings: `docs/production-runbook.md`.
 - **Schema upgrades run automatically at startup**, after a `VACUUM INTO` snapshot in `data/backups/`. For a release with new migrations, rehearse on a copy of production first. `docs/nas-upgrade.md`, if present, is the worked procedure.
 - **Assets are versioned automatically.** An open client shows "A new version of Cato is ready" with a Reload button.

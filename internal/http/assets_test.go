@@ -75,6 +75,9 @@ func assetServer(t *testing.T) (*Server, string) {
 	write("js/core/a.js", "export const a = 1;\n")
 	write("js/core/b.js", "export {};\n")
 	write("js/later.js", "export {};\n")
+	// macOS metadata a copy from a Mac can leave behind.
+	write("js/._app.js", "\x00\x05\x16\x07")
+	write(".DS_Store", "junk")
 	write("service-worker.js", `const VERSION = "__CATO_ASSET_VERSION__";`)
 	write("offline.html", "<!doctype html><title>Offline</title>")
 	srv := newHTTPSTestServer(t, &config.Config{StaticDir: static, AllowInsecure: true})
@@ -107,6 +110,13 @@ func TestHTMLGetsVersionedAssetsAndImportMap(t *testing.T) {
 	}
 	if !strings.HasPrefix(im.Imports["/js/later.js"], "/js/later.js?v=") || !strings.HasPrefix(im.Imports["/js/core/a.js"], "/js/core/a.js?v=") {
 		t.Errorf("import map %v", im.Imports)
+	}
+	// Dotfiles (macOS ._* metadata, .DS_Store) aren't assets.
+	if _, ok := im.Imports["/js/._app.js"]; ok {
+		t.Errorf("dotfile in the import map: %v", im.Imports)
+	}
+	if manifest := get(t, srv, "/asset-manifest.json", nil).Body.String(); strings.Contains(manifest, "._app.js") || strings.Contains(manifest, ".DS_Store") {
+		t.Errorf("dotfiles in the asset manifest: %s", manifest)
 	}
 	// Static imports of the entry point are preloaded; dynamic ones aren't.
 	for _, want := range []string{`<link rel="modulepreload" href="/js/core/a.js?v=`, `<link rel="modulepreload" href="/js/core/b.js?v=`, `<link rel="modulepreload" href="/js/app.js?v=`} {

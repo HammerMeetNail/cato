@@ -24,7 +24,13 @@ The frontend is vanilla ES modules with **no build step**. Templates are lit-htm
   | Admin and dev | `#admin?tab=`, `#dev/ui` (only with `CATO_DEV=1`) |
 
   Legacy hashes redirect.
-- **Loading:** Home and the Log sheet load eagerly, and everything else is a dynamic `import()` in `SCREENS`. Home also loads its feed, goals and confetti modules lazily; see the performance budget below.
+- **Loading:** Home and the Log sheet load eagerly, and everything else is a dynamic `import()` in `SCREENS` (through `loadScreen`). Home also loads its feed, goals and confetti modules lazily; see the performance budget below.
+- **No flicker between screens:**
+  - One second after `load`, `features/idle.js` prefetches Library, Discover, You and the game page (through `loadScreen`), so a first visit doesn't wait for code.
+  - A screen whose code is still loading keeps the current screen for 200 ms before drawing the loading grid.
+  - The shell keeps the last click target in `app.tapped`. The game page reads the tapped tile's name and cover from it and draws them at once while its details load.
+- **Unexpected reloads are reported.** `features/idle.js` notes each in-app navigation in `sessionStorage`. If the tab's next page starts within 5 s of one, it posts `/api/v1/diagnostics/reload`, and the server logs `unexpected reload` with the user agent. Read those log lines first when someone reports a flicker or lost state on a device you can't test.
+- **The initial JS budget is nearly full** (59.9 of 60 KB after these changes). New shell code goes into `features/idle.js` or another lazy module.
 
 ## Data and writes
 

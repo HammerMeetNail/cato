@@ -64,6 +64,15 @@ export function registerScreen(name, loader) {
 }
 
 const loaded = new Map();
+const loading = new Map();
+
+// loadScreen imports a screen once (a visit or the idle prefetch).
+const loadScreen = name => loading.get(name) ?? loading.set(name, SCREENS[name]().then(mod => {
+  mod.init?.();
+  loaded.set(name, mod);
+  return mod;
+}, err => { loading.delete(name); throw err; })).get(name);
+
 const TITLES = {
   home: 'Home', library: 'Library', game: 'Game', discover: 'Discover', 'discover/search': 'Search', you: 'You',
   'you/stats': 'Stats', 'you/diary': 'Diary', 'you/settings': 'Settings', 'you/help': 'Help', 'dev/ui': 'Gallery',
@@ -167,14 +176,14 @@ async function onRoute(next) {
     return;
   }
   if (!screenFor(next) && SCREENS[next.name]) {
-    draw();
+    const slow = setTimeout(() => { if (route === next) draw(); }, 200);
     try {
-      const mod = await SCREENS[next.name]();
-      mod.init?.();
-      loaded.set(next.name, mod);
+      await loadScreen(next.name);
     } catch (err) {
       toast("Couldn't load that screen. Check your connection.", { kind: 'error' });
       return;
+    } finally {
+      clearTimeout(slow);
     }
     if (route !== next) return;
   }
@@ -221,11 +230,9 @@ function onKey(e) {
   }
 }
 
-// Swipe navigation (features/swipe.js) loads on the first touch, so
-// desktop and the first paint don't pay for it. Touches that happen while
-// it loads are recorded and replayed, so the first swipe isn't lost. Touch
-// events go to the element the touch started on even if a re-render
-// removes it, so the recorder listens there, not on the document.
+// Swipe navigation (features/swipe.js) loads on the first touch; touches
+// meanwhile are recorded on their target (re-renders may detach it) and
+// replayed.
 let swipeQueue = null;
 const TOUCH_REST = ['touchmove', 'touchend', 'touchcancel'];
 const recordTouch = e => swipeQueue?.push({ type: e.type, target: e.target, touches: [...e.touches].map(t => ({ clientX: t.clientX, clientY: t.clientY })) });
@@ -343,10 +350,14 @@ async function boot() {
   });
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyTheme(app.prefs.theme));
   document.addEventListener('keydown', onKey);
+  document.addEventListener('click', e => { app.tapped = e.target; }, true);
   document.addEventListener('touchstart', onFirstTouch, { passive: true });
   if (!app.config.dev) delete SCREENS['dev/ui'];
 
   startRouter(onRoute);
+  const idle = () => setTimeout(() => import('./features/idle.js').then(m => m.start(loadScreen)).catch(() => {}), 1000);
+  if (document.readyState === 'complete') idle();
+  else addEventListener('load', idle, { once: true });
   if (app.online) {
     app.store.sync().then(() => app.store.flush()).catch(() => {});
     refreshTimer();

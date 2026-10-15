@@ -92,7 +92,7 @@ deploy-push: deploy-build
 	cat cato | ssh $(NAS_HOST) 'cat > $(NAS_PATH)/cato && chmod +x $(NAS_PATH)/cato'
 	cat Dockerfile | ssh $(NAS_HOST) 'cat > $(NAS_PATH)/Dockerfile'
 	cat docker-compose.yml | ssh $(NAS_HOST) 'cat > $(NAS_PATH)/docker-compose.yml'
-	tar czf - web/static | ssh $(NAS_HOST) 'cd $(NAS_PATH) && rm -rf web/static && tar xzf -'
+	COPYFILE_DISABLE=1 tar czf - --exclude '._*' --exclude .DS_Store web/static | ssh $(NAS_HOST) 'cd $(NAS_PATH) && rm -rf web/static && tar xzf -'
 
 deploy-db:
 	@echo "Automatic production database replacement is disabled. Follow the stopped-service restore procedure in docs/production-runbook.md."

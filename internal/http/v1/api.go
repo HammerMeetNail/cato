@@ -119,6 +119,7 @@ func Register(mux *http.ServeMux, d Deps) *API {
 	route("GET /api/v1/platforms", a.platforms)
 	route("GET /api/v1/typeahead", a.typeahead)
 	route("GET /api/v1/search", a.search)
+	route("POST /api/v1/diagnostics/reload", a.reportReload)
 
 	a.registerSocial(route)
 	a.registerImports(route)

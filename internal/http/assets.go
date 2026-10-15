@@ -77,6 +77,11 @@ func (a *assetIndex) refresh() {
 		if err != nil || d.IsDir() {
 			return nil
 		}
+		// Dotfiles aren't assets: macOS ._* metadata and .DS_Store come
+		// along when static files are copied from a Mac.
+		if strings.HasPrefix(d.Name(), ".") {
+			return nil
+		}
 		info, err := d.Info()
 		if err != nil {
 			return nil

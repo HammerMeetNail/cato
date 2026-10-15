@@ -1,0 +1,41 @@
+package v1
+
+import (
+	"bytes"
+	"log/slog"
+	"net/http"
+	"strings"
+	"testing"
+)
+
+func TestReloadReportIsLogged(t *testing.T) {
+	f := newFixture(t)
+	c := f.user(t, "u1")
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	rec := c.do(http.MethodPost, "/api/v1/diagnostics/reload", map[string]any{
+		"nav_type": "reload", "since_nav_ms": 84, "clean_exit": false,
+		"from": "#home", "to": "#discover", "uptime_ms": 1320,
+	}, "User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 26_1 like Mac OS X)")
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	out := buf.String()
+	for _, want := range []string{`msg="unexpected reload"`, "nav_type=reload", "since_nav_ms=84", "clean_exit=false", "to=#discover", "uptime_ms=1320", "iPhone OS 26_1"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log missing %q:\n%s", want, out)
+		}
+	}
+
+	// Free text is bounded, and nonsense is refused.
+	if rec := c.do(http.MethodPost, "/api/v1/diagnostics/reload", map[string]any{"nav_type": strings.Repeat("x", 5000)}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("oversized report: status %d", rec.Code)
+	}
+	if rec := c.do(http.MethodPost, "/api/v1/diagnostics/reload", map[string]any{"since_nav_ms": -5}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("negative timing: status %d", rec.Code)
+	}
+}
