@@ -8,13 +8,13 @@ import { skeletonTiles, empty } from './ui/parts.js';
 import { toast, prepareToasts } from './ui/toast.js';
 import { anySheetOpen, closeAllSheets } from './ui/sheet.js';
 import { closeMenu } from './ui/menu.js';
-import { api, request, setCSRF, getCSRF, ApiError } from './core/api.js';
+import { api, request, setCSRF, getCSRF, awaitCSRF, ApiError } from './core/api.js';
 import { openKV } from './core/idb.js';
 import { Store } from './core/store.js';
 import { start as startRouter, tab, go } from './core/router.js';
 import { initials, plural } from './core/format.js';
 import { app, applyTheme } from './features/app-state.js';
-import { homeView, enterHome, beginHomeVisit } from './features/home.js';
+import { homeView, enterHome, beginHomeVisit, primeHome } from './features/home.js';
 import { openLogSheet } from './features/log.js';
 import { timerPill, refreshTimer } from './features/timer.js';
 import { searchBox, focusSearch } from './features/search-box.js';
@@ -288,6 +288,7 @@ function offlineScreen(message) {
 // no CSRF token yet: fetch it before the first queued write goes out (a
 // failure stays retryable, so nothing queued is lost).
 async function sendWithSession(method, path, opts) {
+  if (method !== 'GET' && !getCSRF()) await meRequest?.catch(() => {});
   if (method !== 'GET' && !getCSRF()) {
     const me = await api.get('/api/v1/me');
     setCSRF(me.csrf_token);
@@ -297,34 +298,56 @@ async function sendWithSession(method, path, opts) {
   return request(method, path, opts);
 }
 
+let meRequest = null;
+
 async function boot() {
   registerServiceWorker();
   prepareToasts();
   const kv = await openKV();
-  let me;
-  try {
-    me = await api.get('/api/v1/me');
-    setCSRF(me.csrf_token);
-    await kv.put('meta', 'me', { user: me.user, prefs: me.prefs });
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 401) {
-      location.href = '/login' + location.hash;
+  // Start from the copy on this device, so a reload draws at once instead
+  // of a blank page; the server's answer replaces it a moment later. Not
+  // right after the login page: whoever signed in may be someone else.
+  let signedIn = false;
+  try { signedIn = !!localStorage.getItem('cato-signed-in'); localStorage.removeItem('cato-signed-in'); } catch { /* storage off */ }
+  const cached = signedIn ? null : await kv.get('meta', 'me');
+  const fresh = meRequest = api.get('/api/v1/me');
+  awaitCSRF(fresh);
+  let me = cached;
+  if (!me) {
+    try {
+      me = await fresh;
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) location.href = '/login' + location.hash;
+      else offlineScreen('Check your connection, then try again.');
       return;
     }
-    // Offline: open from the copy on this device if there is one.
-    const cached = await kv.get('meta', 'me');
-    if (!cached) {
-      offlineScreen('Check your connection, then try again.');
-      return;
-    }
-    me = cached;
-    app.online = false;
   }
-  app.me = me.user;
-  app.prefs = me.prefs || {};
-  app.unread = me.unread || 0;
-  applyTheme(app.prefs.theme);
-  try { app.config = await api.get('/api/config'); } catch { app.config = {}; }
+  const useMe = m => {
+    app.me = m.user;
+    app.prefs = m.prefs || {};
+    app.unread = m.unread ?? app.unread;
+    applyTheme(app.prefs.theme);
+  };
+  useMe(me);
+  app.config = me.config || {};
+  const config = api.get('/api/config').then(c => { app.config = c; }, () => {});
+  if (!me.config) await config;
+  fresh.then(async m => {
+    setCSRF(m.csrf_token);
+    if (m.user.id !== me.user.id) {
+      await app.store?.clear();
+      location.reload();
+      return;
+    }
+    useMe(m);
+    await config;
+    await kv.put('meta', 'me', { user: m.user, prefs: m.prefs, config: app.config });
+    app.redraw();
+  }, err => {
+    if (err instanceof ApiError && err.status === 401) location.href = '/login' + location.hash;
+    else if (app.store) { app.online = false; app.store.synced = true; app.redraw(); }
+    else app.online = false;
+  });
 
   app.store = new Store({
     api: { request: sendWithSession },
@@ -354,6 +377,7 @@ async function boot() {
   document.addEventListener('touchstart', onFirstTouch, { passive: true });
   if (!app.config.dev) delete SCREENS['dev/ui'];
 
+  await primeHome();
   startRouter(onRoute);
   const idle = () => setTimeout(() => import('./features/idle.js').then(m => m.start(loadScreen)).catch(() => {}), 1000);
   if (document.readyState === 'complete') idle();

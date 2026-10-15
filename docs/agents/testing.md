@@ -123,6 +123,8 @@ Playwright's `mobile-webkit` is desktop WebKit with an iPhone viewport, not Mobi
 2. **Run JavaScript in its Safari:** find the inspector socket with `lsof -U | grep webinspectord_sim`, start `ios_webkit_debug_proxy -s unix:<socket>`, and talk to `ws://127.0.0.1:9222/devtools/page/1`. Newer iOS wraps commands in `Target.sendMessageToTarget` to the target from `Target.targetCreated`. `Runtime.evaluate` can sign in, mark `window` to detect reloads, and read state.
 3. **Real taps** (synthetic `click()` and `TouchEvent`s don't go through UIKit): `idb_companion --udid <udid> --grpc-port 10882` (Homebrew `facebook/fb/idb-companion`), the `fb-idb` client in a scratch venv, then `idb ui tap --udid <udid> X Y` in points (screenshot pixels ÷ 3).
 
+**A realistic rig:** run the current code over plain HTTP on the Mac's LAN address (`CATO_ALLOW_INSECURE=1 CATO_LISTEN_ADDR=0.0.0.0:7090 CATO_STATIC_DIR=web/static`, a scratch database with a few games and cover JPEGs in the cover directory), open `http://<LAN IP>:7090` in the Simulator (not 127.0.0.1, which counts as a secure context), and sign up and fill a library with `fetch` calls through the inspector. To see flicker, record with `xcrun simctl io <udid> recordVideo`, split frames with `ffmpeg -vf fps=30`, and diff consecutive frames: a screen swap is one large change, and anything after it (covers arriving, sections pushing the page) shows up as small changes in the next frames.
+
 The Simulator has no device memory limits, so a page that iOS kills on a real phone survives there. For that, read the server's `unexpected reload` log lines (see `frontend.md`).
 
 ## Manual checks agents do

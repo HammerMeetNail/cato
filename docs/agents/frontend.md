@@ -25,10 +25,18 @@ The frontend is vanilla ES modules with **no build step**. Templates are lit-htm
 
   Legacy hashes redirect.
 - **Loading:** Home and the Log sheet load eagerly, and everything else is a dynamic `import()` in `SCREENS` (through `loadScreen`). Home also loads its feed, goals and confetti modules lazily; see the performance budget below.
+- **Starting and reloading without a blank page:**
+  - `index.html` draws the app's frame (header with search box, bottom nav with the same tabs) before any script runs; a test keeps its tabs equal to the app's.
+  - `boot()` starts from the copy on the device (`meta/me` with user, prefs and config in IndexedDB) and draws at once; `/api/v1/me` replaces it a moment later. Writes made before it answers wait for the CSRF token (`awaitCSRF`).
+  - Not after the login page: `login.js` sets `cato-signed-in` in `localStorage`, and the next start waits for the server, since whoever signed in may be someone else. A different user from the server clears the device copy and reloads.
+  - Home's last answer is kept as `meta/home:<user>` and loaded before the first draw (`primeHome`), so the streak line and sections don't arrive one by one and push the page down.
+  - The game hero is top-aligned: the title drawn from the local copy or the tapped tile stays put when the facts arrive.
+  - Covers leave decoding to the browser (forcing `decoding="async"` drew empty boxes for a frame before cached covers); Home's covers load eagerly.
 - **No flicker between screens:**
   - One second after `load`, `features/idle.js` prefetches Library, Discover, You and the game page (through `loadScreen`), so a first visit doesn't wait for code.
   - A screen whose code is still loading keeps the current screen for 200 ms before drawing the loading grid.
   - The shell keeps the last click target in `app.tapped`. The game page reads the tapped tile's name and cover from it and draws them at once while its details load.
+- **Swipes are reported too.** Each sideways gesture of 40 px or more posts `/api/v1/diagnostics/swipe` with what came of it (`back`, `forward`, `too short`, `cancelled by the browser`, or `ignored:` and why), logged as `swipe gesture`; at most 20 a page.
 - **Unexpected reloads are reported.** `features/idle.js` notes each in-app navigation in `sessionStorage`. If the tab's next page starts within 5 s of one, it posts `/api/v1/diagnostics/reload`, and the server logs `unexpected reload` with the user agent. Read those log lines first when someone reports a flicker or lost state on a device you can't test.
 - **The initial JS budget is nearly full** (59.9 of 60 KB after these changes). New shell code goes into `features/idle.js` or another lazy module.
 

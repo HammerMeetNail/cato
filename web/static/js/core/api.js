@@ -16,12 +16,17 @@ export class ApiError extends Error {
 }
 
 let csrfToken = null;
+let csrfComing = null;
 export function setCSRF(token) { csrfToken = token; }
 export function getCSRF() { return csrfToken; }
+// awaitCSRF lets writes made before the token arrives (the app starts from
+// the copy on the device) wait for the request that brings it.
+export function awaitCSRF(promise) { csrfComing = promise; }
 
 // request sends one API call. Options: body, signal, etag (If-None-Match),
 // timeout (ms). Resolves {status, data, etag}; a 304 has no data.
 export async function request(method, path, { body, signal, etag, timeout = 15000, fetchImpl = globalThis.fetch } = {}) {
+  if (method !== 'GET' && !csrfToken && csrfComing) await csrfComing.catch(() => {});
   const headers = { Accept: 'application/json' };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (method !== 'GET' && csrfToken) headers['X-CSRF-Token'] = csrfToken;

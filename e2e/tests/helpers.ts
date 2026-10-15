@@ -77,10 +77,11 @@ export function undoButton(page: Page) {
   return page.locator('.toast-region .toast-action', { hasText: 'Undo' });
 }
 
-// gotoApp opens a route and waits for the shell to render.
+// gotoApp opens a route and waits for the app to render its shell (the
+// static frame in index.html looks the same but isn't the app yet).
 export async function gotoApp(page: Page, hash = '#home') {
   await page.goto('/' + hash);
-  await expect(page.locator('nav.nav .nav-item').first()).toBeVisible();
+  await expect(page.locator('#app[data-rendered] nav.nav .nav-item').first()).toBeVisible();
 }
 
 // logButton is the ⊕ in the navigation.

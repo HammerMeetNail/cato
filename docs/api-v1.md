@@ -192,3 +192,4 @@ Notification delivery follows `prefs.notify[kind].push` (release, release_soon a
 | Method and path | Purpose |
 |---|---|
 | `POST /diagnostics/reload` | `{nav_type, since_nav_ms, clean_exit, from, to, uptime_ms}` → 204. The app sends it when a tab's page starts again within 5 s of one of its own navigations: the browser reloaded it (a killed page, an extension, a gesture). Only written to the server log (`msg="unexpected reload"`, with the user agent). Text fields are capped at 200 characters. |
+| `POST /diagnostics/swipe` | `{outcome, dx, dy, start_x, width, ms}` → 204. One sideways gesture and what came of it (`back`, `forward`, `too short`, `cancelled by the browser`, `ignored: …`). Logged as `msg="swipe gesture"` with the user agent. |

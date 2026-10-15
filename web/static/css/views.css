@@ -377,7 +377,9 @@
   display: grid;
   grid-template-columns: 112px 1fr;
   gap: var(--sp-4);
-  align-items: end;
+  /* Top-aligned: the title stays put when the facts arrive under it (the
+     page draws the name first, from the local copy or the tapped tile). */
+  align-items: start;
   padding: var(--sp-6) var(--sp-4) var(--sp-4);
   margin: calc(-1 * var(--sp-4)) calc(-1 * var(--sp-4)) 0;
   overflow: hidden;

@@ -18,12 +18,14 @@ export function coverSources(src, thumb = false) {
 }
 
 // cover renders a game cover with a text fallback when the image is
-// missing or fails (no inline handlers: CSP).
+// missing or fails (no inline handlers: CSP). Decoding is left to the
+// browser: forcing it async drew an empty box for a frame or two before
+// an already cached cover, on every visit to a screen.
 export function cover(entry, { cls = '', eager = false } = {}) {
   const { src, srcset } = coverSources(entry?.cover, cls.includes('thumb'));
   const fallback = html`<span class="cover-fallback">${entry?.name ?? ''}</span>`;
   return html`<div class=${`cover ${cls}`}>
-    ${src ? html`<img src=${src} srcset=${srcset || nothing} alt=${coverAlt(entry.name)} loading=${eager ? 'eager' : 'lazy'} decoding="async"
+    ${src ? html`<img src=${src} srcset=${srcset || nothing} alt=${coverAlt(entry.name)} loading=${eager ? 'eager' : 'lazy'}
       @error=${e => { e.target.replaceWith(Object.assign(document.createElement('span'), { className: 'cover-fallback', textContent: entry.name })); }}>` : fallback}
   </div>`;
 }

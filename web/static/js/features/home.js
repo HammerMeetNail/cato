@@ -72,6 +72,21 @@ export function beginHomeVisit() {
 let feed = null;
 let goals = null;
 
+// Home's last answer is kept on the device (per account): a fresh start
+// draws the whole page at once instead of sections arriving one by one and
+// pushing the page down.
+const homeKey = () => `home:${app.me?.id || ''}`;
+export async function primeHome() {
+  if (state.data) return;
+  try { state.data = (await app.store.kv.get('meta', homeKey())) || null; } catch { /* no copy */ }
+  if (state.data) loadExtras();
+}
+
+function loadExtras() {
+  if (state.data.goals?.length && !goals) import('./goals.js').then(m => { goals = m; app.redraw(); }).catch(() => {});
+  if (state.data.following > 0 && !feed) import('./feed.js').then(m => { feed = m; m.loadFeed(); }).catch(() => {});
+}
+
 export async function enterHome() {
   if (feed) feed.loadFeed();
   if (state.loading) return;
@@ -79,8 +94,8 @@ export async function enterHome() {
   try {
     state.data = await api.get(`/api/v1/home?today=${localDay()}`);
     state.error = null;
-    if (state.data.goals?.length && !goals) import('./goals.js').then(m => { goals = m; app.redraw(); }).catch(() => {});
-    if (state.data.following > 0 && !feed) import('./feed.js').then(m => { feed = m; m.loadFeed(); }).catch(() => {});
+    app.store.kv.put('meta', homeKey(), state.data).catch(() => {});
+    loadExtras();
   } catch (err) {
     state.error = err;
   } finally {
@@ -101,7 +116,7 @@ function nowCard(e) {
   return html`<article class="now-card" data-game-id=${e.id} aria-label=${e.name}
       @contextmenu=${lp.contextmenu}>
     <a href=${`#game/${e.id}`} aria-label=${`Open ${e.name}`} @pointerdown=${lp.pointerdown} @pointerup=${lp.pointerup}
-      @pointermove=${lp.pointermove} @click=${lp.click}>${cover(e)}</a>
+      @pointermove=${lp.pointermove} @click=${lp.click}>${cover(e, { eager: true })}</a>
     <div class="info">
       <a class="title" href=${`#game/${e.id}`}>${e.name}</a>
       <div class="meta"><span class="num">${formatMinutes(e.minutes)}</span> played${e.status === 'paused' ? html` · ${statusPill('paused')}` : nothing}
@@ -120,7 +135,7 @@ function upNextCard(pick) {
   const e = app.store.get(pick.item.game_id) || { id: pick.item.game_id, name: pick.item.game.name, cover: pick.item.game.cover };
   const pinned = pick.pinned ? html`<span class="status status-paused">In your queue</span>` : nothing;
   return html`<div class="upnext-card">
-    <a href=${`#game/${e.id}`} aria-label=${`Open ${e.name}`}>${cover(e)}</a>
+    <a href=${`#game/${e.id}`} aria-label=${`Open ${e.name}`}>${cover(e, { eager: true })}</a>
     <a class="title" href=${`#game/${e.id}`} style="color:inherit;text-decoration:none">${e.name}</a>
     <span class="reason">${pick.reason}</span>${pinned}
     <button type="button" class="btn btn-sm btn-secondary" @click=${() => actions.setStatus(e.id, 'playing').catch(() => {})}>${icon('play')}Start</button>

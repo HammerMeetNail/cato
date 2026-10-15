@@ -18,6 +18,9 @@ function store(fn) {
 }
 
 export function start(loadScreen) {
+  // When this page started, on the same clock as Date.now():
+  // performance.timeOrigin can drift from it by seconds.
+  const pageStart = Date.now() - performance.now();
   if (!navigator.connection?.saveData) {
     for (const name of ['library', 'discover', 'you', 'game']) loadScreen(name).catch(() => {});
   }
@@ -25,11 +28,13 @@ export function start(loadScreen) {
   // The last navigation the previous page made (recording starts below,
   // so this page hasn't written one yet).
   const prev = store(s => { const v = JSON.parse(s.getItem(NAV_KEY) || 'null'); s.removeItem(NAV_KEY); return v; });
-  const since = prev ? Math.round(performance.timeOrigin) - prev.at : Infinity;
-  if (since >= 0 && since < 5000) {
+  const since = prev ? Math.round(pageStart - prev.at) : Infinity;
+  // A navigation noted while the reload was already starting comes out a
+  // little negative: it still counts.
+  if (since > -2000 && since < 5000) {
     api.post('/api/v1/diagnostics/reload', {
       nav_type: performance.getEntriesByType?.('navigation')[0]?.type || '',
-      since_nav_ms: since,
+      since_nav_ms: Math.max(0, since),
       clean_exit: !!prev.clean,
       from: String(prev.from ?? '').slice(0, 200),
       to: String(prev.to ?? '').slice(0, 200),
@@ -40,7 +45,7 @@ export function start(loadScreen) {
   let last = null;
   addEventListener('hashchange', e => {
     const hash = u => new URL(u).hash || '#home';
-    last = { at: Date.now(), started: Math.round(performance.timeOrigin), from: hash(e.oldURL), to: hash(e.newURL) };
+    last = { at: Date.now(), started: Math.round(pageStart), from: hash(e.oldURL), to: hash(e.newURL) };
     store(s => s.setItem(NAV_KEY, JSON.stringify(last)));
   });
   addEventListener('pagehide', () => {

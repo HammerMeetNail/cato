@@ -75,7 +75,7 @@ test('passkeys: add one in Settings, then sign in with it', async ({ browserName
     await page.request.post('/api/auth/logout', { headers: { 'X-CSRF-Token': acc.csrf } });
     await page.goto('/login');
     await page.getByRole('button', { name: 'Sign in with a passkey' }).click();
-    await expect(page.locator('nav.nav')).toBeVisible();
+    await expect(page.locator('#app[data-rendered] nav.nav')).toBeVisible();
     const me = await (await page.request.get('/api/v1/me')).json();
     expect(me.user.email).toBe(acc.email);
     await context.close();
@@ -113,7 +113,7 @@ test('a reset link from an admin sets a new password', async ({ browser, baseURL
     await expect(p.locator('#formTitle')).toHaveText('Choose a new password');
     await p.fill('#password', 'a-brand-new-pass');
     await p.click('#submitBtn');
-    await expect(p.locator('nav.nav')).toBeVisible();
+    await expect(p.locator('#app[data-rendered] nav.nav')).toBeVisible();
     await fresh.close();
     // The old session was signed out.
     expect((await userPage.request.get('/api/v1/me')).status()).toBe(401);

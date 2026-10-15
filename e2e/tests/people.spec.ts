@@ -166,7 +166,7 @@ test('an invite link signs a friend up already connected', async ({ browser, bas
     await newcomer.fill('#email', `hana-${crypto.randomUUID()}@example.com`);
     await newcomer.fill('#password', PASSWORD);
     await newcomer.click('#submitBtn');
-    await expect(newcomer.locator('nav.nav')).toBeVisible();
+    await expect(newcomer.locator('#app[data-rendered] nav.nav')).toBeVisible();
     await newcomer.goto('/#you/people');
     await expect(newcomer.locator('main')).toContainText('Gus');
 

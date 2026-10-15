@@ -26,6 +26,9 @@ test('swipe right goes back, swipe left goes forward; edges and scrollers are le
   await gotoApp(page, '#home');
   const cdp = await page.context().newCDPSession(page);
   const { width } = page.viewportSize()!;
+  // Each sideways gesture reports what came of it, for phones we can't test.
+  const outcomes: string[] = [];
+  page.on('request', r => { if (r.url().endsWith('/api/v1/diagnostics/swipe')) outcomes.push(r.postDataJSON().outcome); });
   await open(page, 'library');
   await open(page, 'you');
   const y = 420; // the You page's list: no horizontal scrollers
@@ -56,4 +59,6 @@ test('swipe right goes back, swipe left goes forward; edges and scrollers are le
   await swipe(cdp, 60, y, width - 60);
   await page.waitForTimeout(400);
   await expect(page).toHaveURL(/#you$/);
+
+  await expect.poll(() => outcomes).toEqual(['back', 'forward', 'ignored: screen edge', expect.stringMatching(/^ignored: scroller div\.shelf-row/), 'ignored: turned off']);
 });

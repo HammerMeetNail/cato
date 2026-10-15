@@ -38,6 +38,9 @@ function setMode(signup) {
 }
 
 async function main() {
+  // The next app start waits for the server instead of drawing from the
+  // copy on this device: whoever signs in may be someone else.
+  try { localStorage.setItem('cato-signed-in', '1'); } catch { /* storage off */ }
   try {
     const me = await api.get('/api/me');
     if (me.authenticated) {

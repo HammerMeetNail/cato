@@ -39,3 +39,29 @@ func TestReloadReportIsLogged(t *testing.T) {
 		t.Fatalf("negative timing: status %d", rec.Code)
 	}
 }
+
+func TestSwipeReportIsLogged(t *testing.T) {
+	f := newFixture(t)
+	c := f.user(t, "u1")
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	rec := c.do(http.MethodPost, "/api/v1/diagnostics/swipe", map[string]any{
+		"outcome": "cancelled by the browser", "dx": 132, "dy": -18, "start_x": 60, "width": 402, "ms": 210,
+	}, "User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) Version/27.0.1")
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	out := buf.String()
+	for _, want := range []string{`msg="swipe gesture"`, `outcome="cancelled by the browser"`, "dx=132", "dy=-18", "start_x=60", "width=402", "ms=210", "Version/27.0.1"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log missing %q:\n%s", want, out)
+		}
+	}
+	if rec := c.do(http.MethodPost, "/api/v1/diagnostics/swipe", map[string]any{"outcome": strings.Repeat("x", 5000)}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("oversized report: status %d", rec.Code)
+	}
+}

@@ -24,11 +24,31 @@
 <body>
   <div id="app">
     <div class="app">
-      <header class="topbar"><span class="spacer"></span></header>
+      <!-- The app's frame, drawn before the app starts so a (re)load never
+           shows a blank page; app.js replaces it with the same frame. -->
+      <header class="topbar">
+        <div class="search" style="max-width:640px" aria-hidden="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" class="icon icon-search"><path d="m21 21-4.34-4.34"></path><circle cx="11" cy="11" r="8"></circle></svg>
+          <input type="search" placeholder="Search your library and all games" tabindex="-1" readonly>
+        </div>
+        <span class="avatar" aria-hidden="true"></span>
+      </header>
       <main id="main" class="main" tabindex="-1">
         <div class="page" aria-busy="true"><div class="skeleton skeleton-line" style="width:40%;height:28px"></div></div>
       </main>
-      <nav class="nav" aria-label="Main"></nav>
+      <nav class="nav" aria-label="Main">
+        <a class="brand-side" href="#home"><img src="/favicon.svg" alt="" width="28" height="28">Cato</a>
+        <a class="nav-item" href="#home" data-nav="home">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" class="icon"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"></path><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg><span>Home</span></a>
+        <a class="nav-item" href="#library" data-nav="library">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" class="icon"><rect x="3" y="3" width="7" height="7" rx="1" ry="1"></rect><rect x="14" y="3" width="7" height="7" rx="1" ry="1"></rect><rect x="14" y="14" width="7" height="7" rx="1" ry="1"></rect><rect x="3" y="14" width="7" height="7" rx="1" ry="1"></rect></svg><span>Library</span></a>
+        <button type="button" class="nav-item nav-log" aria-label="Log a game">
+          <span class="log-disc"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" class="icon"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg></span><span class="nav-label-desktop">Log a game</span></button>
+        <a class="nav-item" href="#discover" data-nav="discover">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" class="icon"><path d="m16.24 7.76-1.804 5.411a2 2 0 0 1-1.265 1.265L7.76 16.24l1.804-5.411a2 2 0 0 1 1.265-1.265z"></path><circle cx="12" cy="12" r="10"></circle></svg><span>Discover</span></a>
+        <a class="nav-item" href="#you" data-nav="you">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" class="icon"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg><span>You</span></a>
+      </nav>
     </div>
   </div>
   <script type="module" src="/js/app.js"></script>

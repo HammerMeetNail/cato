@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { account, put, item, eventually, gotoApp, logButton, logSheet, undoButton, G } from './helpers';
+import { account, put, item, eventually, gotoApp, logButton, logSheet, undoButton, G, PASSWORD } from './helpers';
 
 // P0 correctness regressions (docs/cato_smooth.md §2.1) that still apply
 // to the new screens. #1 (Filters tag autocomplete), #2 (edit-sheet
@@ -140,4 +140,77 @@ test('a reload right after navigating is reported; a normal start is not', async
   expect(body).toMatchObject({ nav_type: 'reload', clean_exit: true, from: '#home', to: '#you' });
   expect(body.since_nav_ms).toBeLessThan(5000);
   expect(reports).toHaveLength(1);
+});
+
+// A reload (which iPhone Safari does on its own) draws the app from the
+// copy on the device at once: no blank page while the server answers, and
+// Home's sections don't arrive one by one and push the page down.
+test('a reload draws Home from the device copy while the server is slow', async ({ page }) => {
+  const acc = await account(page);
+  await put(acc, G.hades, { status: 'playing' });
+  await put(acc, G.celeste, { status: 'backlog' });
+  await put(acc, G.hollow, { status: 'backlog' });
+  await gotoApp(page, '#home');
+  await expect(page.getByRole('heading', { name: 'Up next' })).toBeVisible();
+  // Home's answer is kept on the device once it arrives.
+  await expect.poll(() => page.evaluate(() => new Promise(res => {
+    const req = indexedDB.open('cato');
+    req.onsuccess = () => {
+      const tx = req.result.transaction('meta');
+      const all = tx.objectStore('meta').getAllKeys();
+      all.onsuccess = () => res(all.result.some(k => String(k).startsWith('home:')));
+    };
+    req.onerror = () => res(false);
+  }))).toBe(true);
+
+  let release!: () => void;
+  const held = new Promise<void>(r => { release = r; });
+  await page.route(/\/api\/v1\/(me|home)(\?|$)/, async route => { await held; await route.continue(); });
+  await page.reload();
+  await expect(page.locator('.now-card').filter({ hasText: 'Hades' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Up next' })).toBeVisible();
+  release();
+  await expect(page.locator('#app[data-rendered] .topbar .avatar')).toBeVisible();
+});
+
+// The page drawn before the app starts is the app's own frame, so a
+// (re)load never flashes a blank page: same tabs, same order.
+test('the first-paint frame in index.html matches the app shell', async ({ page }) => {
+  await account(page);
+  const html = await (await page.request.get('/')).text();
+  const staticTabs = [...html.matchAll(/data-nav="([a-z]+)"/g)].map(m => m[1]);
+  await gotoApp(page, '#home');
+  const appTabs = await page.locator('nav.nav [data-nav]').evaluateAll(els => els.map(e => e.getAttribute('data-nav')));
+  expect(staticTabs).toEqual(appTabs);
+  expect(html).toContain('class="topbar"');
+});
+
+// Starting from the device copy must never show one person's library to
+// the next person who signs in on the same browser.
+test('signing in as someone else never shows the previous library', async ({ page, browser }) => {
+  const first = await account(page);
+  await put(first, G.balatro, { status: 'playing' });
+  await gotoApp(page, '#home');
+  await expect(page.locator('.now-card').filter({ hasText: 'Balatro' })).toBeVisible();
+  // Signed out on the server only (an expired session): the device copy stays.
+  await page.request.post('/api/auth/logout', { headers: { 'X-CSRF-Token': first.csrf } });
+
+  const other = await browser.newContext({ ignoreHTTPSErrors: true });
+  const email = `next-${crypto.randomUUID()}@example.com`;
+  expect((await other.request.post(new URL('/api/auth/signup', page.url()).href, { data: { email, password: PASSWORD } })).status()).toBe(201);
+  await other.close();
+
+  await page.addInitScript(() => {
+    (window as any).__sawPrevious = false;
+    new MutationObserver(() => {
+      if (document.getElementById('main')?.textContent?.includes('Balatro')) (window as any).__sawPrevious = true;
+    }).observe(document, { childList: true, subtree: true, characterData: true });
+  });
+  await page.goto('/login');
+  await page.fill('#email', email);
+  await page.fill('#password', PASSWORD);
+  await page.click('#submitBtn');
+  await expect(page.locator('#app[data-rendered] .topbar .avatar')).toHaveAttribute('title', email);
+  await expect(page.getByText('Nothing playing right now')).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__sawPrevious)).toBe(false);
 });
