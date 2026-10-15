@@ -213,9 +213,9 @@ function details(e, item, game) {
       <textarea class="textarea" maxlength="10000" .value=${item.notes || ''}
         @change=${ev => ev.target.value !== (item.notes || '') && editChange(e.id, { notes: ev.target.value }, 'Notes saved')}></textarea></label>
     <div class="row row-wrap">
-      <label class="field" style="flex:1"><span>Started</span><input class="input" type="date" .value=${(item.started_at || '').slice(0, 10)} max=${localDay()}
+      <label class="field date-field"><span>Started</span><input class="input" type="date" .value=${(item.started_at || '').slice(0, 10)} max=${localDay()}
         @change=${ev => editChange(e.id, { started_at: ev.target.value }, 'Start date saved')}></label>
-      <label class="field" style="flex:1"><span>Finished</span><input class="input" type="date" .value=${(item.completed_at || '').slice(0, 10)} max=${localDay()}
+      <label class="field date-field"><span>Finished</span><input class="input" type="date" .value=${(item.completed_at || '').slice(0, 10)} max=${localDay()}
         ?disabled=${e.status !== 'completed'} @change=${ev => editChange(e.id, { completed_at: ev.target.value }, 'Finish date saved')}></label>
     </div>
     <button type="button" class="btn btn-danger" @click=${async () => {

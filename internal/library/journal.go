@@ -267,7 +267,7 @@ func (s *Store) Playthroughs(ctx context.Context, userID string, gameID int64) (
 			COALESCE(li.current_playthrough_id = p.id, 0)
 		FROM playthroughs p JOIN library_items li ON li.user_id = p.user_id AND li.game_id = p.game_id
 		WHERE p.user_id = ? AND p.game_id = ?
-		ORDER BY COALESCE(p.started_on, p.finished_on, p.created_at) DESC, p.id DESC`, userID, gameID)
+		ORDER BY p.finished_on IS NULL DESC, COALESCE(p.started_on, p.finished_on, p.created_at) DESC, p.id DESC`, userID, gameID)
 	if err != nil {
 		return nil, err
 	}

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { account, put, session, item, sessions, playthroughs, eventually, gotoApp, undoButton, toast, G } from './helpers';
+import { account, put, session, item, sessions, playthroughs, eventually, gotoApp, undoButton, toast, G, localDay } from './helpers';
 
 test('a game not in the library offers the shelves; adding works', async ({ page }) => {
   const acc = await account(page);
@@ -32,7 +32,8 @@ test('status, half-star rating by keyboard and time chips', async ({ page }) => 
 
 test('finishing then playing again starts a second playthrough', async ({ page }) => {
   const acc = await account(page);
-  await put(acc, G.spire, { status: 'playing' });
+  // The app always sends the person's local day; so does this setup.
+  await put(acc, G.spire, { status: 'playing', played_on: localDay() });
   await gotoApp(page, `#game/${G.spire}`);
   await page.getByRole('radio', { name: 'Finished' }).click();
   const sheet = page.locator('dialog.sheet[aria-label="Finish Slay the Spire"]');

@@ -357,7 +357,8 @@ export function gameSocialSection(game) {
         @click=${f.review_id ? e => { e.preventDefault(); document.getElementById(`review-${f.review_id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }); } : null}
         title=${f.review_id ? `Read ${personName(f)}’s review` : personName(f)}>
         ${avatar(f)}<span class="name">${personName(f)}</span>
-        <span class="sub">${statusLabel(f.status)}${f.rating ? html` · ${stars(f.rating, { display: ratingDisplay() })}` : nothing}</span>
+        <span class="sub">${statusLabel(f.status)}</span>
+        ${f.rating ? html`<span class="sub">${stars(f.rating, { display: ratingDisplay() })}</span>` : nothing}
         ${f.review_id ? html`<span class="sub">${icon('message-square')}Ask a friend</span>` : nothing}</a>`)}</div>
     </section>` : nothing}
     ${c.ratings >= 2 ? html`<section class="section" aria-labelledby="community-title">

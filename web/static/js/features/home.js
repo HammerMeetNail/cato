@@ -186,7 +186,7 @@ export function homeView() {
     ${d?.up_next?.length ? html`<section class="section" aria-labelledby="upnext-title">
       <div class="section-head"><h2 id="upnext-title">Up next</h2>
         <button type="button" class="btn btn-sm btn-ghost" ?disabled=${state.spinning} @click=${surprise}>${icon('dices')}Surprise me</button></div>
-      <div class="chips fit-chips" role="radiogroup" aria-label="How much time do you have?">
+      <div class="chips chips-scroll fit-chips" role="radiogroup" aria-label="How much time do you have?">
         ${FITS.map(f => html`<button type="button" class="chip" role="radio" aria-checked=${String(state.fit === f.value)}
           @click=${() => chooseFit(f.value)}>${f.label}</button>`)}
       </div>

@@ -48,7 +48,7 @@ test-release:
 
 test-e2e:
 	npm --prefix e2e ci
-	cd e2e && npx playwright install chromium webkit && npm run test:e2e
+	cd e2e && npx playwright install chromium webkit firefox && npm run test:e2e
 
 # Scan with the toolchain go.mod pins (what release images build with), not
 # whatever Go happens to be installed locally.

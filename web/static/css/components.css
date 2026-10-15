@@ -316,6 +316,17 @@
   font-size: var(--fs-16);
 }
 
+/* Firefox draws "mm / dd / yyyy" with spaces and its own calendar button:
+   tighter padding and room to wrap keep the date readable. */
+.input[type="date"] {
+  padding-inline: var(--sp-2);
+}
+
+.date-field {
+  flex: 1 1 10.5rem;
+  min-width: 0;
+}
+
 .textarea {
   min-height: 96px;
   resize: vertical;

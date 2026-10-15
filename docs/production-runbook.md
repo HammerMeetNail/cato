@@ -19,7 +19,7 @@ host, first install browser system dependencies:
 
 ```sh
 npm --prefix e2e ci
-cd e2e && npx playwright install --with-deps chromium webkit
+cd e2e && npx playwright install --with-deps chromium webkit firefox
 ```
 
 CI executes the same gate on pushes and pull requests. E2E uses fresh disposable

@@ -11,6 +11,11 @@ import { account, put, gotoApp, G } from './helpers';
 test.use({ reducedMotion: 'reduce' });
 
 async function snapshot(page: Page, name: string, opts: PageScreenshotOptions & { mask?: any[] }) {
+  // The app frame is viewport-sized and <main> scrolls; for a full-page
+  // capture let the frame grow to its content just for the screenshot.
+  if (opts.fullPage) {
+    await page.addStyleTag({ content: '#app, .app { height: auto !important; } .main { overflow: visible !important; }' });
+  }
   const baseline = test.info().snapshotPath(name);
   if (!fs.existsSync(baseline)) {
     await page.screenshot({ ...opts, path: baseline, animations: 'disabled', maskColor: '#FF00FF' });

@@ -1,6 +1,6 @@
 # Browser regression coverage
 
-Run `cd e2e && npm ci && npx playwright install --with-deps chromium webkit`,
+Run `cd e2e && npm ci && npx playwright install --with-deps chromium webkit firefox`,
 then `npm run test:e2e`. Playwright starts a disposable real Go server with a fresh
 SQLite database; no production data or external IGDB account is used.
 
@@ -16,8 +16,10 @@ serves those files on `127.0.0.1:7180`.
   `--ignore-certificate-errors-spki-list=<pin>`. `ignoreHTTPSErrors` alone is not
   enough: Chromium then refuses to register the service worker. The config also
   maps `cato.test` in Node's resolver for `page.request`/`request` contexts.
-- WebKit projects open `https://127.0.0.1:7180` with `ignoreHTTPSErrors`, which
-  gives a secure context and a working service worker.
+- WebKit and Firefox projects open `https://127.0.0.1:7180` with
+  `ignoreHTTPSErrors`, which gives a secure context and a working service worker.
+  Firefox runs everything except the Chromium-only offline, performance and
+  visual specs.
 
 Contexts a test creates itself (`browser.newContext`, `playwright.request.newContext`)
 must pass `ignoreHTTPSErrors: true`. The harness seeds catalog IDs 1–2, 100–164
