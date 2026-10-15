@@ -164,6 +164,7 @@ export function settingsView() {
         <label class="switch"><span>Show my play streak on Home</span><input type="checkbox" .checked=${p.streaks !== false} @change=${e => save({ streaks: e.target.checked })}></label>
         <label class="switch"><span>Vibrate when logging (Android)</span><input type="checkbox" .checked=${p.haptics !== false} @change=${e => save({ haptics: e.target.checked })}></label>
         <label class="switch"><span>Confetti when I finish a game</span><input type="checkbox" .checked=${p.confetti !== false} @change=${e => save({ confetti: e.target.checked })}></label>
+        <label class="switch"><span>Swipe right or left to go back or forward (touch screens)</span><input type="checkbox" .checked=${p.swipe_nav !== false} @change=${e => save({ swipe_nav: e.target.checked })}></label>
         <label class="switch"><span>Show the first-run guide on Home</span><input type="checkbox" .checked=${!p.onboarding_done} @change=${e => save({ onboarding_done: !e.target.checked })}></label>
       </div></section>
 

@@ -52,7 +52,7 @@ It needs:
 | `chromium` | `https://cato.test:7180`, certificate pinned by SPKI | everything |
 | `webkit` | `https://127.0.0.1:7180`, `ignoreHTTPSErrors` | all but offline, perf, visual |
 | `firefox` | `https://127.0.0.1:7180`, `ignoreHTTPSErrors` | all but offline, perf, visual |
-| `mobile-chromium` | Pixel 7, `cato.test` | journeys, home, game, offline, regressions, a11y, pwa, https, perf, visual |
+| `mobile-chromium` | Pixel 7, `cato.test` | journeys, home, game, offline, regressions, a11y, pwa, https, perf, visual, gestures (real touches through CDP) |
 | `mobile-webkit` | iPhone 13, `127.0.0.1` | journeys, home, game, regressions, a11y, pwa, https |
 
 `e2e/README.md` has the contract of each spec.

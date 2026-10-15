@@ -35,6 +35,8 @@ type Prefs struct {
 	Haptics bool `json:"haptics"`
 	// Confetti celebrates finishing a game (reduced motion still wins).
 	Confetti bool `json:"confetti"`
+	// SwipeNav: swiping right or left on a touch screen goes back or forward.
+	SwipeNav bool `json:"swipe_nav"`
 	// SavedViews are named Library filters (shelf, search, sort, layout).
 	SavedViews []SavedView `json:"saved_views"`
 
@@ -94,7 +96,7 @@ const (
 func DefaultPrefs() Prefs {
 	return Prefs{Theme: "system", RatingDisplay: "stars", DefaultPlatforms: []string{}, LibraryLayout: "grid",
 		Density: "comfortable", LibrarySort: "updated", UpNext: []int64{}, Streaks: true, WeekStart: "mon",
-		Haptics: true, Confetti: true, SavedViews: []SavedView{},
+		Haptics: true, Confetti: true, SwipeNav: true, SavedViews: []SavedView{},
 		Notify: defaultNotify(), ReleaseAlerts: true, PriceAlerts: PriceAlerts{MinCut: 50, Country: "US"}}
 }
 

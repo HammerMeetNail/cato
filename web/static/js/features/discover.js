@@ -12,14 +12,26 @@ import * as actions from './actions.js';
 const shelves = { data: null, error: null, loading: false };
 const results = { key: '', items: [], total: 0, next: null, loading: false, error: null };
 
+// The last shelves are kept on the device (per account), so Discover
+// renders at once on the next visit, even right after opening the app, and
+// refreshes underneath.
+const cacheKey = () => `discover:${app.me?.id || ''}`;
+
 export async function enterDiscover() {
   if (shelves.loading) return;
   shelves.loading = true;
+  if (!shelves.data) {
+    try {
+      const cached = await app.store?.kv?.get('meta', cacheKey());
+      if (cached && !shelves.data) { shelves.data = cached; app.redraw(); }
+    } catch { /* no cache */ }
+  }
   try {
     shelves.data = await api.get('/api/v1/discover');
     shelves.error = null;
+    app.store?.kv?.put('meta', cacheKey(), shelves.data).catch?.(() => {});
   } catch (err) {
-    shelves.error = err;
+    if (!shelves.data) shelves.error = err;
   }
   shelves.loading = false;
   app.redraw();

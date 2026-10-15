@@ -79,7 +79,7 @@ The item's `minutes` always equals the sum of its sessions (adjustments included
 | Method and path | Purpose |
 |---|---|
 | `GET /me` | `{user, csrf_token, prefs, library_rev}`. |
-| `PATCH /me/prefs` | Merge settings: `theme` (`system`/`light`/`dark`), `rating_display` (`stars`/`ten`/`hundred`), `default_platforms`, `library_layout` (`grid`/`list`), `density` (`comfortable`/`compact`), `library_sort`, `up_next` (≤ 5 game IDs), `streaks`, `week_start`, `onboarding_done`, `haptics`, `confetti`, `saved_views`, `notify`, `email_digest`, `release_alerts`, `release_week`, `price_alerts`. Unknown keys are rejected. |
+| `PATCH /me/prefs` | Merge settings: `theme` (`system`/`light`/`dark`), `rating_display` (`stars`/`ten`/`hundred`), `default_platforms`, `library_layout` (`grid`/`list`), `density` (`comfortable`/`compact`), `library_sort`, `up_next` (≤ 5 game IDs), `streaks`, `week_start`, `onboarding_done`, `haptics`, `confetti`, `swipe_nav`, `saved_views`, `notify`, `email_digest`, `release_alerts`, `release_week`, `price_alerts`. Unknown keys are rejected. |
 | `GET /home?today=` | Playing and paused items, Up Next picks with reasons (your pinned queue first), coming_soon (wishlist games with a release date ahead), recent sessions, the timer, counts, streak, and whether to show onboarding. |
 | `GET /devices` | Signed-in sessions `{id, user_agent, created_at, last_seen_at, current}`; `DELETE /devices/{id}` signs one out, `POST /devices/revoke-others` all but this one. |
 | `GET /stats?year=&today=` | Totals, the year's minutes/sessions/days/finished, finished per year by completion type, minutes per month (12), the year's heatmap, rating distribution (ten half-star buckets), top tags/platforms/genres, backlog age and the longest session. |

@@ -222,6 +222,9 @@ func serve(ctx context.Context, cfg *config.Config, stderr io.Writer) error {
 	}
 	srv.SetJobRunner(runner)
 	runner.Start(context.Background())
+	// Warm Discover's catalog shelves now: the persisted schedule would
+	// otherwise leave the first visitor after a restart to compute them.
+	runner.RunNow("discover.refresh")
 
 	scheme := "http"
 	if cfg.ServesTLS() {

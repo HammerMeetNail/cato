@@ -70,6 +70,16 @@ The frontend is vanilla ES modules with **no build step**. Templates are lit-htm
   Removing them breaks install, offline or first paint.
 - **The manifest** (`manifest.webmanifest`) has the shortcuts (Log time, Search, Up Next, Wishlist) and the `share_target` (`/share`). `offline.html` is the fallback for non-app routes, and `login.html` also registers the service worker.
 
+## Gestures and the clipboard
+
+- **Swipe navigation** (`features/swipe.js`) is loaded on the first touch. A long horizontal swipe goes back (right) or forward (left). It ignores:
+  - swipes starting within 24 px of the screen edges (the OS's own gesture zone);
+  - horizontal scrollers, fields and the rating slider;
+  - open sheets and menus.
+
+  `prefs.swipe_nav` turns it off. Use touch events, not pointer events: browsers cancel pointer streams when they start scrolling.
+- **Copying** goes through `ui/clipboard.js` `copyText`. On plain HTTP (the NAS) there's no Clipboard API, so it copies from a selected field.
+
 ## Browser differences we've hit
 
 - **WebKit:** asking `PushManager.getSubscription()` before notification permission is granted can wedge later navigations. Only look it up once permission is `granted`, and with a timeout (`features/reach.js`).

@@ -156,6 +156,8 @@ test('an invite link signs a friend up already connected', async ({ browser, bas
     await gus.page.getByRole('button', { name: 'Create link' }).click();
     const link = await gus.page.locator('dialog.sheet input[aria-label="Link"]').inputValue();
     expect(link).toContain('/login?invite=');
+    await gus.page.getByRole('button', { name: 'Copy link' }).click();
+    await expect(gus.page.locator('.toast-region')).toContainText('Link copied');
 
     const newcomer = await ctx.newPage();
     await newcomer.goto(new URL(link).pathname + new URL(link).search);

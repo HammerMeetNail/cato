@@ -16,6 +16,7 @@ import {
   formatMinutes, formatHoursLong, plural, initials, statusLabel, releaseYear, timestampDay, relativeDay,
 } from '../core/format.js';
 import { app, ratingDisplay } from './app-state.js';
+import { copyText } from '../ui/clipboard.js';
 
 // ---- shared pieces ------------------------------------------------------------
 
@@ -604,8 +605,9 @@ async function createInvite() {
 }
 
 export function showLink(title, url, message) {
-  const copy = async () => {
-    try { await navigator.clipboard.writeText(url); toast('Link copied'); } catch { toast('Select the link and copy it'); }
+  const copy = async e => {
+    const field = e.currentTarget.closest('dialog')?.querySelector('input[aria-label="Link"]');
+    toast(await copyText(url, field) ? 'Link copied' : 'Select the link and copy it');
   };
   openSheet({
     title,

@@ -39,14 +39,14 @@ export default defineConfig({
   updateSnapshots: 'missing',
   projects: [
     // Desktop Chromium runs everything.
-    { name: 'chromium', use: { ...devices['Desktop Chrome'], ...chromiumHTTPS } },
+    { name: 'chromium', testIgnore: /gestures\.spec\.ts/, use: { ...devices['Desktop Chrome'], ...chromiumHTTPS } },
     // Offline SW emulation, CDP performance budgets and visual baselines
     // are Chromium-only; see e2e/README.md.
-    { name: 'webkit', testIgnore: /(offline|perf|visual)\.spec\.ts/, use: { ...devices['Desktop Safari'], ...webkitHTTPS } },
+    { name: 'webkit', testIgnore: /(offline|perf|visual|gestures)\.spec\.ts/, use: { ...devices['Desktop Safari'], ...webkitHTTPS } },
     // Firefox, like WebKit, opens https://127.0.0.1 with ignoreHTTPSErrors
     // (a secure context, and its service worker registers there).
-    { name: 'firefox', testIgnore: /(offline|perf|visual)\.spec\.ts/, use: { ...devices['Desktop Firefox'], ...webkitHTTPS } },
-    { name: 'mobile-chromium', testMatch: /(journeys|home|game|offline|regressions|a11y|pwa|https|perf|visual)\.spec\.ts/, use: { ...devices['Pixel 7'], ...chromiumHTTPS } },
+    { name: 'firefox', testIgnore: /(offline|perf|visual|gestures)\.spec\.ts/, use: { ...devices['Desktop Firefox'], ...webkitHTTPS } },
+    { name: 'mobile-chromium', testMatch: /(journeys|home|game|offline|regressions|a11y|pwa|https|perf|visual|gestures)\.spec\.ts/, use: { ...devices['Pixel 7'], ...chromiumHTTPS } },
     { name: 'mobile-webkit', testMatch: /(journeys|home|game|regressions|a11y|pwa|https)\.spec\.ts/, use: { ...devices['iPhone 13'], ...webkitHTTPS } },
   ],
   webServer: {

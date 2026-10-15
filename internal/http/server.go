@@ -49,6 +49,7 @@ type Server struct {
 	social         *social.Service
 	imports        *imports.Service
 	notify         *notify.Service
+	discover       *discover.Service
 	alerts         *alerts.Service
 
 	// certReloadInterval bounds how often the TLS certificate files are
@@ -106,6 +107,7 @@ func (s *Server) routes() {
 	s.catalog = newCatalogWiring(s.db, s.cfg)
 	s.library = library.NewStore(s.db, s.catalog.store)
 	disc := discover.New(s.db, s.library)
+	s.discover = disc
 	s.library.Scorer = func(ctx context.Context, userID string, n int) ([]library.UpNextPick, error) {
 		return disc.UpNext(ctx, userID, n, "")
 	}
@@ -361,6 +363,8 @@ func (s *Server) Jobs() []jobs.Job {
 	js := s.catalog.Jobs(s.cfg)
 	js = append(js,
 		jobs.Job{Name: "push.deliver", Interval: time.Minute, Timeout: 50 * time.Second, Run: s.notify.Deliver},
+		// Discover's catalog-wide shelves: computed at startup, then hourly.
+		jobs.Job{Name: "discover.refresh", Interval: time.Hour, Jitter: 5 * time.Minute, Timeout: 5 * time.Minute, Run: s.discover.RefreshShelves},
 		jobs.Job{Name: "alerts.releases", Interval: 24 * time.Hour, Jitter: 30 * time.Minute, FirstRun: 5 * time.Minute, Run: s.alerts.Releases},
 	)
 	if s.cfg.ITADKey != "" {

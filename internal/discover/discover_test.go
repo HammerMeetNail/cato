@@ -214,3 +214,51 @@ func TestUpNextScoring(t *testing.T) {
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+// The catalog shelves are cached (they cost full scans on a big catalog);
+// a person's own library is still filtered on every request, and catalog
+// changes show after RefreshShelves.
+func TestCatalogShelvesAreCachedButLibraryIsLive(t *testing.T) {
+	f := newFixture(t)
+	// An empty catalog isn't cached: games imported later show at once.
+	if err := f.svc.RefreshShelves(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.game(1, "Gem One", "total_rating = 91, total_rating_count = 12")
+	f.game(2, "Gem Two", "total_rating = 90, total_rating_count = 20")
+	shelfTitles := func(user, id string) string {
+		t.Helper()
+		shelves, err := f.svc.Shelves(f.ctx, user)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range shelves {
+			if s.ID == id {
+				return titles(s.Items)
+			}
+		}
+		return ""
+	}
+	if got := shelfTitles("me", "gems"); got != "Gem One,Gem Two" {
+		t.Fatalf("gems %q", got)
+	}
+	// Adding a game to my library hides it at once.
+	f.add("me", 1, "backlog", "")
+	if got := shelfTitles("me", "gems"); got != "Gem Two" {
+		t.Fatalf("my library should be filtered live: %q", got)
+	}
+	if got := shelfTitles("someone", "gems"); got != "Gem One,Gem Two" {
+		t.Fatalf("others still see it: %q", got)
+	}
+	// A new catalog game waits for the refresh.
+	f.game(3, "Gem Three", "total_rating = 99, total_rating_count = 30")
+	if got := shelfTitles("someone", "gems"); got != "Gem One,Gem Two" {
+		t.Fatalf("cached shelf changed before refresh: %q", got)
+	}
+	if err := f.svc.RefreshShelves(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := shelfTitles("someone", "gems"); got != "Gem Three,Gem One,Gem Two" {
+		t.Fatalf("after refresh: %q", got)
+	}
+}

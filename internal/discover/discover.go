@@ -11,6 +11,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"cato/internal/db"
@@ -21,6 +22,12 @@ type Service struct {
 	db  *db.DB
 	lib *library.Store
 	now func() time.Time
+
+	cache struct {
+		mu      sync.Mutex
+		at      time.Time
+		shelves []Shelf
+	}
 }
 
 func New(database *db.DB, lib *library.Store) *Service {
@@ -156,7 +163,21 @@ func inList(ids []int64) string {
 }
 
 // Shelves builds Discover for userID.
+// Shelves builds Discover. The catalog-wide shelves (trending, new, short,
+// gems, classics, popular) don't depend on the person: their candidates
+// are computed by the hourly discover.refresh job (or on first use) and
+// each request only drops the games already in the person's library. The
+// per-person shelves (coming soon on your platforms, popular on this
+// server, because you liked…) are cheap indexed reads.
 func (s *Service) Shelves(ctx context.Context, userID string) ([]Shelf, error) {
+	catalog, err := s.catalogShelves(ctx)
+	if err != nil {
+		return nil, err
+	}
+	mine, err := s.libraryIDs(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 	prefs, _ := s.lib.GetPrefs(ctx, userID)
 	now := s.now().Unix()
 	owned, err := s.ownedPlatformIDs(ctx, userID, prefs.DefaultPlatforms)
@@ -173,12 +194,15 @@ func (s *Service) Shelves(ctx context.Context, userID string) ([]Shelf, error) {
 		}
 		return nil
 	}
-
-	trending, err := s.games(ctx, userID, `SELECT `+gameCols+` FROM game_popularity gp JOIN games g ON g.id = gp.game_id
-		WHERE gp.type = 1 AND `+visible+` AND `+notMine+` ORDER BY gp.value DESC LIMIT ?`, userID, shelfSize)
-	if err := add("trending", "Trending", "What people are looking at on IGDB", trending, err); err != nil {
-		return nil, err
+	fromCatalog := func(id string) {
+		for _, c := range catalog {
+			if c.ID == id {
+				add(c.ID, c.Title, c.Subtitle, notIn(c.Items, mine), nil)
+			}
+		}
 	}
+
+	fromCatalog("trending")
 
 	platformClause := ""
 	sub := "On every platform"
@@ -186,21 +210,21 @@ func (s *Service) Shelves(ctx context.Context, userID string) ([]Shelf, error) {
 		platformClause = ` AND rd.platform_id IN (` + inList(owned) + `)`
 		sub = "On your platforms"
 	}
-	soon, err := s.games(ctx, userID, `SELECT `+gameCols+` FROM games g
-		WHERE g.id IN (SELECT rd.game_id FROM game_release_dates rd WHERE rd.date > ? AND rd.date < ?`+platformClause+`)
-		  AND `+visible+` AND `+notMine+`
-		ORDER BY (SELECT MIN(rd.date) FROM game_release_dates rd WHERE rd.game_id = g.id AND rd.date > ?), g.popularity_score DESC LIMIT ?`,
-		now, now+180*86400, userID, now, shelfSize)
+	// Each game's next release on your platforms in the next six months, in
+	// one grouped pass over the date index. CROSS JOIN pins the join order:
+	// otherwise SQLite may walk every game and probe the upcoming set.
+	soon, err := s.games(ctx, userID, `SELECT `+gameCols+` FROM (
+			SELECT rd.game_id, MIN(rd.date) AS next FROM game_release_dates rd
+			WHERE rd.date > ? AND rd.date < ?`+platformClause+` GROUP BY rd.game_id
+		) up CROSS JOIN games g ON g.id = up.game_id
+		WHERE `+visible+` AND `+notMine+`
+		ORDER BY up.next, g.popularity_score DESC LIMIT ?`,
+		now, now+180*86400, userID, shelfSize)
 	if err := add("coming-soon", "Coming soon", sub, soon, err); err != nil {
 		return nil, err
 	}
 
-	fresh, err := s.games(ctx, userID, `SELECT `+gameCols+` FROM games g
-		WHERE g.first_release_date BETWEEN ? AND ? AND `+visible+` AND `+notMine+`
-		ORDER BY g.igdb_popularity DESC, g.popularity_score DESC LIMIT ?`, now-60*86400, now, userID, shelfSize)
-	if err := add("new", "New releases", "Out in the last two months", fresh, err); err != nil {
-		return nil, err
-	}
+	fromCatalog("new")
 
 	local, err := s.games(ctx, userID, `SELECT `+gameCols+` FROM (
 			SELECT game_id, COUNT(*) AS n FROM library_items WHERE user_id != ? GROUP BY game_id HAVING n >= 1
@@ -227,38 +251,151 @@ func (s *Service) Shelves(ctx context.Context, userID string) ([]Shelf, error) {
 		return nil, err
 	}
 
-	short, err := s.games(ctx, userID, `SELECT `+gameCols+` FROM games g
-		WHERE g.ttb_normally > 0 AND g.ttb_normally <= 480 AND MAX(g.aggregated_rating, g.total_rating) >= 85
-		  AND `+visible+` AND `+notMine+` ORDER BY MAX(g.aggregated_rating, g.total_rating) DESC, g.total_rating_count DESC LIMIT ?`, userID, shelfSize)
-	if err := add("short", "Short and great", "Under 8 hours, rated 85 or more", short, err); err != nil {
-		return nil, err
-	}
-
-	gems, err := s.games(ctx, userID, `SELECT `+gameCols+` FROM games g
-		WHERE g.total_rating >= 85 AND g.total_rating_count BETWEEN 5 AND 60 AND `+visible+` AND `+notMine+`
-		ORDER BY g.total_rating DESC LIMIT ?`, userID, shelfSize)
-	if err := add("gems", "Hidden gems", "Loved by the few who played them", gems, err); err != nil {
-		return nil, err
-	}
-
-	classics, err := s.games(ctx, userID, `SELECT `+gameCols+` FROM games g
-		WHERE g.first_release_date > 0 AND g.first_release_date < ? AND g.total_rating >= 88 AND g.total_rating_count >= 50
-		  AND `+visible+` AND `+notMine+` ORDER BY g.total_rating_count DESC LIMIT ?`,
-		time.Date(2005, 1, 1, 0, 0, 0, 0, time.UTC).Unix(), userID, shelfSize)
-	if err := add("classics", "Classics you haven't played", "Released before 2005", classics, err); err != nil {
-		return nil, err
-	}
-
+	fromCatalog("short")
+	fromCatalog("gems")
+	fromCatalog("classics")
 	// Popular (with art) as the fallback when the richer data isn't there yet.
 	if len(shelves) < 2 {
-		pop, err := s.games(ctx, userID, `SELECT `+gameCols+` FROM games g
-			WHERE g.local_cover_path != '' AND g.id > 0 AND `+notMine+`
-			ORDER BY g.popularity_score DESC, g.rating_count DESC, g.name LIMIT ?`, userID, shelfSize)
-		if err := add("popular", "Popular", "", pop, err); err != nil {
+		fromCatalog("popular")
+	}
+	return shelves, nil
+}
+
+// candidates is how many games each catalog shelf keeps, so that after
+// dropping a person's library there are still enough to fill it.
+const candidates = 150
+
+// shelfTTL is how old the catalog shelves may get before a request
+// recomputes them (the job refreshes them hourly).
+const shelfTTL = 2 * time.Hour
+
+// catalogShelves returns the cached catalog-wide shelves, computing them on
+// first use or when stale. Concurrent callers wait for one computation.
+func (s *Service) catalogShelves(ctx context.Context) ([]Shelf, error) {
+	s.cache.mu.Lock()
+	defer s.cache.mu.Unlock()
+	if s.cache.shelves != nil && s.now().Sub(s.cache.at) < shelfTTL {
+		return s.cache.shelves, nil
+	}
+	shelves, err := s.computeCatalogShelves(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// An empty catalog (a new server before its first import) is cheap to
+	// ask again and mustn't stick for hours.
+	if !emptyShelves(shelves) {
+		s.cache.shelves, s.cache.at = shelves, s.now()
+	}
+	return shelves, nil
+}
+
+func emptyShelves(shelves []Shelf) bool {
+	for _, sh := range shelves {
+		if len(sh.Items) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// RefreshShelves recomputes the catalog shelves (the discover.refresh job).
+func (s *Service) RefreshShelves(ctx context.Context) error {
+	shelves, err := s.computeCatalogShelves(ctx)
+	if err != nil {
+		return err
+	}
+	if emptyShelves(shelves) {
+		return nil
+	}
+	s.cache.mu.Lock()
+	s.cache.shelves, s.cache.at = shelves, s.now()
+	s.cache.mu.Unlock()
+	return nil
+}
+
+func (s *Service) computeCatalogShelves(ctx context.Context) ([]Shelf, error) {
+	now := s.now().Unix()
+	// No person: the status column is empty and notMine matches every game.
+	const anyone = ""
+	var out []Shelf
+	add := func(id, title, subtitle, query string, args ...any) error {
+		items, err := s.games(ctx, anyone, query, args...)
+		if err != nil {
+			return err
+		}
+		out = append(out, Shelf{ID: id, Title: title, Subtitle: subtitle, Items: items})
+		return nil
+	}
+	steps := []func() error{
+		func() error {
+			return add("trending", "Trending", "What people are looking at on IGDB", `SELECT `+gameCols+` FROM game_popularity gp JOIN games g ON g.id = gp.game_id
+				WHERE gp.type = 1 AND `+visible+` ORDER BY gp.value DESC LIMIT ?`, candidates)
+		},
+		func() error {
+			return add("new", "New releases", "Out in the last two months", `SELECT `+gameCols+` FROM games g
+				WHERE g.first_release_date BETWEEN ? AND ? AND `+visible+`
+				ORDER BY g.igdb_popularity DESC, g.popularity_score DESC LIMIT ?`, now-60*86400, now, candidates)
+		},
+		func() error {
+			return add("short", "Short and great", "Under 8 hours, rated 85 or more", `SELECT `+gameCols+` FROM games g
+				WHERE g.ttb_normally > 0 AND g.ttb_normally <= 480 AND MAX(g.aggregated_rating, g.total_rating) >= 85
+				  AND `+visible+` ORDER BY MAX(g.aggregated_rating, g.total_rating) DESC, g.total_rating_count DESC LIMIT ?`, candidates)
+		},
+		func() error {
+			return add("gems", "Hidden gems", "Loved by the few who played them", `SELECT `+gameCols+` FROM games g
+				WHERE g.total_rating >= 85 AND g.total_rating_count BETWEEN 5 AND 60 AND `+visible+`
+				ORDER BY g.total_rating DESC LIMIT ?`, candidates)
+		},
+		func() error {
+			return add("classics", "Classics you haven't played", "Released before 2005", `SELECT `+gameCols+` FROM games g
+				WHERE g.first_release_date > 0 AND g.first_release_date < ? AND g.total_rating >= 88 AND g.total_rating_count >= 50
+				  AND `+visible+` ORDER BY g.total_rating_count DESC LIMIT ?`,
+				time.Date(2005, 1, 1, 0, 0, 0, 0, time.UTC).Unix(), candidates)
+		},
+		func() error {
+			return add("popular", "Popular", "", `SELECT `+gameCols+` FROM games g
+				WHERE g.local_cover_path != '' AND g.id > 0
+				ORDER BY g.popularity_score DESC, g.rating_count DESC, g.name LIMIT ?`, candidates)
+		},
+	}
+	for _, step := range steps {
+		if err := step(); err != nil {
 			return nil, err
 		}
 	}
-	return shelves, nil
+	return out, nil
+}
+
+// libraryIDs is the set of games in the person's library.
+func (s *Service) libraryIDs(ctx context.Context, userID string) (map[int64]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT game_id FROM library_items WHERE user_id = ?`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]bool{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
+// notIn keeps the first shelfSize games that aren't in mine.
+func notIn(items []Game, mine map[int64]bool) []Game {
+	out := make([]Game, 0, shelfSize)
+	for _, g := range items {
+		if !mine[g.ID] {
+			out = append(out, g)
+			if len(out) == shelfSize {
+				break
+			}
+		}
+	}
+	return out
 }
 
 // ComingSoonForYou lists wishlist games with a release date ahead (Home).

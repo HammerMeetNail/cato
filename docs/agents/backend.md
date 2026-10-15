@@ -71,6 +71,7 @@
 - `Server.Jobs()` registers:
   - the catalog jobs;
   - `push.deliver` (every minute, woken early by `social.OnNotify`);
+  - `discover.refresh` (hourly, and run at startup). It caches Discover's catalog-wide shelf candidates; each request then only drops the person's own library. On a 300k-game catalog this took Discover from about 3 s to well under a second on the NAS.
   - `alerts.releases`;
   - `alerts.prices` (with an IsThereAnyDeal key);
   - `steam.sync` (with a Steam key);

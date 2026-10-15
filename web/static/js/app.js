@@ -221,6 +221,16 @@ function onKey(e) {
   }
 }
 
+// Swipe navigation (features/swipe.js) loads on the first touch, so
+// desktop and the first paint don't pay for it.
+let swipeLoaded = false;
+function onFirstTouch(e) {
+  if (swipeLoaded) return;
+  swipeLoaded = true;
+  document.removeEventListener('touchstart', onFirstTouch);
+  import('./features/swipe.js').then(m => m.install(e)).catch(() => { swipeLoaded = false; });
+}
+
 function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
   navigator.serviceWorker.register(swURL).catch(() => {});
@@ -321,6 +331,7 @@ async function boot() {
   });
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyTheme(app.prefs.theme));
   document.addEventListener('keydown', onKey);
+  document.addEventListener('touchstart', onFirstTouch, { passive: true });
   if (!app.config.dev) delete SCREENS['dev/ui'];
 
   startRouter(onRoute);
