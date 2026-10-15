@@ -222,13 +222,25 @@ function onKey(e) {
 }
 
 // Swipe navigation (features/swipe.js) loads on the first touch, so
-// desktop and the first paint don't pay for it.
-let swipeLoaded = false;
+// desktop and the first paint don't pay for it. Touches that happen while
+// it loads are recorded and replayed, so the first swipe isn't lost. Touch
+// events go to the element the touch started on even if a re-render
+// removes it, so the recorder listens there, not on the document.
+let swipeQueue = null;
+const TOUCH_REST = ['touchmove', 'touchend', 'touchcancel'];
+const recordTouch = e => swipeQueue?.push({ type: e.type, target: e.target, touches: [...e.touches].map(t => ({ clientX: t.clientX, clientY: t.clientY })) });
 function onFirstTouch(e) {
-  if (swipeLoaded) return;
-  swipeLoaded = true;
+  if (swipeQueue) return;
+  swipeQueue = [];
+  recordTouch(e);
   document.removeEventListener('touchstart', onFirstTouch);
-  import('./features/swipe.js').then(m => m.install(e)).catch(() => { swipeLoaded = false; });
+  const target = e.target;
+  for (const t of TOUCH_REST) target.addEventListener(t, recordTouch, { passive: true });
+  import('./features/swipe.js').then(m => {
+    for (const t of TOUCH_REST) target.removeEventListener(t, recordTouch);
+    m.install(swipeQueue);
+    swipeQueue = [];
+  }).catch(() => {});
 }
 
 function registerServiceWorker() {

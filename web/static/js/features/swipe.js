@@ -12,6 +12,27 @@ const START = 14; // px of movement before deciding the direction
 const COMMIT = 90; // px of horizontal travel to navigate
 
 let swipe = null;
+// The element the current touch started on: touchmove/touchend are sent
+// there even after a re-render removes it from the page (and then they
+// don't bubble to the document), so the gesture listens on it.
+let bound = null;
+const OPTS = { passive: true };
+
+function bind(target) {
+  unbind();
+  bound = target;
+  target.addEventListener('touchmove', onMove, OPTS);
+  target.addEventListener('touchend', onEnd, OPTS);
+  target.addEventListener('touchcancel', reset, OPTS);
+}
+
+function unbind() {
+  if (!bound) return;
+  bound.removeEventListener('touchmove', onMove, OPTS);
+  bound.removeEventListener('touchend', onEnd, OPTS);
+  bound.removeEventListener('touchcancel', reset, OPTS);
+  bound = null;
+}
 
 function blocked(target) {
   if (app.prefs.swipe_nav === false) return true;
@@ -38,6 +59,7 @@ function hint() {
 
 function reset() {
   swipe = null;
+  unbind();
   const el = document.getElementById('swipe-hint');
   if (el) {
     el.style.opacity = '0';
@@ -51,6 +73,7 @@ function onStart(e) {
   const t = e.touches[0];
   if (t.clientX < EDGE || t.clientX > innerWidth - EDGE || blocked(e.target)) return;
   swipe = { x: t.clientX, y: t.clientY, horizontal: false, dx: 0 };
+  bind(e.target);
 }
 
 function onMove(e) {
@@ -82,11 +105,12 @@ function onEnd() {
   else history.forward();
 }
 
-// install starts listening; first is the touchstart that loaded the module.
-export function install(first) {
-  document.addEventListener('touchstart', onStart, { passive: true });
-  document.addEventListener('touchmove', onMove, { passive: true });
-  document.addEventListener('touchend', onEnd, { passive: true });
-  document.addEventListener('touchcancel', reset, { passive: true });
-  if (first) onStart(first);
+const handlers = { touchstart: onStart, touchmove: onMove, touchend: onEnd, touchcancel: reset };
+
+// install starts listening, after replaying the touches the shell recorded
+// while this module loaded ({type, target, touches: [{clientX, clientY}]}).
+// A gesture still in progress continues through bind()'s listeners.
+export function install(recorded = []) {
+  for (const e of recorded) handlers[e.type]?.(e);
+  document.addEventListener('touchstart', onStart, OPTS);
 }

@@ -65,6 +65,11 @@ const gameCols = `g.id, g.name, g.local_cover_path, g.cover_url, g.first_release
 const notMine = `NOT EXISTS (SELECT 1 FROM library_items li WHERE li.user_id = ? AND li.game_id = g.id)`
 
 // visible keeps editions, packs and covers-less stubs off the shelves.
+//
+// Shelf queries that start from a small set (popular here, trending,
+// related, upcoming) join it to games with CROSS JOIN, which pins the join
+// order: otherwise SQLite may walk every game through idx_games_version_parent
+// and probe the small set, ~100× slower on a 300k-game catalog.
 const visible = `g.id > 0 AND g.version_parent = 0 AND g.category IN (0, 2, 4, 8, 9, 10, 11) AND (g.local_cover_path != '' OR g.cover_url != '')`
 
 func (s *Service) games(ctx context.Context, userID, query string, args ...any) ([]Game, error) {
@@ -228,7 +233,7 @@ func (s *Service) Shelves(ctx context.Context, userID string) ([]Shelf, error) {
 
 	local, err := s.games(ctx, userID, `SELECT `+gameCols+` FROM (
 			SELECT game_id, COUNT(*) AS n FROM library_items WHERE user_id != ? GROUP BY game_id HAVING n >= 1
-		) pop JOIN games g ON g.id = pop.game_id
+		) pop CROSS JOIN games g ON g.id = pop.game_id
 		WHERE `+visible+` AND `+notMine+` ORDER BY pop.n DESC, g.popularity_score DESC LIMIT ?`, userID, userID, shelfSize)
 	if err := add("instance", "Popular on this server", "In other people's libraries here", local, err); err != nil {
 		return nil, err
@@ -241,7 +246,7 @@ func (s *Service) Shelves(ctx context.Context, userID string) ([]Shelf, error) {
 		WHERE li.user_id = ? AND li.rating >= 80 AND EXISTS (SELECT 1 FROM game_relations r WHERE r.game_id = li.game_id AND r.kind = 'similar')
 		ORDER BY li.rating DESC, li.updated_at DESC LIMIT 1`, userID).Scan(&seedID, &seedName)
 	if err == nil {
-		like, err := s.games(ctx, userID, `SELECT `+gameCols+` FROM game_relations r JOIN games g ON g.id = r.related_id
+		like, err := s.games(ctx, userID, `SELECT `+gameCols+` FROM game_relations r CROSS JOIN games g ON g.id = r.related_id
 			WHERE r.game_id = ? AND r.kind = 'similar' AND `+visible+` AND `+notMine+`
 			ORDER BY g.total_rating DESC LIMIT ?`, seedID, userID, shelfSize)
 		if err := add("because", "Because you liked "+seedName, "", like, err); err != nil {
@@ -328,7 +333,7 @@ func (s *Service) computeCatalogShelves(ctx context.Context) ([]Shelf, error) {
 	}
 	steps := []func() error{
 		func() error {
-			return add("trending", "Trending", "What people are looking at on IGDB", `SELECT `+gameCols+` FROM game_popularity gp JOIN games g ON g.id = gp.game_id
+			return add("trending", "Trending", "What people are looking at on IGDB", `SELECT `+gameCols+` FROM game_popularity gp CROSS JOIN games g ON g.id = gp.game_id
 				WHERE gp.type = 1 AND `+visible+` ORDER BY gp.value DESC LIMIT ?`, candidates)
 		},
 		func() error {
