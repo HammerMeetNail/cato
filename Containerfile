@@ -1,5 +1,5 @@
 # The NAS Dockerfile accepts a local binary; this image builds only tracked source paths.
-FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.26.9-alpine AS builder
+FROM --platform=$BUILDPLATFORM docker.io/library/golang:1.27.2-alpine AS builder
 WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
