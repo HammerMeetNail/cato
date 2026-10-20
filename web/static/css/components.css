@@ -500,6 +500,9 @@ kbd {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  /* No alt text flashing in the box while the image loads (Firefox draws
+     it); screen readers still read it. */
+  color: transparent;
 }
 
 .cover-fallback {

@@ -27,19 +27,11 @@ const swURL = window.trustedTypes
   }).createScriptURL('/service-worker.js')
   : '/service-worker.js';
 
-// viewTransition cross-fades a redraw where the browser supports it and
-// motion is welcome (kept here so Home doesn't load delight.js eagerly).
-function viewTransition(fn) {
-  if (!document.startViewTransition || matchMedia('(prefers-reduced-motion: reduce)').matches) return fn();
-  return document.startViewTransition(fn);
-}
-
 // Screens other than Home load on first visit. Each module exports a
-// view(route) and optionally enter(route) (data loading), init(app), and
-// prepare(route): data loading the shell waits on before drawing the screen.
+// view(route) and optionally enter(route) (data loading) and init(app).
 const SCREENS = {
-  library: () => import('./features/library.js').then(m => ({ view: m.libraryView })),
-  game: () => import('./features/game.js').then(m => ({ view: m.gameView, prepare: m.enterGame, init: () => m.watchGameWrites(app.store) })),
+  library: () => import('./features/library.js').then(m => ({ view: m.libraryView, enter: m.enterLibrary })),
+  game: () => import('./features/game.js').then(m => ({ view: m.gameView, enter: m.enterGame, init: () => m.watchGameWrites(app.store) })),
   discover: () => import('./features/discover.js').then(m => ({ view: m.discoverView, enter: m.enterDiscover })),
   'discover/search': () => import('./features/discover.js').then(m => ({ view: m.searchView, enter: r => m.enterSearch(r) })),
   you: () => import('./features/you.js').then(m => ({ view: m.youView })),
@@ -81,6 +73,7 @@ const TITLES = {
 };
 
 let route = { name: 'home', query: {} };
+let navTab = ''; // the lit tab: a game keeps the one it was opened from
 let firstRoute = true;
 const scroll = new Map();
 
@@ -90,7 +83,7 @@ function screenFor(r) {
 }
 
 function navItem(name, label, iconName, badge = 0) {
-  const current = tab(route.name) === name;
+  const current = navTab === name;
   return html`<a class="nav-item" href=${`#${name}`} aria-current=${current ? 'page' : nothing} data-nav=${name}
     aria-label=${badge ? `${label}, ${plural(badge, 'new notification')}` : nothing}>
     ${icon(iconName)}<span>${label}</span>${badge ? html`<span class="badge num" aria-hidden="true">${badge > 99 ? '99+' : badge}</span>` : nothing}</a>`;
@@ -192,15 +185,23 @@ async function onRoute(next) {
     }
     if (route !== next) return;
   }
-  // Nothing is drawn while a screen prepares: the current one stays up.
+  // Moving to another screen, its data (and the covers it shows first)
+  // loads before it's drawn: the current screen stays up until enter()
+  // settles, for at most 250 ms, so the page draws whole instead of
+  // sections and covers popping in. A filter change draws at once, and so
+  // does back/forward (what it shows is in memory; holding the old screen
+  // under Safari's swipe-back snapshot flashed it). Home draws from its
+  // copy on the device and refreshes after.
   held = next;
-  await screenFor(next)?.prepare?.(next);
+  const entered = next.name !== 'home' && new Promise(r => r(screenFor(next)?.enter?.(next))).catch(err => console.error(err));
+  if (navigated && entered && !next.revisit) await Promise.race([entered, new Promise(r => setTimeout(r, 250))]);
   if (held === next) held = null;
   if (route !== next) return;
-  // Opening a game page cross-fades (View Transitions, where supported and
-  // motion is welcome).
-  if (next.name === 'game' && !firstRoute) viewTransition(draw);
-  else draw();
+  navTab = tab(next.name, navTab);
+  // No cross-fade (View Transitions): Firefox painted a black frame
+  // between the pages and Safari ghosted one over the other, and on iPhone
+  // the page loaded again right as one began.
+  draw();
   const key = next.name + JSON.stringify(next.query) + (next.id ?? '');
   const m = document.getElementById('main');
   if (m && navigated) {
@@ -211,7 +212,6 @@ async function onRoute(next) {
   // After the (possibly lazily loaded) screen has rendered its search box.
   if (next.focusSearch) focusSearch();
   if (next.name === 'home') enterHome();
-  else screenFor(next)?.enter?.(next);
 }
 
 // Keyboard: 1–4 tabs, L log, / search, Cmd/Ctrl-K palette. Not while

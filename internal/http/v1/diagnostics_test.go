@@ -20,12 +20,15 @@ func TestReloadReportIsLogged(t *testing.T) {
 	rec := c.do(http.MethodPost, "/api/v1/diagnostics/reload", map[string]any{
 		"nav_type": "reload", "since_nav_ms": 84, "clean_exit": false,
 		"from": "#home", "to": "#discover", "uptime_ms": 1320,
+		"persisted": true, "next_url": "/#discover", "redirects": 0,
+		"trail": "1210 tap #discover; 1214 navigate push /#discover hash user; 1215 hashchange #discover; 1290 pagehide",
 	}, "User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 26_1 like Mac OS X)")
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
 	out := buf.String()
-	for _, want := range []string{`msg="unexpected reload"`, "nav_type=reload", "since_nav_ms=84", "clean_exit=false", "to=#discover", "uptime_ms=1320", "iPhone OS 26_1"} {
+	for _, want := range []string{`msg="unexpected reload"`, "nav_type=reload", "since_nav_ms=84", "clean_exit=false", "to=#discover", "uptime_ms=1320", "iPhone OS 26_1",
+		"persisted=true", "next_url=/#discover", "redirects=0", `trail="1210 tap #discover; 1214 navigate push /#discover hash user`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("log missing %q:\n%s", want, out)
 		}
@@ -37,6 +40,9 @@ func TestReloadReportIsLogged(t *testing.T) {
 	}
 	if rec := c.do(http.MethodPost, "/api/v1/diagnostics/reload", map[string]any{"since_nav_ms": -5}); rec.Code != http.StatusBadRequest {
 		t.Fatalf("negative timing: status %d", rec.Code)
+	}
+	if rec := c.do(http.MethodPost, "/api/v1/diagnostics/reload", map[string]any{"trail": strings.Repeat("x", 5000)}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("oversized trail: status %d", rec.Code)
 	}
 }
 

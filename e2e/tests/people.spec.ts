@@ -49,7 +49,7 @@ test('follow someone from People, then see what they play on Home', async ({ bro
 
     // The profile shows their games.
     await gotoApp(bea.page, `#u/${alex.username}`);
-    await expect(bea.page.getByRole('heading', { name: 'Playing' })).toBeVisible();
+    await expect(bea.page.getByRole('heading', { name: 'Playing', exact: true })).toBeVisible();
     await expect(bea.page.getByRole('heading', { name: 'Recently finished' })).toBeVisible();
   } finally {
     await alex.close();
@@ -64,7 +64,7 @@ test('a private profile needs an approved follow', async ({ browser, baseURL }) 
     await put(cam.acc, G.hollow, { status: 'playing' });
     await gotoApp(dee.page, `#u/${cam.username}`);
     await expect(dee.page.getByRole('heading', { name: 'This profile is private' })).toBeVisible();
-    await expect(dee.page.getByRole('heading', { name: 'Playing' })).toHaveCount(0);
+    await expect(dee.page.getByRole('heading', { name: 'Playing', exact: true })).toHaveCount(0);
     await dee.page.getByRole('button', { name: 'Follow' }).click();
     await expect(dee.page.getByRole('button', { name: 'Requested' })).toBeVisible();
 
@@ -75,7 +75,7 @@ test('a private profile needs an approved follow', async ({ browser, baseURL }) 
     await expect(cam.page.getByRole('button', { name: 'Accept' })).toHaveCount(0);
 
     await dee.page.reload();
-    await expect(dee.page.getByRole('heading', { name: 'Playing' })).toBeVisible();
+    await expect(dee.page.getByRole('heading', { name: 'Playing', exact: true })).toBeVisible();
     await expect(dee.page.locator('.upnext-card', { hasText: 'Hollow Knight' }).first()).toBeVisible();
   } finally {
     await cam.close();

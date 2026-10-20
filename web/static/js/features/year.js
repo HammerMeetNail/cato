@@ -5,6 +5,7 @@
 import { html, nothing } from '../ui/lit.js';
 import { icon } from '../ui/icons.js';
 import { cover, empty, skeletonRows } from '../ui/parts.js';
+import { decodeCovers } from '../ui/decode.js';
 import { stars } from '../ui/stars.js';
 import { toast, toastError } from '../ui/toast.js';
 import { api } from '../core/api.js';
@@ -19,6 +20,7 @@ export async function enterYear(route) {
   if (st.year !== year) Object.assign(st, { year, data: null, error: null });
   try { st.data = await api.get(`/api/v1/year/${year}`); st.error = null; } catch (err) { st.error = err; }
   app.redraw();
+  if (st.data) await decodeCovers([...st.data.top_rated.slice(0, 4), ...st.data.most_played.slice(0, 4)].map(g => g.cover));
 }
 
 const big = (value, label) => html`<div class="yr-stat"><div class="value num">${value}</div><div class="label">${label}</div></div>`;

@@ -390,11 +390,16 @@
   position: absolute;
   inset: 0;
   z-index: -1;
-  background-size: cover;
-  background-position: center;
   filter: blur(28px) saturate(1.2);
   opacity: 0.45;
   transform: scale(1.2);
+}
+
+.game-hero .backdrop img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .game-hero .backdrop::after {
@@ -1405,7 +1410,7 @@ details > summary {
   flex: 1 1 auto;
 }
 
-/* ---- Delight (P6): goals, Year in Review, view transitions ------------------ */
+/* ---- Delight (P6): goals, Year in Review ----------------------------------- */
 
 .ring {
   position: relative;
@@ -1568,11 +1573,6 @@ a.chip[aria-current="page"] {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-contrast);
-}
-
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation-duration: 160ms;
 }
 
 .yr-teaser {

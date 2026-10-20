@@ -71,14 +71,23 @@ export function href(name, query = {}, id = null) {
   return '#' + path + (qs ? '?' + qs : '');
 }
 
-// tab is the bottom-navigation section a route belongs to.
-export function tab(name) {
+// tab is the bottom-navigation section a route belongs to. A game, a
+// profile or a list keeps the tab it was opened from (prev), so opening a
+// game on Home doesn't move the highlight to Library.
+export function tab(name, prev = '') {
   if (name === 'home') return 'home';
-  if (name === 'library' || name === 'game') return 'library';
+  if (name === 'game' || name === 'profile' || name === 'list') return prev || (name === 'game' ? 'library' : 'you');
+  if (name === 'library') return 'library';
   if (name.startsWith('discover')) return 'discover';
-  if (name.startsWith('you') || name === 'profile' || name === 'list' || name === 'admin') return 'you';
+  if (name.startsWith('you') || name === 'admin') return 'you';
   return '';
 }
+
+// Each history entry is marked with this page load's id and its hash when
+// it's first routed. One that has the mark already is back/forward to a
+// screen this page drew (route.revisit: its data is still in memory, so it
+// draws at once); any other entry is a new navigation.
+const PAGE = Math.random().toString(36).slice(2);
 
 export function start(onRoute) {
   const handle = () => {
@@ -86,6 +95,8 @@ export function start(onRoute) {
     if (route.redirect && route.redirect !== location.hash) {
       history.replaceState(history.state, '', location.pathname + location.search + route.redirect);
     }
+    route.revisit = history.state?.page === PAGE + location.hash;
+    if (!route.revisit) history.replaceState({ ...history.state, page: PAGE + location.hash }, '');
     onRoute(route);
   };
   addEventListener('hashchange', handle);
@@ -95,7 +106,11 @@ export function start(onRoute) {
 
 export function go(hash, { replace = false } = {}) {
   if (replace) {
-    history.replaceState(history.state, '', location.pathname + location.search + hash);
+    // A filter change on the same screen carries the entry's mark (one
+    // replaceState per keystroke: Safari limits them); another screen is a
+    // new navigation.
+    const same = parse(hash).name === parse(location.hash).name;
+    history.replaceState({ ...history.state, page: same ? PAGE + hash : null }, '', location.pathname + location.search + hash);
     dispatchEvent(new HashChangeEvent('hashchange'));
   } else if (location.hash !== hash) {
     location.hash = hash;

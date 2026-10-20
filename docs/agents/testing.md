@@ -125,7 +125,13 @@ Playwright's `mobile-webkit` is desktop WebKit with an iPhone viewport, not Mobi
 
 **A realistic rig:** run the current code over plain HTTP on the Mac's LAN address (`CATO_ALLOW_INSECURE=1 CATO_LISTEN_ADDR=0.0.0.0:7090 CATO_STATIC_DIR=web/static`, a scratch database with a few games and cover JPEGs in the cover directory), open `http://<LAN IP>:7090` in the Simulator (not 127.0.0.1, which counts as a secure context), and sign up and fill a library with `fetch` calls through the inspector. To see flicker, record with `xcrun simctl io <udid> recordVideo`, split frames with `ffmpeg -vf fps=30`, and diff consecutive frames: a screen swap is one large change, and anything after it (covers arriving, sections pushing the page) shows up as small changes in the next frames.
 
-The Simulator has no device memory limits, so a page that iOS kills on a real phone survives there. For that, read the server's `unexpected reload` log lines (see `frontend.md`).
+**Realistic data without anyone's account:** copy only the public catalog from a production backup (`games` and the `game_*` tables, `lookups`, `platforms`) into a freshly migrated database (start the server once on an empty file; the migration seeds `platforms`, so upsert it), then sign up a rig user and seed a library through the API. Home, Discover and the game pages then look like production. Tap targets: read an element's `getBoundingClientRect()` through the inspector and add Safari's top bar (62 pt on an iPhone 17 Pro) to `y`.
+
+**Edge swipes:** `idb ui swipe` from the screen edge doesn't trigger Safari's own back gesture, even on a plain page, so the native swipe-back can't be checked here. A swipe from inside the page exercises `features/swipe.js`.
+
+The Simulator has no device memory limits, so a page that iOS kills on a real phone survives there. For that, read the server's `unexpected reload` log lines (see `frontend.md`). The reloads the iPhone reported after every tap on a game all began as the game page's View Transition did; the Simulator never showed them.
+
+**Phone-sized Firefox:** Playwright's Firefox in podman with `viewport: 390×844`, `deviceScaleFactor: 3`, `hasTouch: true` and `page.touchscreen.tap()` is close to Firefox's responsive mode. Record what each animation frame shows with a `requestAnimationFrame` probe (the screen's heading, visible covers still loading): its video is software-rendered and captures repaints part-done (black bands, a white box), which a real Firefox doesn't show.
 
 ## Manual checks agents do
 

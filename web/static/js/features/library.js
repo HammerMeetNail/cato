@@ -5,6 +5,7 @@
 import { html, nothing, repeat, live, ref } from '../ui/lit.js';
 import { icon } from '../ui/icons.js';
 import { cover, statusPill, empty, skeletonTiles } from '../ui/parts.js';
+import { decodeCovers } from '../ui/decode.js';
 import { stars } from '../ui/stars.js';
 import { longPress, openMenu } from '../ui/menu.js';
 import { openSheet } from '../ui/sheet.js';
@@ -231,6 +232,14 @@ function sentinel(total) {
     }, { rootMargin: '600px' });
     observer.observe(el);
   });
+}
+
+// enterLibrary decodes the covers the first screenful shows, so they're
+// drawn with the grid (the shell holds the previous screen meanwhile).
+export function enterLibrary(route) {
+  const s = routeState(route);
+  const first = query(app.store.entries(), { search: parseSearch(s.text), shelf: s.shelf, sort: s.sort }).slice(0, 12);
+  return decodeCovers(first.map(e => e.cover), s.view === 'list');
 }
 
 export function libraryView(route) {

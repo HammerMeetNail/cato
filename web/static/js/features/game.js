@@ -3,7 +3,8 @@
 // keep (platforms, format, tags, notes) and what the catalog knows.
 import { html, nothing, repeat } from '../ui/lit.js';
 import { icon } from '../ui/icons.js';
-import { cover, statusControl, empty } from '../ui/parts.js';
+import { cover, coverSources, statusControl, empty } from '../ui/parts.js';
+import { decodeCovers } from '../ui/decode.js';
 import { ratingInput, stars } from '../ui/stars.js';
 import { openSheet, confirmSheet } from '../ui/sheet.js';
 import { toast, toastError } from '../ui/toast.js';
@@ -25,11 +26,11 @@ const state = { id: null, data: null, error: null, loading: false, aboutOpen: fa
 // the server is slow to answer.
 const seen = new Map();
 
-// The shell calls this before drawing the page and keeps the current screen
-// until it settles, so a quick answer draws the page whole instead of the
-// title first with the facts, platforms and sections popping in under it.
-// After HOLD_MS it draws what it has: the seen copy, else the tapped tile.
-const HOLD_MS = 250;
+// The shell keeps the current screen up until this settles (for at most
+// 250 ms, see app.js onRoute), so a quick answer draws the page whole: the
+// details, the reviews and the cover (the backdrop is the same image; a
+// tile's cover is often a smaller size). Past that the page draws what it
+// has: the seen copy, else the tapped tile.
 export function enterGame(route) {
   if (state.id !== route.id) {
     state.id = route.id;
@@ -37,8 +38,15 @@ export function enterGame(route) {
     state.error = null;
     state.aboutOpen = false;
   }
-  const loads = Promise.all([loadGameSocial(route.id), reload()]);
-  return Promise.race([loads, new Promise(r => setTimeout(r, HOLD_MS))]);
+  return Promise.all([loadGameSocial(route.id), reload().then(() => decodeCovers([state.data?.game.cover]))]);
+}
+
+// backdrop is the blurred cover behind the hero: an <img> with the cover's
+// own sources, so it reuses the image the cover already loaded (a CSS
+// background at another size arrived a moment after the page).
+function backdrop(url) {
+  const { src, srcset } = coverSources(url);
+  return html`<div class="backdrop">${src ? html`<img src=${src} srcset=${srcset || nothing} alt="" decoding="sync">` : nothing}</div>`;
 }
 
 // A touch or click on a game link starts its request before the tap ends
@@ -292,7 +300,7 @@ export function gameView(route) {
     // Render instantly from the local index, or from the tapped tile,
     // while the page loads.
     const seed = local || tappedTile(route.id);
-    return html`<div class="page"><div class="game-hero">${seed ? html`<div class="backdrop" style=${seed.cover ? `background-image:url("${encodeURI(seed.cover)}")` : ''}></div>${cover(seed, { eager: true })}<div><h1>${seed.name}</h1></div>` : html`<div class="cover skeleton"></div><div class="skeleton skeleton-line" style="width:60%"></div>`}</div>
+    return html`<div class="page"><div class="game-hero">${seed ? html`${backdrop(seed.cover)}${cover(seed, { eager: true })}<div><h1>${seed.name}</h1></div>` : html`<div class="cover skeleton"></div><div class="skeleton skeleton-line" style="width:60%"></div>`}</div>
       ${local ? html`<div class="game-layout"><div>${yourRow(local, null)}</div></div>` : nothing}</div>`;
   }
   const game = d.game;
@@ -300,7 +308,7 @@ export function gameView(route) {
   const owned = new Set(d.item?.platforms || []);
   return html`<div class="page">
     <section class="game-hero" aria-labelledby="game-title">
-      <div class="backdrop" style=${game.cover ? `background-image:url("${encodeURI(game.cover)}")` : ''}></div>
+      ${backdrop(game.cover)}
       ${cover({ name: game.name, cover: game.cover }, { eager: true })}
       <div>
         <h1 id="game-title">${game.name}</h1>

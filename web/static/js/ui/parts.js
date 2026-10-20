@@ -17,15 +17,21 @@ export function coverSources(src, thumb = false) {
   return { src, srcset: '' };
 }
 
+// Covers a screen decoded before it was drawn (ui/decode.js).
+export const decoded = new Set();
+
 // cover renders a game cover with a text fallback when the image is
-// missing or fails (no inline handlers: CSP). Decoding is left to the
-// browser: forcing it async drew an empty box for a frame or two before
-// an already cached cover, on every visit to a screen.
+// missing or fails (no inline handlers: CSP). A cover the screen shows
+// first (eager, or decoded ahead) loads eagerly and decodes with the paint,
+// so it's in the screen's first frame: a lazy image waits for layout, and
+// Safari decodes an image again, asynchronously, once it has been off the
+// page, so even cached covers drew as empty boxes for a frame or two.
 export function cover(entry, { cls = '', eager = false } = {}) {
   const { src, srcset } = coverSources(entry?.cover, cls.includes('thumb'));
   const fallback = html`<span class="cover-fallback">${entry?.name ?? ''}</span>`;
+  const first = eager || decoded.has(src);
   return html`<div class=${`cover ${cls}`}>
-    ${src ? html`<img src=${src} srcset=${srcset || nothing} alt=${coverAlt(entry.name)} loading=${eager ? 'eager' : 'lazy'}
+    ${src ? html`<img src=${src} srcset=${srcset || nothing} alt=${coverAlt(entry.name)} loading=${first ? 'eager' : 'lazy'} decoding=${first ? 'sync' : nothing}
       @error=${e => { e.target.replaceWith(Object.assign(document.createElement('span'), { className: 'cover-fallback', textContent: entry.name })); }}>` : fallback}
   </div>`;
 }

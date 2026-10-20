@@ -3,6 +3,7 @@
 import { html, nothing, repeat } from '../ui/lit.js';
 import { icon } from '../ui/icons.js';
 import { cover, statusPill, empty, skeletonTiles } from '../ui/parts.js';
+import { decodeCovers } from '../ui/decode.js';
 import { api } from '../core/api.js';
 import { releaseYear, statusLabel, formatMinutes } from '../core/format.js';
 import { href, go } from '../core/router.js';
@@ -35,6 +36,10 @@ export async function enterDiscover() {
   }
   shelves.loading = false;
   app.redraw();
+  // The shell draws Discover once these are in: the first covers of the
+  // shelves at the top.
+  const top = (shelves.data?.shelves || []).filter(s => s.items.length).slice(0, 3);
+  await decodeCovers(top.flatMap(s => s.items.slice(0, 4).map(g => g.cover)));
 }
 
 // gameCard is a catalog result: cover, title, year, your status or quick
@@ -118,6 +123,7 @@ export async function enterSearch(route, more = false) {
   }
   results.loading = false;
   app.redraw();
+  if (!more) await decodeCovers(results.items.slice(0, 8).map(g => g.cover));
 }
 
 function facet(route, key, value) {

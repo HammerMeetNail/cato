@@ -32,16 +32,19 @@ The frontend is vanilla ES modules with **no build step**. Templates are lit-htm
   - Not after the login page: `login.js` sets `cato-signed-in` in `localStorage`, and the next start waits for the server, since whoever signed in may be someone else. A different user from the server clears the device copy and reloads.
   - Home's last answer is kept as `meta/home:<user>` and loaded before the first draw (`primeHome`), so the streak line and sections don't arrive one by one and push the page down.
   - The game hero is top-aligned: the title drawn from the local copy or the tapped tile stays put when the facts arrive.
-  - Covers leave decoding to the browser (forcing `decoding="async"` drew empty boxes for a frame before cached covers); Home's covers load eagerly.
-- **No flicker between screens:**
+  - A reload of any screen goes from that frame straight to the finished screen (see the hold below).
+- **No flicker between screens: a screen is drawn once, finished.**
   - One second after `load`, `features/idle.js` prefetches Library, Discover, You and the game page (through `loadScreen`), so a first visit doesn't wait for code.
   - A screen whose code is still loading keeps the current screen for 200 ms before drawing the loading grid.
-  - A screen can export `prepare(route)`: the shell starts it before drawing and draws nothing while it runs, so the current screen stays up. The game page's `prepare` loads the details and the social section and settles when both arrive or after 250 ms, so a quick answer draws the page whole instead of the title first with the facts, platforms and sections popping in under it.
-  - Pressing on a game link (`pointerdown`, from `features/idle.js`) starts that game's request before the tap ends; the page uses it once.
-  - Past the 250 ms, the game page draws what it has: the copy from an earlier visit this session (the last 50 are kept), else the tapped tile. The shell keeps the last click target in `app.tapped`, and the game page reads the tile's name and cover from it.
+  - **The hold.** Moving to another screen, the shell calls its `enter(route)` before drawing it and draws nothing until that settles, for at most 250 ms: the current screen stays up meanwhile. So `enter` resolves when the screen has what it shows first: its data, and the covers at the top, decoded with `ui/decode.js` `decodeCovers` (the game page waits for its details, its reviews and its cover; Discover for its shelves and their first covers; Library, profiles, lists and Year in Review for their first covers). Past 250 ms the screen draws what it has.
+  - **No hold** for a filter change (same screen, new query: Library's search draws per keystroke), for Home (drawn from its device copy, refreshed after), or for back/forward. The router marks each history entry with the page load's id when it first routes it, so `route.revisit` means a screen this page drew, with its data still in memory. Holding there left the old screen up under Safari's swipe-back snapshot, which flashed it.
+  - **Covers decoded ahead** (`decoded` in `ui/parts.js`), and eager ones, load `eager` and decode `sync`: a lazy image waits for layout, and Safari decodes an image again, asynchronously, once it has been off the page, so even cached covers drew as empty boxes for a frame or two. Alt text is transparent while a cover loads (Firefox drew it in the box).
+  - **No View Transitions.** The game page's cross-fade painted a black frame in Firefox, ghosted one screen over the other in Safari, and the iPhone reload reports all started as one began.
+  - **The game page:** pressing on a game link (`pointerdown`, from `features/idle.js`) starts that game's request before the tap ends, and the page uses it once. The hero's blurred backdrop is an `<img>` with the cover's own sources, so it reuses the image the cover loaded (a CSS background at another size arrived a frame late). Past the hold, the game page draws the copy from an earlier visit this session (the last 50 are kept), else the tapped tile: the shell keeps the last click target in `app.tapped`, and the game page reads the tile's name and cover from it.
+  - **The lit tab:** a game, a profile or a list keeps the tab it was opened from (`tab(name, prev)`); opened directly, a game sits under Library and a profile or list under You.
 - **Swipes are reported too.** Each sideways gesture of 40 px or more posts `/api/v1/diagnostics/swipe` with what came of it (`back`, `forward`, `too short`, `cancelled by the browser`, or `ignored:` and why), logged as `swipe gesture`; at most 20 a page.
-- **Unexpected reloads are reported.** `features/idle.js` notes each in-app navigation in `sessionStorage`. If the tab's next page starts within 5 s of one, it posts `/api/v1/diagnostics/reload`, and the server logs `unexpected reload` with the user agent. Read those log lines first when someone reports a flicker or lost state on a device you can't test.
-- **The initial JS budget is nearly full** (59.2 of 60 KB). New shell code goes into `features/idle.js` or another lazy module.
+- **Unexpected reloads are reported.** `features/idle.js` notes each in-app navigation in `sessionStorage`, with the page's last few events (link taps, navigations and who began them where the Navigation API exists, errors, `pagehide` and whether it was `persisted`), rewritten as each happens so a killed page leaves it too. If the tab's next page starts within 5 s of one, it posts `/api/v1/diagnostics/reload`, and the server logs `unexpected reload` with the trail, where the new page started and the user agent. Read those log lines first when someone reports a flicker or lost state on a device you can't test.
+- **The initial JS budget is nearly full** (59.4 of 60 KB). New shell code goes into `features/idle.js` or another lazy module.
 
 ## Data and writes
 
@@ -111,7 +114,7 @@ The frontend is vanilla ES modules with **no build step**. Templates are lit-htm
 - Sheets are modal `<dialog>`s, and focus returns to the opener.
 - The status control is a radio group; the rating is a slider (arrow keys move in half stars).
 - Touch targets are at least 44 px; `:focus-visible` outlines and a skip link are present.
-- `prefers-reduced-motion` turns off animation, confetti and view transitions.
+- `prefers-reduced-motion` turns off animation and confetti.
 - `viewport-fit=cover` with safe-area insets.
 - Keyboard: `1`–`4` switch tabs, `L` logs, `/` searches, `Cmd/Ctrl-K` opens the palette; the Library adds `j`/`k`/`Enter`/`s`/`r`/`l`. Shortcuts never fire while typing or while a sheet or menu is open.
 - New screens go into `e2e/tests/a11y.spec.ts`.

@@ -16,28 +16,40 @@ type reloadReport struct {
 	From       string `json:"from"`         // hash before that navigation
 	To         string `json:"to"`           // hash it navigated to
 	UptimeMS   int64  `json:"uptime_ms"`    // how long the previous page had been open
+	Persisted  bool   `json:"persisted"`    // pagehide said the page went into the back/forward cache
+	Trail      string `json:"trail"`        // the previous page's last events: taps, navigations (and who began them), errors
+	NextURL    string `json:"next_url"`     // where this page started (path, query and hash)
+	Redirects  int64  `json:"redirects"`    // PerformanceNavigationTiming.redirectCount
 }
 
-const maxReportText = 200
+const (
+	maxReportText = 200
+	maxTrail      = 1200
+)
 
 func (a *API) reportReload(w http.ResponseWriter, r *http.Request) {
 	var rep reloadReport
 	if !decode(w, r, &rep) {
 		return
 	}
-	for _, s := range []string{rep.NavType, rep.From, rep.To} {
+	for _, s := range []string{rep.NavType, rep.From, rep.To, rep.NextURL} {
 		if len(s) > maxReportText {
 			writeError(w, http.StatusBadRequest, "invalid_report", "Report fields are too long", nil)
 			return
 		}
 	}
-	if rep.SinceNavMS < 0 || rep.UptimeMS < 0 {
+	if len(rep.Trail) > maxTrail {
+		writeError(w, http.StatusBadRequest, "invalid_report", "Report fields are too long", nil)
+		return
+	}
+	if rep.SinceNavMS < 0 || rep.UptimeMS < 0 || rep.Redirects < 0 {
 		writeError(w, http.StatusBadRequest, "invalid_report", "Timings can't be negative", nil)
 		return
 	}
 	slog.WarnContext(r.Context(), "unexpected reload",
 		"nav_type", rep.NavType, "since_nav_ms", rep.SinceNavMS, "clean_exit", rep.CleanExit,
-		"from", rep.From, "to", rep.To, "uptime_ms", rep.UptimeMS, "ua", userAgent(r))
+		"from", rep.From, "to", rep.To, "uptime_ms", rep.UptimeMS, "persisted", rep.Persisted,
+		"next_url", rep.NextURL, "redirects", rep.Redirects, "trail", rep.Trail, "ua", userAgent(r))
 	w.WriteHeader(http.StatusNoContent)
 }
 

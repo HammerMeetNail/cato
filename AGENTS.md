@@ -55,6 +55,7 @@ Keep generated logs, traces and scratch scripts outside the repo.
   - Render only with lit-html: no `innerHTML`, no `javascript:` URLs, no inline scripts or handlers. The CSP enforces Trusted Types.
   - Asset versions are automatic: never add cache names.
   - Keep `<main>` the scroll container (`#app` is height-bound).
+  - A screen draws once, finished: its `enter(route)` resolves when what it shows first is ready (data, first covers via `decodeCovers`), and the shell holds the previous screen until then (≤ 250 ms). No View Transitions.
 - **Background work runs on `internal/jobs`**, never in ad-hoc goroutine loops. Tag user-facing IGDB calls with the interactive lane.
 - **Tests:**
   - Regression test first.

@@ -6,6 +6,7 @@
 import { html, nothing, repeat } from '../ui/lit.js';
 import { icon } from '../ui/icons.js';
 import { cover, empty, skeletonRows, segmented, chip } from '../ui/parts.js';
+import { decodeCovers } from '../ui/decode.js';
 import { stars } from '../ui/stars.js';
 import { openSheet, confirmSheet } from '../ui/sheet.js';
 import { openMenu } from '../ui/menu.js';
@@ -73,6 +74,9 @@ export async function enterProfile(route) {
     prof.error = err;
   }
   app.redraw();
+  // Drawn with its first covers (the shell holds the previous screen).
+  const p = prof.data;
+  if (p) await decodeCovers([...(p.favourites || []).slice(0, 6), ...(p.playing || []).slice(0, 4)].map(g => g.cover));
 }
 
 async function relate(method, path, done) {
@@ -427,6 +431,7 @@ const mylists = { data: null, error: null };
 export async function enterMyLists() {
   try { mylists.data = (await api.get('/api/v1/lists')).items; mylists.error = null; } catch (err) { mylists.error = err; }
   app.redraw();
+  if (mylists.data) await decodeCovers(mylists.data.slice(0, 5).flatMap(l => l.preview.map(g => g.cover)), true);
 }
 
 async function createList(title = '') {
@@ -464,6 +469,7 @@ export async function enterList(route) {
   if (lst.id !== route.id) Object.assign(lst, { id: route.id, data: null, error: null, editing: false });
   try { lst.data = (await api.get(`/api/v1/lists/${route.id}`)).list; lst.error = null; } catch (err) { lst.error = err; }
   app.redraw();
+  if (lst.data) await decodeCovers(lst.data.items.slice(0, 10).map(it => it.game.cover), true);
 }
 
 async function listCall(method, path, body) {

@@ -70,7 +70,11 @@ test('router parses routes, filters and legacy hashes', () => {
   assert.equal(parse('#nope').redirect, '#home');
   assert.equal(href('library', { shelf: 'backlog', q: '', sort: 'name' }), '#library?shelf=backlog&sort=name');
   assert.equal(href('game', {}, 5), '#game/5');
-  assert.equal(tab('game'), 'library');
+  assert.equal(tab('game'), 'library', 'a game opened directly sits under Library');
+  assert.equal(tab('game', 'home'), 'home', 'a game opened from Home keeps Home lit');
+  assert.equal(tab('profile', 'home'), 'home');
+  assert.equal(tab('list'), 'you');
+  assert.equal(tab('library', 'home'), 'library', 'a tab is always its own');
   assert.equal(tab('you/stats'), 'you');
   assert.equal(tab('discover/search'), 'discover');
 });

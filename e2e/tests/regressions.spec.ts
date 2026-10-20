@@ -194,6 +194,80 @@ test('opening a game from Library or search never shows Home', async ({ page }) 
   expect(await page.evaluate(() => (window as any).__home), 'frames with Home on a game link').toBe(0);
 });
 
+// Opening a game doesn't cross-fade: View Transitions painted a black frame
+// between the screens in Firefox, ghosted one over the other in Safari, and
+// on iPhone the page loaded again right as one began.
+test('opening a game never starts a view transition', async ({ page }) => {
+  const acc = await account(page);
+  await put(acc, G.hades, { status: 'playing' });
+  await page.addInitScript(() => {
+    (window as any).__transitions = 0;
+    const real = document.startViewTransition?.bind(document);
+    if (real) document.startViewTransition = ((cb: any) => { (window as any).__transitions++; return real(cb); }) as any;
+  });
+  await gotoApp(page, '#home');
+  await page.locator('.now-card a[aria-label^="Open"]').first().click();
+  await expect(page.locator('#main .game-hero .facts')).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__transitions)).toBe(0);
+});
+
+// A game page keeps the tab it was opened from lit: from Home the
+// highlight used to jump to Library. Opened directly, it sits under Library.
+test('a game keeps the tab it was opened from lit', async ({ page }) => {
+  const acc = await account(page);
+  await put(acc, G.hades, { status: 'playing' });
+  await gotoApp(page, '#home');
+  const lit = page.locator('nav.nav [aria-current="page"]');
+  await page.locator('.now-card a[aria-label^="Open"]').first().click();
+  await expect(page.locator('#main .game-hero .facts')).toBeVisible();
+  await expect(lit).toHaveAttribute('data-nav', 'home');
+  await page.reload();
+  await expect(page.locator('#main .game-hero .facts')).toBeVisible();
+  await expect(lit).toHaveAttribute('data-nav', 'library');
+});
+
+// Discover draws whole when its shelves answer quickly: the screen used to
+// draw its heading alone, then the shelves, then their covers.
+test('Discover draws whole when its shelves are quick', async ({ page }) => {
+  await account(page);
+  await gotoApp(page, '#home');
+  await expect.poll(() => page.evaluate(() => performance.getEntriesByType('resource').some(r => r.name.includes('/js/features/discover.js'))),
+    { message: 'Discover prefetched while idle' }).toBe(true);
+  await page.route(/\/api\/v1\/discover$/, async route => { await new Promise(r => setTimeout(r, 120)); await route.continue(); });
+  await page.evaluate(() => {
+    (window as any).__partial = 0;
+    new MutationObserver(() => {
+      const h1 = document.querySelector('#main h1');
+      if (h1?.textContent?.trim() === 'Discover' && !document.querySelector('#main .shelf')) (window as any).__partial++;
+    }).observe(document.getElementById('app')!, { childList: true, subtree: true });
+  });
+  await page.locator('nav.nav a[data-nav="discover"]').click();
+  await expect(page.locator('#main .shelf').first()).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__partial), 'frames with Discover but no shelves').toBe(0);
+});
+
+// Going back draws the screen at once from what's in memory, however slow
+// the server is: holding the old screen while it reloaded flashed it under
+// Safari's swipe-back snapshot.
+test('going back draws the previous screen at once, even when the server is slow', async ({ page }) => {
+  await account(page);
+  await gotoApp(page, '#discover');
+  await page.locator('#main .shelf a[href^="#game/"]').first().click();
+  await expect(page.locator('#main .game-hero h1')).toBeVisible();
+  await page.route(/\/api\/v1\/discover$/, async route => { await new Promise(r => setTimeout(r, 1500)); await route.continue(); });
+  await page.evaluate(() => {
+    (window as any).__stale = 0;
+    const tick = () => {
+      if (location.hash === '#discover' && document.querySelector('#main .game-hero')) (window as any).__stale++;
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  await page.goBack();
+  await expect(page.locator('#main .shelf').first()).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__stale), 'frames still showing the game after going back').toBe(0);
+});
+
 // Pressing on a game tile starts the game's request before the tap ends,
 // and the page uses that answer instead of asking again.
 test('pressing on a game tile fetches its details once, before the click', async ({ page }) => {
@@ -228,8 +302,10 @@ test('a reload right after navigating is reported; a normal start is not', async
   const sent = page.waitForRequest(r => r.url().endsWith('/api/v1/diagnostics/reload'));
   await page.reload();
   const body = (await sent).postDataJSON();
-  expect(body).toMatchObject({ nav_type: 'reload', clean_exit: true, from: '#home', to: '#you' });
+  expect(body).toMatchObject({ nav_type: 'reload', clean_exit: true, from: '#home', to: '#you', next_url: '/#you', redirects: 0 });
   expect(body.since_nav_ms).toBeLessThan(5000);
+  // What the page did last: the tap, the navigation, then pagehide.
+  expect(body.trail).toMatch(/tap #you.*hashchange #you.*pagehide/);
   expect(reports).toHaveLength(1);
 });
 

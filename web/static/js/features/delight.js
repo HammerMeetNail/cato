@@ -53,9 +53,3 @@ export function celebrate() {
   };
   requestAnimationFrame(frame);
 }
-
-// viewTransition runs fn inside a View Transition where supported.
-export function viewTransition(fn) {
-  if (!document.startViewTransition || reducedMotion()) return fn();
-  return document.startViewTransition(fn);
-}
