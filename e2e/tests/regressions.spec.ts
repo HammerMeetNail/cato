@@ -195,8 +195,7 @@ test('opening a game from Library or search never shows Home', async ({ page }) 
 });
 
 // Opening a game doesn't cross-fade: View Transitions painted a black frame
-// between the screens in Firefox, ghosted one over the other in Safari, and
-// on iPhone the page loaded again right as one began.
+// between the screens in Firefox and ghosted one over the other in Safari.
 test('opening a game never starts a view transition', async ({ page }) => {
   const acc = await account(page);
   await put(acc, G.hades, { status: 'playing' });
@@ -209,6 +208,35 @@ test('opening a game never starts a view transition', async ({ page }) => {
   await page.locator('.now-card a[aria-label^="Open"]').first().click();
   await expect(page.locator('#main .game-hero .facts')).toBeVisible();
   expect(await page.evaluate(() => (window as any).__transitions)).toBe(0);
+});
+
+// Links move with pushState, never a fragment navigation (the browser's
+// own hashchange): on a plain-HTTP page, iOS Safari loads the page again
+// after one (WebKit bug 320638), so every tap reloaded Cato and back landed
+// on a duplicate entry. One entry per screen, and back and forward work.
+test('in-app links never make a fragment navigation; back and forward still work', async ({ page }) => {
+  const acc = await account(page);
+  await put(acc, G.hades, { status: 'playing' });
+  await gotoApp(page, '#home');
+  await page.evaluate(() => {
+    (window as any).__fragment = 0;
+    addEventListener('hashchange', e => { if (e.isTrusted) (window as any).__fragment++; });
+  });
+  const entries = await page.evaluate(() => history.length);
+  await page.locator('nav.nav a[data-nav="library"]').click();
+  await expect(page.getByRole('heading', { name: 'Library', exact: true })).toBeVisible();
+  await page.locator('#main a[href^="#game/"]').first().click();
+  await expect(page.locator('#main .game-hero .facts')).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__fragment), 'fragment navigations').toBe(0);
+  expect(await page.evaluate(() => history.length)).toBe(entries + 2);
+  await page.goBack();
+  await expect(page.getByRole('heading', { name: 'Library', exact: true })).toBeVisible();
+  await expect(page.locator('#main .game-hero')).toHaveCount(0);
+  await page.goBack();
+  await expect(page).toHaveURL(/#home$/);
+  await expect(page.locator('.now-card').first()).toBeVisible();
+  await page.goForward();
+  await expect(page.getByRole('heading', { name: 'Library', exact: true })).toBeVisible();
 });
 
 // A game page keeps the tab it was opened from lit: from Home the

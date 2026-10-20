@@ -1,19 +1,8 @@
-// head-init.js — loaded render-blocking in <head>, runs before first paint.
-//
-// Sizes the app frame via --app-h, consumed by html/body { height: var(--app-h) }.
-// The bottom tab bar is a static flex item at the end of the body column, so
-// its position derives entirely from this value (see #bottom-tabs in app.css).
-//
-// In iOS standalone (home-screen) mode, WebKit's viewport geometry is stale
-// at cold open: 100dvh, window.innerHeight, and the layout viewport's bottom
-// edge all exclude the bottom safe-area until the first scroll gesture
-// reconciles them. No viewport measurement can be trusted at first paint.
-// The app is fullscreen (viewport-fit=cover, black-translucent status bar)
-// and portrait-locked, so the true app height is exactly the physical screen
-// height — a static device property immune to that bug.
-//
-// In browser mode the URL bar occupies part of the screen, so innerHeight
-// (not screen height) is correct there.
+// head-init.js — render-blocking in <head>, before first paint: sets
+// --app-h, the app frame's height (html, body in base.css). An iOS
+// home-screen app's viewport leaves out the bottom safe area until the
+// first scroll, so standalone uses the screen's height; a browser tab uses
+// innerHeight (its toolbars take part of the screen).
 (function () {
   var docEl = document.documentElement;
   var standalone = navigator.standalone === true ||
@@ -27,10 +16,7 @@
 
   function measure() {
     if (standalone && window.screen) {
-      // Fullscreen app: physical screen height is ground truth. iOS keeps
-      // screen.width/height portrait-fixed while other platforms swap them,
-      // so pick the orientation-appropriate dimension via min/max in case
-      // the manifest's portrait lock is ever ignored (e.g. iPad).
+      // iOS keeps screen.width/height portrait-fixed; other platforms swap.
       var landscape = window.matchMedia &&
         window.matchMedia('(orientation: landscape)').matches;
       return landscape
@@ -41,10 +27,8 @@
   }
 
   function setAppH() {
-    // Ignore measurements while pinch-zoomed: innerHeight shrinks to the
-    // zoomed visual viewport, and writing that into --app-h collapses the
-    // body and pulls the tab bar up into the content area. A resize event
-    // fires again when scale returns to 1, re-measuring correctly.
+    // Not while pinch-zoomed: innerHeight is the zoomed viewport's then, and
+    // a resize follows when the zoom ends.
     if (zoomed()) return;
     var h = measure();
     if (!h || h === lastH) return;
@@ -52,10 +36,8 @@
     docEl.style.setProperty('--app-h', h + 'px');
   }
 
-  // Run synchronously before first paint.
   setAppH();
-  // Browser-mode URL bar settles after load; in standalone measure() is
-  // static so these re-runs are no-ops.
+  // A browser's toolbars settle after load.
   requestAnimationFrame(setAppH);
   setTimeout(setAppH, 150);
   window.addEventListener('resize', setAppH);

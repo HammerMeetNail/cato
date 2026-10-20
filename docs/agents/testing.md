@@ -129,7 +129,7 @@ Playwright's `mobile-webkit` is desktop WebKit with an iPhone viewport, not Mobi
 
 **Edge swipes:** `idb ui swipe` from the screen edge doesn't trigger Safari's own back gesture, even on a plain page, so the native swipe-back can't be checked here. A swipe from inside the page exercises `features/swipe.js`.
 
-The Simulator has no device memory limits, so a page that iOS kills on a real phone survives there. For that, read the server's `unexpected reload` log lines (see `frontend.md`). The reloads the iPhone reported after every tap on a game all began as the game page's View Transition did; the Simulator never showed them.
+The Simulator has no device memory limits, so a page that iOS kills on a real phone survives there. For that, read the server's `unexpected reload` log lines (see `frontend.md`). The Simulator also never showed the reloads iPhone Safari made after every link tap on plain HTTP (Enhanced Security re-checking a fragment navigation, see `frontend.md`), even over a LAN address: only those log lines did.
 
 **Phone-sized Firefox:** Playwright's Firefox in podman with `viewport: 390×844`, `deviceScaleFactor: 3`, `hasTouch: true` and `page.touchscreen.tap()` is close to Firefox's responsive mode. Record what each animation frame shows with a `requestAnimationFrame` probe (the screen's heading, visible covers still loading): its video is software-rendered and captures repaints part-done (black bands, a white box), which a real Firefox doesn't show.
 

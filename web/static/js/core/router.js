@@ -104,17 +104,19 @@ export function start(onRoute) {
   return handle;
 }
 
+// go moves with pushState, never location.hash: iPhone Safari reloads a
+// plain-HTTP page after a fragment navigation (see frontend.md).
 export function go(hash, { replace = false } = {}) {
+  const oldURL = location.href;
+  const url = location.pathname + location.search + hash;
   if (replace) {
     // A filter change on the same screen carries the entry's mark (one
     // replaceState per keystroke: Safari limits them); another screen is a
     // new navigation.
     const same = parse(hash).name === parse(location.hash).name;
-    history.replaceState({ ...history.state, page: same ? PAGE + hash : null }, '', location.pathname + location.search + hash);
-    dispatchEvent(new HashChangeEvent('hashchange'));
+    history.replaceState({ ...history.state, page: same ? PAGE + hash : null }, '', url);
   } else if (location.hash !== hash) {
-    location.hash = hash;
-  } else {
-    dispatchEvent(new HashChangeEvent('hashchange'));
+    history.pushState(null, '', url);
   }
+  dispatchEvent(new HashChangeEvent('hashchange', { oldURL, newURL: location.href }));
 }

@@ -135,7 +135,7 @@ function systemTab(d) {
         <dt>Last backup</dt><dd>${d.last_backup ? html`${ago(d.last_backup.at)} · ${bytes(d.last_backup.bytes)} · ${plural(d.last_backup.count, 'snapshot')} kept <span class="mono">${d.last_backup.name}</span>` : 'None yet (one is taken before each schema upgrade)'}</dd>
         <dt>App version</dt><dd class="mono">${d.asset_version}</dd></dl></section>
     <section class="section"><div class="section-head"><h2>IGDB</h2><span class="muted">${d.igdb_configured ? '4 requests a second, people first' : 'Not configured: search uses the local catalog'}</span></div>
-      ${d.igdb_lanes?.length ? html`<div class="table-scroll"><table class="admin-table"><thead><tr><th>Lane</th><th>Waiting</th><th>Requests</th><th>Average wait</th></tr></thead>
+      ${d.igdb_lanes?.length ? html`<div class="table-scroll" tabindex="0" role="region" aria-label="IGDB lanes"><table class="admin-table"><thead><tr><th>Lane</th><th>Waiting</th><th>Requests</th><th>Average wait</th></tr></thead>
         <tbody>${d.igdb_lanes.map(l => html`<tr><td>${l.lane}</td><td class="num">${l.queued}</td><td class="num">${l.requests}</td><td class="num">${l.avg_wait_seconds.toFixed(2)} s</td></tr>`)}</tbody></table></div>` : nothing}</section>
     <section class="section"><div class="section-head"><h2>Background jobs</h2></div>
       <div class="table-scroll"><table class="admin-table"><thead><tr><th>Job</th><th>Last run</th><th>Took</th><th>Next</th><th>Runs / failures</th><th>Last error</th><th></th></tr></thead>
@@ -146,9 +146,11 @@ function systemTab(d) {
           <td><button type="button" class="btn btn-sm btn-ghost" ?disabled=${j.running} @click=${() => call('post', `/api/v1/admin/jobs/${encodeURIComponent(j.name)}/run`, undefined, 'Started')}>${icon('play')}Run now</button></td></tr>`)}</tbody></table></div></section>`;
 }
 
+// A table with nothing focusable in it takes focus itself, so a keyboard
+// can scroll it when it's wider or taller than a phone's screen.
 function auditTab(d) {
   if (!d.items.length) return html`<p class="muted">No admin actions yet.</p>`;
-  return html`<div class="table-scroll"><table class="admin-table"><thead><tr><th>When</th><th>Who</th><th>What</th><th>Target</th><th>Details</th></tr></thead>
+  return html`<div class="table-scroll" tabindex="0" role="region" aria-label="Audit log"><table class="admin-table"><thead><tr><th>When</th><th>Who</th><th>What</th><th>Target</th><th>Details</th></tr></thead>
     <tbody>${d.items.map(e => html`<tr><td>${new Date(e.created_at).toLocaleString()}</td><td>@${e.actor}</td><td class="mono">${e.action}</td>
       <td class="mono">${e.target}</td><td class="mono">${e.data ? JSON.stringify(e.data) : ''}</td></tr>`)}</tbody></table></div>`;
 }

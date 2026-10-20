@@ -199,8 +199,7 @@ async function onRoute(next) {
   if (route !== next) return;
   navTab = tab(next.name, navTab);
   // No cross-fade (View Transitions): Firefox painted a black frame
-  // between the pages and Safari ghosted one over the other, and on iPhone
-  // the page loaded again right as one began.
+  // between the pages and Safari ghosted one over the other.
   draw();
   const key = next.name + JSON.stringify(next.query) + (next.id ?? '');
   const m = document.getElementById('main');
@@ -260,6 +259,16 @@ function onFirstTouch(e) {
   }).catch(() => {});
 }
 
+// followLink sends a tap on a #… link through go() (see there), except a
+// modified click or one a handler took.
+function followLink(e) {
+  if (e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  const a = e.target.closest?.('a[href^="#"]');
+  if (!a || a.target || a.hasAttribute('download')) return;
+  e.preventDefault();
+  go(a.getAttribute('href'));
+}
+
 function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
   navigator.serviceWorker.register(swURL).catch(() => {});
@@ -311,6 +320,7 @@ async function sendWithSession(method, path, opts) {
 let meRequest = null;
 
 async function boot() {
+  document.addEventListener('click', followLink); // first: index.html's frame has links
   registerServiceWorker();
   prepareToasts();
   const kv = await openKV();
