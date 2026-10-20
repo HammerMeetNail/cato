@@ -23,7 +23,7 @@ Read connections add `query_only(1)`; the writer adds `_txlock=immediate`.
 
 ## Migrations
 
-- Migrations live in `internal/db/migrate.go`, in the `migrations` slice: highest version first in the source, applied lowest first. They are currently at v23.
+- Migrations live in `internal/db/migrate.go`, in the `migrations` slice: highest version first in the source, applied lowest first. They are currently at v24.
 - Add a new `{Version: N, Up: "..."}` entry. **Never edit an applied migration.**
 - Before a schema upgrade, `serve` snapshots the database with `VACUUM INTO` into `CATO_BACKUP_DIR` (default `data/backups`, newest 5 kept).
 - Migration history:
@@ -33,6 +33,7 @@ Read connections add `query_only(1)`; the writer adds `_txlock=immediate`.
   - v21: people.
   - v22: reach (imports, push, passkeys…).
   - v23: goals.
+  - v24: `idx_games_version_parent` leaves out base games (`WHERE version_parent != 0`). A `version_parent = ?` lookup adds `AND version_parent != 0` to use it.
 
 ## The library journal (v18)
 

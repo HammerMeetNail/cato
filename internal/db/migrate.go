@@ -13,6 +13,17 @@ type Migration struct {
 
 var migrations = []Migration{
 	{
+		Version: 24,
+		// version_parent is 0 for 99% of games, but ANALYZE samples at most
+		// analysis_limit rows per index and recorded "= 0" as matching 4 of
+		// 312k, so SQLite started joins by walking every base game (the game
+		// page's series lookup took ~470 ms on the NAS). The index only
+		// serves "editions of game X"; without the zeros, no "= 0" filter
+		// can use it.
+		Up: `DROP INDEX IF EXISTS idx_games_version_parent;
+		     CREATE INDEX idx_games_version_parent ON games(version_parent) WHERE version_parent != 0;`,
+	},
+	{
 		Version: 23,
 		// Goals (plan §10): "Finish 24 games in 2026", "Clear 10 from the
 		// backlog", "Play 5 games from before 2000", "Play 200 hours".

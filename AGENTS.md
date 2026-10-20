@@ -26,7 +26,7 @@ Keep generated logs, traces and scratch scripts outside the repo.
 | Path | What |
 |---|---|
 | `cmd/cato/` | `run(args)`: `serve` (default), `dev-cert`, `import-games`, `backfill …`; registers jobs |
-| `internal/db/` | SQLite (two pools), migrations (v23), pre-upgrade snapshots |
+| `internal/db/` | SQLite (two pools), migrations (v24), pre-upgrade snapshots |
 | `internal/library/` | The library: items, journal (playthroughs, sessions), undo, index, bulk, stats, prefs, goals, Year in Review, import batches |
 | `internal/catalog/` | Games, search, IGDB limiter (two lanes), details/backfills/sync jobs, moods |
 | `internal/discover/` | Discover shelves, Up Next, estimates at your pace |

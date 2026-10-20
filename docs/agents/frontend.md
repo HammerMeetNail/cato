@@ -35,10 +35,12 @@ The frontend is vanilla ES modules with **no build step**. Templates are lit-htm
 - **No flicker between screens:**
   - One second after `load`, `features/idle.js` prefetches Library, Discover, You and the game page (through `loadScreen`), so a first visit doesn't wait for code.
   - A screen whose code is still loading keeps the current screen for 200 ms before drawing the loading grid.
-  - The shell keeps the last click target in `app.tapped`. The game page reads the tapped tile's name and cover from it and draws them at once while its details load.
+  - A screen can export `prepare(route)`: the shell starts it before drawing and draws nothing while it runs, so the current screen stays up. The game page's `prepare` loads the details and the social section and settles when both arrive or after 250 ms, so a quick answer draws the page whole instead of the title first with the facts, platforms and sections popping in under it.
+  - Pressing on a game link (`pointerdown`, from `features/idle.js`) starts that game's request before the tap ends; the page uses it once.
+  - Past the 250 ms, the game page draws what it has: the copy from an earlier visit this session (the last 50 are kept), else the tapped tile. The shell keeps the last click target in `app.tapped`, and the game page reads the tile's name and cover from it.
 - **Swipes are reported too.** Each sideways gesture of 40 px or more posts `/api/v1/diagnostics/swipe` with what came of it (`back`, `forward`, `too short`, `cancelled by the browser`, or `ignored:` and why), logged as `swipe gesture`; at most 20 a page.
 - **Unexpected reloads are reported.** `features/idle.js` notes each in-app navigation in `sessionStorage`. If the tab's next page starts within 5 s of one, it posts `/api/v1/diagnostics/reload`, and the server logs `unexpected reload` with the user agent. Read those log lines first when someone reports a flicker or lost state on a device you can't test.
-- **The initial JS budget is nearly full** (59.9 of 60 KB after these changes). New shell code goes into `features/idle.js` or another lazy module.
+- **The initial JS budget is nearly full** (59.2 of 60 KB). New shell code goes into `features/idle.js` or another lazy module.
 
 ## Data and writes
 

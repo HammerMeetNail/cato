@@ -121,6 +121,50 @@ test('a game opened from a tile shows its name before the details load', async (
   await expect(page.getByText('Not in your library yet.')).toBeVisible();
 });
 
+// When the details come back quickly (a NAS on Wi-Fi), the game page draws
+// whole: the current screen stays up until they arrive, instead of the
+// title first and the facts, platforms and sections popping in under it.
+test('a game opened from a tile draws whole when its details are quick', async ({ page }) => {
+  await account(page);
+  await gotoApp(page, '#discover/search?q=astro');
+  const tile = page.locator(`#main a[href="#game/${G.astro}"]`).first();
+  await expect(tile).toBeVisible();
+  await page.route(new RegExp(`/api/v1/games/${G.astro}(/social)?$`), async route => {
+    await new Promise(r => setTimeout(r, 120));
+    await route.continue();
+  });
+  await page.evaluate(() => {
+    (window as any).__partial = 0;
+    new MutationObserver(() => {
+      const hero = document.querySelector('#main .game-hero');
+      if (hero?.querySelector('h1') && (!hero.querySelector('.facts') || !document.getElementById('reviews-title'))) (window as any).__partial++;
+    }).observe(document.getElementById('app')!, { childList: true, subtree: true, characterData: true });
+  });
+  await tile.click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Astro Bot' })).toBeVisible();
+  await expect(page.getByText('Not in your library yet.')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Reviews' })).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__partial), 'frames with the title but not the details').toBe(0);
+});
+
+// Pressing on a game tile starts the game's request before the tap ends,
+// and the page uses that answer instead of asking again.
+test('pressing on a game tile fetches its details once, before the click', async ({ page }) => {
+  await account(page);
+  await gotoApp(page, '#discover/search?q=astro');
+  await expect.poll(() => page.evaluate(() => performance.getEntriesByType('resource').some(r => r.name.includes('/js/features/you.js'))),
+    { message: 'the shell is idle' }).toBe(true);
+  const tile = page.locator(`#main a[href="#game/${G.astro}"]`).first();
+  const fetches: string[] = [];
+  page.on('request', r => { if (new RegExp(`/api/v1/games/${G.astro}$`).test(r.url())) fetches.push(r.url()); });
+  const pressed = page.waitForRequest(new RegExp(`/api/v1/games/${G.astro}$`));
+  await tile.dispatchEvent('pointerdown');
+  await pressed;
+  await tile.click();
+  await expect(page.getByText('Not in your library yet.')).toBeVisible();
+  expect(fetches).toHaveLength(1);
+});
+
 // A page that starts again right after one of its own navigations was
 // reloaded under the app (on an iPhone, for one): it reports that, so the
 // server log says why. A normal start reports nothing.

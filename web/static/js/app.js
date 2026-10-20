@@ -35,10 +35,11 @@ function viewTransition(fn) {
 }
 
 // Screens other than Home load on first visit. Each module exports a
-// view(route) and optionally enter(route) (data loading) and init(app).
+// view(route) and optionally enter(route) (data loading), init(app), and
+// prepare(route): data loading the shell waits on before drawing the screen.
 const SCREENS = {
   library: () => import('./features/library.js').then(m => ({ view: m.libraryView })),
-  game: () => import('./features/game.js').then(m => ({ view: m.gameView, enter: m.enterGame, init: () => m.watchGameWrites(app.store) })),
+  game: () => import('./features/game.js').then(m => ({ view: m.gameView, prepare: m.enterGame, init: () => m.watchGameWrites(app.store) })),
   discover: () => import('./features/discover.js').then(m => ({ view: m.discoverView, enter: m.enterDiscover })),
   'discover/search': () => import('./features/discover.js').then(m => ({ view: m.searchView, enter: r => m.enterSearch(r) })),
   you: () => import('./features/you.js').then(m => ({ view: m.youView })),
@@ -129,6 +130,7 @@ function shell(content) {
 }
 
 function draw() {
+  if (held) return;
   const screen = screenFor(route);
   let content;
   if (!screen) content = html`<div class="page">${skeletonTiles(6)}</div>`;
@@ -154,6 +156,7 @@ app.redraw = () => {
   queueMicrotask(() => { redrawQueued = false; draw(); });
 };
 let redrawQueued = false;
+let held = null;
 
 async function onRoute(next) {
   const main = document.getElementById('main');
@@ -187,6 +190,11 @@ async function onRoute(next) {
     }
     if (route !== next) return;
   }
+  // Nothing is drawn while a screen prepares: the current one stays up.
+  held = next;
+  await screenFor(next)?.prepare?.(next);
+  if (held === next) held = null;
+  if (route !== next) return;
   // Opening a game page cross-fades (View Transitions, where supported and
   // motion is welcome).
   if (next.name === 'game' && !firstRoute) viewTransition(draw);

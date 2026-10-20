@@ -21,15 +21,42 @@ import { gameSocialSection, loadGameSocial, addToList } from './people.js';
 
 const state = { id: null, data: null, error: null, loading: false, aboutOpen: false, seq: 0 };
 
-export async function enterGame(route) {
+// Game pages seen this session: going back to one draws it from here if
+// the server is slow to answer.
+const seen = new Map();
+
+// The shell calls this before drawing the page and keeps the current screen
+// until it settles, so a quick answer draws the page whole instead of the
+// title first with the facts, platforms and sections popping in under it.
+// After HOLD_MS it draws what it has: the seen copy, else the tapped tile.
+const HOLD_MS = 250;
+export function enterGame(route) {
   if (state.id !== route.id) {
     state.id = route.id;
-    state.data = null;
+    state.data = seen.get(route.id) ?? null;
     state.error = null;
     state.aboutOpen = false;
   }
-  loadGameSocial(route.id);
-  await reload();
+  const loads = Promise.all([loadGameSocial(route.id), reload()]);
+  return Promise.race([loads, new Promise(r => setTimeout(r, HOLD_MS))]);
+}
+
+// A touch or click on a game link starts its request before the tap ends
+// (features/idle.js); the page's own load then picks it up, once. A press
+// that arrives after that (a click's own pointerdown can) asks nothing.
+let prefetched = null;
+export function prefetchGame(id) {
+  if (prefetched?.id === id && Date.now() - prefetched.at < 2000) return;
+  const req = api.get(`/api/v1/games/${id}`);
+  req.catch(() => {});
+  prefetched = { id, at: Date.now(), req };
+}
+
+function fetchGame(id) {
+  const p = prefetched;
+  if (p?.id !== id || p.used || Date.now() - p.at >= 2000) return api.get(`/api/v1/games/${id}`);
+  p.used = true;
+  return p.req;
 }
 
 async function reload() {
@@ -38,7 +65,10 @@ async function reload() {
   state.loading = true;
   app.redraw();
   try {
-    const data = await api.get(`/api/v1/games/${id}`);
+    const data = await fetchGame(id);
+    seen.delete(id);
+    seen.set(id, data);
+    if (seen.size > 50) seen.delete(seen.keys().next().value);
     if (seq !== state.seq) return;
     state.data = data;
     state.error = null;
@@ -65,11 +95,13 @@ function tappedTile(id) {
   return { id, name, cover: img?.getAttribute('src') || '' };
 }
 
-// Writes made from this page refresh it once the server confirms.
+// Writes made from this page refresh it once the server confirms; a write
+// from elsewhere drops the game's seen copy.
 export function watchGameWrites(store) {
   store.addEventListener('sent', ev => {
     const op = ev.detail.op;
     const touched = op.effect?.id ?? op.effect?.entry?.id ?? op.effect?.ids?.[0];
+    for (const id of op.effect?.ids ?? [touched]) seen.delete(id);
     if (state.id && touched === state.id && location.hash.startsWith('#game/')) reload();
   });
 }

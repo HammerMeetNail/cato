@@ -120,6 +120,19 @@ func coverOf(local, remote string) string {
 	return remote
 }
 
+// seriesSQL lists every local game in the same collections as a game, by
+// release date.
+const seriesSQL = `SELECT gs.series_id, gs.kind, gs.name, g.id, g.name, g.local_cover_path, g.cover_url, g.first_release_date
+		FROM game_series mine
+		JOIN game_series gs ON gs.kind = mine.kind AND gs.series_id = mine.series_id
+		JOIN games g ON g.id = gs.game_id
+		WHERE mine.game_id = ? AND g.version_parent = 0
+		ORDER BY gs.kind, gs.series_id, CASE WHEN g.first_release_date = 0 THEN 1 ELSE 0 END, g.first_release_date`
+
+// editionsSQL lists a game's editions (IGDB version_parent). The
+// "!= 0" lets it use idx_games_version_parent, which leaves out base games.
+const editionsSQL = `SELECT id, name, local_cover_path, cover_url, first_release_date FROM games WHERE version_parent = ? AND version_parent != 0 ORDER BY first_release_date LIMIT 20`
+
 // GameExtras loads the rich data for a game page.
 func (s *Store) GameExtras(ctx context.Context, id int64) (*Extras, error) {
 	x := &Extras{Genres: []string{}, Themes: []string{}, Modes: []string{}, Perspectives: []string{}, Developers: []string{},
@@ -175,12 +188,7 @@ func (s *Store) GameExtras(ctx context.Context, id int64) (*Extras, error) {
 	rows.Close()
 
 	// Series: every local game in the same collection, by release date.
-	rows, err = s.db.QueryContext(ctx, `SELECT gs.series_id, gs.kind, gs.name, g.id, g.name, g.local_cover_path, g.cover_url, g.first_release_date
-		FROM game_series mine
-		JOIN game_series gs ON gs.kind = mine.kind AND gs.series_id = mine.series_id
-		JOIN games g ON g.id = gs.game_id
-		WHERE mine.game_id = ? AND g.version_parent = 0
-		ORDER BY gs.kind, gs.series_id, CASE WHEN g.first_release_date = 0 THEN 1 ELSE 0 END, g.first_release_date`, id)
+	rows, err = s.db.QueryContext(ctx, seriesSQL, id)
 	if err != nil {
 		return nil, err
 	}
@@ -255,7 +263,7 @@ func (s *Store) GameExtras(ctx context.Context, id int64) (*Extras, error) {
 			x.BaseGame = &b
 		}
 	}
-	rows, err = s.db.QueryContext(ctx, `SELECT id, name, local_cover_path, cover_url, first_release_date FROM games WHERE version_parent = ? ORDER BY first_release_date LIMIT 20`, id)
+	rows, err = s.db.QueryContext(ctx, editionsSQL, id)
 	if err != nil {
 		return nil, err
 	}

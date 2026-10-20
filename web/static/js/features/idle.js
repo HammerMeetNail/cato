@@ -2,7 +2,8 @@
 // none of it counts against the initial load.
 //
 // Prefetch: the tabs and the game page load now, so a first visit draws
-// at once instead of flashing a placeholder while their code loads.
+// at once instead of flashing a placeholder while their code loads. Pressing
+// on a game link starts that game's request before the tap ends.
 //
 // Unexpected reloads: each in-app navigation is noted for this tab, with
 // whether the page then closed cleanly. A page that starts again within 5 s
@@ -24,6 +25,10 @@ export function start(loadScreen) {
   if (!navigator.connection?.saveData) {
     for (const name of ['library', 'discover', 'you', 'game']) loadScreen(name).catch(() => {});
   }
+  addEventListener('pointerdown', e => {
+    const id = Number(e.target.closest?.('a[href^="#game/"]')?.getAttribute('href').slice(6));
+    if (id) import('./game.js').then(m => m.prefetchGame(id)).catch(() => {});
+  }, { capture: true, passive: true });
 
   // The last navigation the previous page made (recording starts below,
   // so this page hasn't written one yet).
