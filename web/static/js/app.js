@@ -156,7 +156,9 @@ app.redraw = () => {
   queueMicrotask(() => { redrawQueued = false; draw(); });
 };
 let redrawQueued = false;
-let held = null;
+// Nothing is drawn until the first route is known: start-up answers (the
+// account, Home's goal rings) would otherwise draw Home under a game link.
+let held = 1;
 
 async function onRoute(next) {
   const main = document.getElementById('main');

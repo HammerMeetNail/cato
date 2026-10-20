@@ -28,6 +28,7 @@ The frontend is vanilla ES modules with **no build step**. Templates are lit-htm
 - **Starting and reloading without a blank page:**
   - `index.html` draws the app's frame (header with search box, bottom nav with the same tabs) before any script runs; a test keeps its tabs equal to the app's.
   - `boot()` starts from the copy on the device (`meta/me` with user, prefs and config in IndexedDB) and draws at once; `/api/v1/me` replaces it a moment later. Writes made before it answers wait for the CSRF token (`awaitCSRF`).
+  - The shell draws nothing until the router has its first route: until then `index.html`'s frame stays up. Start-up answers (`/api/v1/me`, Home's goal rings) used to draw Home before a game link was routed, and Home's greeting flashed on phones.
   - Not after the login page: `login.js` sets `cato-signed-in` in `localStorage`, and the next start waits for the server, since whoever signed in may be someone else. A different user from the server clears the device copy and reloads.
   - Home's last answer is kept as `meta/home:<user>` and loaded before the first draw (`primeHome`), so the streak line and sections don't arrive one by one and push the page down.
   - The game hero is top-aligned: the title drawn from the local copy or the tapped tile stays put when the facts arrive.

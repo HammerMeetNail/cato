@@ -147,6 +147,53 @@ test('a game opened from a tile draws whole when its details are quick', async (
   expect(await page.evaluate(() => (window as any).__partial), 'frames with the title but not the details').toBe(0);
 });
 
+// A reload on a game page never draws Home first: the app used to draw
+// whatever answered during start-up (the account, Home's goal rings)
+// before it read the address, and Home's greeting flashed on phones.
+test('a reload on a game page never shows Home first', async ({ page }) => {
+  const acc = await account(page);
+  await put(acc, G.hades, { status: 'playing' });
+  await gotoApp(page, '#home');
+  await expect(page.locator('.now-card').filter({ hasText: 'Hades' })).toBeVisible();
+  await page.goto(`/#game/${G.astro}`);
+  await expect(page.getByText('Not in your library yet.')).toBeVisible();
+  await page.addInitScript(() => {
+    (window as any).__home = 0;
+    new MutationObserver(() => {
+      if (document.querySelector('#app .greeting')) (window as any).__home++;
+    }).observe(document, { childList: true, subtree: true });
+  });
+  for (let i = 0; i < 5; i++) {
+    await page.reload();
+    await expect(page.getByText('Not in your library yet.')).toBeVisible();
+    expect(await page.evaluate(() => (window as any).__home), `reload ${i + 1} drew Home`).toBe(0);
+  }
+});
+
+// Opening a game from another screen goes straight from that screen to the
+// game page.
+test('opening a game from Library or search never shows Home', async ({ page }) => {
+  const acc = await account(page);
+  await put(acc, G.hades, { status: 'playing' });
+  await gotoApp(page, '#home');
+  await expect(page.locator('.now-card').filter({ hasText: 'Hades' })).toBeVisible();
+  await page.evaluate(() => {
+    (window as any).__home = 0;
+    new MutationObserver(() => {
+      if (location.hash.startsWith('#game/') && document.querySelector('#app .greeting')) (window as any).__home++;
+    }).observe(document, { childList: true, subtree: true });
+  });
+  for (const [from, id, name] of [['#library', G.hades, 'Hades'], ['#discover/search?q=astro', G.astro, 'Astro Bot']] as const) {
+    await page.evaluate(h => { location.hash = h; }, from);
+    const tile = page.locator(`#main a[href="#game/${id}"]`).first();
+    await expect(tile).toBeVisible();
+    await tile.click();
+    await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Reviews' })).toBeVisible();
+  }
+  expect(await page.evaluate(() => (window as any).__home), 'frames with Home on a game link').toBe(0);
+});
+
 // Pressing on a game tile starts the game's request before the tap ends,
 // and the page uses that answer instead of asking again.
 test('pressing on a game tile fetches its details once, before the click', async ({ page }) => {
