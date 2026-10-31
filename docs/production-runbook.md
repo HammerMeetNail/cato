@@ -122,7 +122,7 @@ environment if deploys should wait for approval.
 | `SSH_KNOWN_HOSTS` | `production` secret | `ssh.yearofbingo.com` followed by the host's `ssh-ed25519` public key |
 | `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` | `production` secrets | Only if an Access policy guards the SSH hostname |
 | `CATO_BASE_URL` | `production` variable | `https://cato.localbytellc.com` (required) |
-| `CATO_TRUSTED_PROXIES` | `production` variable | `127.0.0.1,5.161.57.131`: rootless podman (pasta) shows cloudflared's connections as the host's address |
+| `CATO_TRUSTED_PROXIES` | `production` variable | `127.0.0.1,10.89.0.0/16`: rootless podman forwards cloudflared's connections from inside the compose network (podman's 10.89.x.0/24 subnets); the port only listens on loopback |
 | `CATO_SIGNUP`, `CATO_LOG_FORMAT`, `CATO_WIKIDATA_LINKS`, `CATO_PUSH_CONTACT`, `CATO_SMTP_HOST`, `CATO_SMTP_PORT`, `CATO_SMTP_USER`, `CATO_SMTP_FROM` | `production` variables | Optional settings (`.env.example`) |
 | `TWITCH_OAUTH_ID`, `TWITCH_OAUTH_SECRET` | `production` secrets | IGDB (search beyond the local catalog) |
 | `GOOGLE_KEY`, `GOOGLE_SECRET`, `STEAM_WEB_API_KEY`, `ITAD_API_KEY`, `UPCITEMDB_KEY`, `CATO_SMTP_PASSWORD`, `CATO_METRICS_TOKEN` | `production` secrets | Optional integrations; unset ones are left out |

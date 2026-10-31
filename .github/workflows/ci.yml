@@ -16,28 +16,49 @@ jobs:
   release:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
     env:
       CATO_E2E_RESULTS: /tmp/cato-e2e-results
       # Shared runners are slower than a dev machine: double the timing
       # budgets of the production-shaped performance test.
       CATO_PERF_SLACK: '2'
     steps:
+      # A tag on a commit that already passed on main reuses that run: the
+      # checks are skipped, while the image, scan, signature and deploy run.
+      - name: Reuse a green main run of this commit
+        id: reuse
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&branch=main&event=push&status=success" --jq '.total_count')
+          if [ "$runs" -gt 0 ]; then
+            echo "green=true" >> "$GITHUB_OUTPUT"
+            echo "$GITHUB_SHA already passed on main; skipping the checks."
+          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: steps.reuse.outputs.green != 'true'
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        if: steps.reuse.outputs.green != 'true'
         with:
           go-version: '1.26.10'
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.reuse.outputs.green != 'true'
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: e2e/package-lock.json
       - name: Install browser system dependencies
+        if: steps.reuse.outputs.green != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y sqlite3
           npm --prefix e2e ci
           cd e2e && npx playwright install --with-deps chromium webkit firefox
       - name: Validate release
+        if: steps.reuse.outputs.green != 'true'
         run: make release-check
       - name: Browser failure artifacts
         if: failure()
