@@ -58,19 +58,31 @@ ENV_KEYS=(CATO_BASE_URL CATO_TRUSTED_PROXIES CATO_SIGNUP CATO_LOG_FORMAT CATO_ME
   CATO_WIKIDATA_LINKS CATO_PUSH_CONTACT GOOGLE_KEY GOOGLE_SECRET TWITCH_OAUTH_ID TWITCH_OAUTH_SECRET
   STEAM_WEB_API_KEY ITAD_API_KEY UPCITEMDB_KEY
   CATO_SMTP_HOST CATO_SMTP_PORT CATO_SMTP_USER CATO_SMTP_PASSWORD CATO_SMTP_FROM)
-for key in "${ENV_KEYS[@]}"; do
-  value=${!key-}
-  [[ -n "$value" ]] || continue
-  [[ "$value" != *$'\n'* && "$value" != *$'\r'* && "$value" != *"'"* ]] || reject "$key"
-  printf "%s='%s'\n" "$key" "$value"
-done > "$ssh_dir/app.env"
+# The nightly backup's settings go to their own backup.env, read only by
+# scripts/backup.sh and verify-backup.sh: the app container never sees them.
+BACKUP_KEYS=(BACKUP_ENCRYPTION_KEY R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_BUCKET
+  RESEND_API_KEY EMAIL_FROM_ADDRESS BACKUP_NOTIFY_EMAILS)
+render() {
+  local key value
+  for key in "$@"; do
+    value=${!key-}
+    [[ -n "$value" ]] || continue
+    [[ "$value" != *$'\n'* && "$value" != *$'\r'* && "$value" != *"'"* ]] || reject "$key"
+    printf "%s='%s'\n" "$key" "$value"
+  done
+}
+render "${ENV_KEYS[@]}" > "$ssh_dir/app.env"
+render "${BACKUP_KEYS[@]}" > "$ssh_dir/backup.env"
 ssh -F "$ssh_dir/config" cato-deploy "umask 077 && cat > '$DEPLOY_PATH/.env.next'" < "$ssh_dir/app.env"
+ssh -F "$ssh_dir/config" cato-deploy "umask 077 && cat > '$DEPLOY_PATH/backup.env.next'" < "$ssh_dir/backup.env"
 
 # Only validated non-secret arguments cross the shell boundary.
 compose_base64=$(base64 < "$repo_root/compose.server.yaml" | tr -d '\n')
 database_base64=$(base64 < "$repo_root/scripts/database.py" | tr -d '\n')
+# The backup timers' scripts (scripts/ on the host).
+scripts_base64=$(tar -C "$repo_root/scripts" -cf - backup.sh verify-backup.sh notify-email.sh database.py | base64 | tr -d '\n')
 ssh -F "$ssh_dir/config" cato-deploy \
-  "bash -s -- '$DEPLOY_PATH' '$IMAGE_REPOSITORY@$IMAGE_DIGEST' '$compose_base64' '$database_base64' '$RELEASE_TAG' '$RELEASE_COMMIT'" <<'REMOTE'
+  "bash -s -- '$DEPLOY_PATH' '$IMAGE_REPOSITORY@$IMAGE_DIGEST' '$compose_base64' '$database_base64' '$RELEASE_TAG' '$RELEASE_COMMIT' '$scripts_base64'" <<'REMOTE'
 set -euo pipefail
 umask 077
 cd "$1"
@@ -79,6 +91,7 @@ compose_base64=$3
 database_base64=$4
 release_tag=$5
 release_commit=$6
+scripts_base64=$7
 health=http://127.0.0.1:8083/healthz
 for executable in podman podman-compose python3 curl flock base64; do command -v "$executable" >/dev/null; done
 # Serialize both workflow and manual invocations on this host.
@@ -163,6 +176,10 @@ state attempted
 mv "$stage/compose.yaml" compose.yaml
 mv "$stage/release.env" release.env
 mv .env.next .env
+mv backup.env.next backup.env
+mkdir -p scripts
+printf '%s' "$scripts_base64" | base64 -d | tar -C scripts -xf -
+chmod 0700 scripts/backup.sh scripts/verify-backup.sh
 # No 'down', no volume deletion.
 podman-compose -f compose.yaml up -d --force-recreate
 for _ in $(seq 1 60); do

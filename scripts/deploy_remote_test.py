@@ -29,7 +29,8 @@ if name == 'ssh':
     server = str(pathlib.Path(os.environ['TEST_SERVER']).resolve())
     if args[3].startswith('umask 077 && cat > '):
         # The rendered settings arrive as data on stdin, never in the command.
-        assert args[3] == "umask 077 && cat > '" + os.environ['TEST_SERVER'] + "/.env.next'"
+        assert args[3] in ("umask 077 && cat > '" + os.environ['TEST_SERVER'] + "/.env.next'",
+                           "umask 077 && cat > '" + os.environ['TEST_SERVER'] + "/backup.env.next'")
         sys.exit(subprocess.run(['sh', '-c', args[3]], input=sys.stdin.read(), text=True).returncode)
     remote = shlex.split(args[3])
     assert remote[:3] == ['bash', '-s', '--']
@@ -92,6 +93,7 @@ class RemoteDeployTests(unittest.TestCase):
             (self.bin / command).symlink_to(stub)
         self.key = "dummy-private-key-no-command-should-contain-this"
         self.secret = "google-secret-$HOME-no-command-should-contain-this"
+        self.backup_key = "backup-key-no-command-should-contain-this"
         self.env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}",
                         DEPLOY_HOST="host.invalid", DEPLOY_USER="deploy",
                         DEPLOY_PATH=str(self.server), DEPLOY_PORT="22",
@@ -100,6 +102,7 @@ class RemoteDeployTests(unittest.TestCase):
                         DEPLOY_CLOUDFLARE_ACCESS="false", RELEASE_TAG="v0.2.0", RELEASE_COMMIT="b" * 40, TEST_EVENTS=str(self.events),
                         CATO_BASE_URL="https://cato.example.test", CATO_TRUSTED_PROXIES="127.0.0.1/8",
                         GOOGLE_SECRET=self.secret, STEAM_WEB_API_KEY="",
+                        BACKUP_ENCRYPTION_KEY=self.backup_key, R2_ACCOUNT_ID="acct", R2_BUCKET="cato-backups",
                         TEST_SERVER=str(self.server), TEST_SQLITE=self.sqlite)
 
     def deploy(self, **overrides):
@@ -108,8 +111,9 @@ class RemoteDeployTests(unittest.TestCase):
                                 text=True, capture_output=True, timeout=20)
         events = self.events.read_text() if self.events.exists() else ""
         self.assertNotIn(self.key, result.stdout + result.stderr + events)
-        self.assertNotIn(self.secret, result.stdout + result.stderr + "".join(
-            json.dumps(json.loads(line)["args"]) for line in events.splitlines()))
+        for secret in (self.secret, self.backup_key):
+            self.assertNotIn(secret, result.stdout + result.stderr + "".join(
+                json.dumps(json.loads(line)["args"]) for line in events.splitlines()))
         return result, [json.loads(line) for line in events.splitlines()]
 
     def database(self):
@@ -145,6 +149,12 @@ class RemoteDeployTests(unittest.TestCase):
         self.assertEqual(events[up]['env'], rendered)
         self.assertEqual((self.server / ".env").read_text(), rendered)
         self.assertEqual(next((self.server / "backups").glob("env-*")).read_text(), self.original_env)
+        # The backup's settings stay out of the app's .env, in their own file.
+        self.assertEqual((self.server / "backup.env").read_text(),
+                         f"BACKUP_ENCRYPTION_KEY='{self.backup_key}'\nR2_ACCOUNT_ID='acct'\nR2_BUCKET='cato-backups'\n")
+        self.assertNotIn(self.backup_key, rendered)
+        for script in ("backup.sh", "verify-backup.sh", "notify-email.sh", "database.py"):
+            self.assertEqual((self.server / "scripts" / script).read_bytes(), (REPOSITORY / "scripts" / script).read_bytes())
         self.assertEqual(next((self.server / "backups").glob("compose-*.yaml")).read_text(), "old compose\n")
         self.assertEqual(next((self.server / "backups").glob("release-*.env")).read_text(), "old digest\n")
         image = f"{self.env['IMAGE_REPOSITORY']}@{self.env['IMAGE_DIGEST']}"

@@ -239,4 +239,13 @@ jobs:
           STEAM_WEB_API_KEY: ${{ secrets.STEAM_WEB_API_KEY }}
           ITAD_API_KEY: ${{ secrets.ITAD_API_KEY }}
           UPCITEMDB_KEY: ${{ secrets.UPCITEMDB_KEY }}
+          # The nightly backup's backup.env (scripts/backup.sh).
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          EMAIL_FROM_ADDRESS: ${{ vars.EMAIL_FROM_ADDRESS }}
+          BACKUP_NOTIFY_EMAILS: ${{ vars.BACKUP_NOTIFY_EMAILS }}
         run: bash scripts/deploy-remote.sh

@@ -126,6 +126,11 @@ environment if deploys should wait for approval.
 | `CATO_SIGNUP`, `CATO_LOG_FORMAT`, `CATO_WIKIDATA_LINKS`, `CATO_PUSH_CONTACT`, `CATO_SMTP_HOST`, `CATO_SMTP_PORT`, `CATO_SMTP_USER`, `CATO_SMTP_FROM` | `production` variables | Optional settings (`.env.example`) |
 | `TWITCH_OAUTH_ID`, `TWITCH_OAUTH_SECRET` | `production` secrets | IGDB (search beyond the local catalog) |
 | `GOOGLE_KEY`, `GOOGLE_SECRET`, `STEAM_WEB_API_KEY`, `ITAD_API_KEY`, `UPCITEMDB_KEY`, `CATO_SMTP_PASSWORD`, `CATO_METRICS_TOKEN` | `production` secrets | Optional integrations; unset ones are left out |
+| `BACKUP_ENCRYPTION_KEY` | Repository secret | gpg passphrase for the nightly backups (`openssl rand -base64 32`); keep a copy off the server, or the backups can't be read |
+| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Repository secrets | An R2 API token limited to the backup bucket |
+| `RESEND_API_KEY` | Repository secret | Failure emails from the backup timers |
+| `R2_BUCKET` | `production` variable | Backup bucket, default `cato-backups`; its lifecycle rule sets retention |
+| `EMAIL_FROM_ADDRESS`, `BACKUP_NOTIFY_EMAILS` | `production` variables | Sender (a Resend-verified domain) and comma-separated recipients of failure emails |
 | `GITLEAKS_LICENSE` | Optional repository secret | If required by Gitleaks for the repository owner |
 
 **The host's `.env` comes from these settings.** `scripts/deploy-remote.sh`
@@ -180,7 +185,30 @@ integrity, successful downloads, or third-party service availability.
 
 ## Backups
 
-`make db-backup` uses Python's SQLite backup API, validates integrity and foreign
+**Production (yob): nightly, encrypted, off the server.** `scripts/backup.sh` (the
+`cato-backup.timer`) takes a verified snapshot of `data/cato.db` with
+`scripts/database.py`, compresses it with gzip, encrypts it with gpg (AES-256,
+`BACKUP_ENCRYPTION_KEY`) and uploads it to R2 as `cato_<UTC time>.db.gz.gpg`; it
+also keeps only the newest three pre-deploy snapshots in `backups/`.
+`scripts/verify-backup.sh` (the `cato-verify-backup.timer`, an hour later)
+downloads the newest one and checks it is under 26 hours old, decrypts, passes
+integrity and foreign key checks, and holds accounts and library items. Either
+failing emails `BACKUP_NOTIFY_EMAILS`. Covers and avatars aren't backed up.
+Retention is the bucket's lifecycle rule. Each deploy installs the scripts and
+writes their settings to `/opt/cato/backup.env` (mode 0600, not the app's `.env`).
+
+The timers are installed once on yob, by the operator:
+
+```sh
+ssh -t yob 'for job in backup:"Cato database backup" verify-backup:"Cato backup verification"; do n=${job%%:*}; d=${job#*:}; printf "%s\n" "[Unit]" "Description=$d" "After=network-online.target cato.service" "Wants=network-online.target" "" "[Service]" "Type=oneshot" "User=deploy" "WorkingDirectory=/opt/cato" "ExecStart=/opt/cato/scripts/$n.sh" | sudo tee /etc/systemd/system/cato-$n.service >/dev/null; done; printf "%s\n" "[Unit]" "Description=Nightly Cato backup" "" "[Timer]" "OnCalendar=*-*-* 03:20:00" "RandomizedDelaySec=600" "Persistent=true" "" "[Install]" "WantedBy=timers.target" | sudo tee /etc/systemd/system/cato-backup.timer >/dev/null; printf "%s\n" "[Unit]" "Description=Daily Cato backup verification" "" "[Timer]" "OnCalendar=*-*-* 04:20:00" "RandomizedDelaySec=600" "Persistent=true" "" "[Install]" "WantedBy=timers.target" | sudo tee /etc/systemd/system/cato-verify-backup.timer >/dev/null; sudo systemctl daemon-reload && sudo systemctl enable --now cato-backup.timer cato-verify-backup.timer && systemctl list-timers --no-pager | grep cato'
+```
+
+To restore one: download it (`rclone copyto` with the same R2 settings, or the
+Cloudflare dashboard), then
+`gpg --decrypt cato_<time>.db.gz.gpg | gunzip > cato-restore.db` with the key,
+and follow "Restore and rollback" below with that file.
+
+**Anywhere:** `make db-backup` uses Python's SQLite backup API, validates integrity and foreign
 keys, and writes a unique standalone mode-0600 snapshot in `backup/`. It is safe
 while Cato is running. Override `DB_PATH` and `BACKUP_DIR` as needed. The source
 must exist; an empty or unrelated database is rejected. Backups contain personal

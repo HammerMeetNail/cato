@@ -40,6 +40,7 @@ test-js:
 
 test-backup:
 	python3 -B scripts/database_test.py
+	python3 -B scripts/backup_test.py
 
 test-release:
 	python3 -B scripts/deploy_test.py
