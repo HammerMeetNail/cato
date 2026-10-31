@@ -1,4 +1,4 @@
-FROM alpine:3.21
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates
 COPY cato /usr/local/bin/cato
 COPY web/static /app/web/static
