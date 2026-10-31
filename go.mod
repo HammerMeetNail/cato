@@ -6,9 +6,9 @@ toolchain go1.26.10
 
 require (
 	github.com/google/uuid v1.6.0
-	golang.org/x/crypto v0.53.0
+	golang.org/x/crypto v0.56.0
 	golang.org/x/oauth2 v0.36.0
-	golang.org/x/text v0.39.0
+	golang.org/x/text v0.41.0
 	modernc.org/sqlite v1.60.1
 )
 
