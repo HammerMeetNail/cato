@@ -83,14 +83,17 @@ export function tab(name, prev = '') {
   return '';
 }
 
-// Each history entry is marked with this page load's id and its hash when
-// it's first routed. One that has the mark already is back/forward to a
-// screen this page drew (route.revisit: its data is still in memory, so it
-// draws at once); any other entry is a new navigation.
+// Entries are marked with this page load's id when first routed: a marked
+// one is back/forward to a screen still in memory (route.revisit).
 const PAGE = Math.random().toString(36).slice(2);
 
 export function start(onRoute) {
-  const handle = () => {
+  // Back/forward routes on popstate: Firefox fires hashchange a frame later.
+  // The browser's hashchange that follows for the same URL is skipped.
+  let popped = null;
+  const handle = e => {
+    if (e?.type === 'hashchange' && e.isTrusted && popped === location.href) return void (popped = null);
+    popped = e?.type === 'popstate' ? location.href : null;
     const route = parse(location.hash);
     if (route.redirect && route.redirect !== location.hash) {
       history.replaceState(history.state, '', location.pathname + location.search + route.redirect);
@@ -99,6 +102,7 @@ export function start(onRoute) {
     if (!route.revisit) history.replaceState({ ...history.state, page: PAGE + location.hash }, '');
     onRoute(route);
   };
+  addEventListener('popstate', handle);
   addEventListener('hashchange', handle);
   handle();
   return handle;

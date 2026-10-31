@@ -1,7 +1,5 @@
-// sheet.js — the one sheet component: a modal <dialog> (the rest of the
-// page is inert while it's open), bottom sheet on phones and centred panel
-// on wider screens, dismissed by Escape, the backdrop or a swipe down on
-// the grip, returning focus to whatever opened it.
+// sheet.js — the modal <dialog> sheet (bottom on phones, centred wider):
+// Escape, backdrop or a swipe down closes it; focus returns to its opener.
 import { html, render, nothing } from './lit.js';
 import { icon } from './icons.js';
 

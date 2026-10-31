@@ -185,13 +185,8 @@ async function onRoute(next) {
     }
     if (route !== next) return;
   }
-  // Moving to another screen, its data (and the covers it shows first)
-  // loads before it's drawn: the current screen stays up until enter()
-  // settles, for at most 250 ms, so the page draws whole instead of
-  // sections and covers popping in. A filter change draws at once, and so
-  // does back/forward (what it shows is in memory; holding the old screen
-  // under Safari's swipe-back snapshot flashed it). Home draws from its
-  // copy on the device and refreshes after.
+  // The hold: the current screen stays up until the next one's enter()
+  // settles, ≤ 250 ms (not for filters, back/forward or Home; frontend.md).
   held = next;
   const entered = next.name !== 'home' && new Promise(r => r(screenFor(next)?.enter?.(next))).catch(err => console.error(err));
   if (navigated && entered && !next.revisit) await Promise.race([entered, new Promise(r => setTimeout(r, 250))]);

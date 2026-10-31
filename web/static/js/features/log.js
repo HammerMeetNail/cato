@@ -1,7 +1,5 @@
-// log.js — the ⊕ Log sheet: search first; with an empty query it lists
-// what you're playing and recently touched, each with one-tap chips. Typing
-// shows your library first, then the catalog, with text-labelled shelf
-// chips. Two taps to log time to a game you're playing: ⊕ → +1h.
+// log.js — the ⊕ Log sheet: what you're playing and recent games with
+// one-tap chips; typing searches your library, then the catalog.
 import { html, nothing, repeat, live } from '../ui/lit.js';
 import { icon } from '../ui/icons.js';
 import { openSheet } from '../ui/sheet.js';

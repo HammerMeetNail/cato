@@ -1,12 +1,5 @@
-// store.js — the on-device library (docs/cato_smooth.md §4.2).
-//
-// The server is the source of truth. The store keeps the compact library
-// index (GET /api/v1/library/index) in IndexedDB keyed by library_rev, so
-// the app renders straight from disk and then syncs only what changed
-// (?since=rev). Writes are optimistic: each one is an outbox operation whose
-// effect is applied on top of the synced data ("base") until the server
-// confirms it. Operations survive reloads and offline periods and are sent
-// in order; a rejected one simply drops out, which reverts its effect.
+// store.js — the on-device library and its outbox of optimistic writes
+// (docs/agents/frontend.md, Data and writes; docs/cato_smooth.md §4.2).
 
 export const OUTBOX_RETRY_MAX = 60_000;
 
@@ -192,10 +185,8 @@ export class Store extends EventTarget {
     return true;
   }
 
-  // send queues a write. op: {method, path, body, effect, label}. Resolves
-  // with the server response once sent, or {queued: true} when offline.
-  // Rejects (and reverts) when the server refuses it.
-  // The returned promise carries the operation's outbox key (for cancel).
+  // send queues {method, path, body, effect, label}: resolves with the answer
+  // or {queued: true} offline, rejects (reverting) if refused; .key cancels.
   send(op) {
     const queued = { ...op, seq: ++this.seq, at: Math.floor(this.now() / 1000), key: `${Date.now()}-${this.seq}` };
     const done = new Promise((resolve, reject) => this.waiters.set(queued.key, { resolve, reject }));

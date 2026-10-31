@@ -20,12 +20,8 @@ export function coverSources(src, thumb = false) {
 // Covers a screen decoded before it was drawn (ui/decode.js).
 export const decoded = new Set();
 
-// cover renders a game cover with a text fallback when the image is
-// missing or fails (no inline handlers: CSP). A cover the screen shows
-// first (eager, or decoded ahead) loads eagerly and decodes with the paint,
-// so it's in the screen's first frame: a lazy image waits for layout, and
-// Safari decodes an image again, asynchronously, once it has been off the
-// page, so even cached covers drew as empty boxes for a frame or two.
+// cover renders a game cover with a text fallback (no inline handlers:
+// CSP). Covers shown first load eager and decode sync (frontend.md).
 export function cover(entry, { cls = '', eager = false } = {}) {
   const { src, srcset } = coverSources(entry?.cover, cls.includes('thumb'));
   const fallback = html`<span class="cover-fallback">${entry?.name ?? ''}</span>`;

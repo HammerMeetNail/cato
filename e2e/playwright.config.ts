@@ -8,6 +8,9 @@ import { E2E_HOST, E2E_PORT, spki, tlsDir } from './tls';
 // https://127.0.0.1 still yields a secure context and a working service
 // worker there. See e2e/tls.ts.
 const chromiumHTTPS = {
+  // Full Chromium in its new headless mode: the separate headless shell build
+  // segfaulted mid-run on CI (SEGV_MAPERR) and took the worker's browser down.
+  channel: 'chromium',
   baseURL: `https://${E2E_HOST}:${E2E_PORT}`,
   ignoreHTTPSErrors: true, // Node-side request contexts only; the browser trusts the pin.
   launchOptions: {
