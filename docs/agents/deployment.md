@@ -4,16 +4,15 @@
 
 ## Where production runs
 
-- **Docker on a Synology NAS:** host alias `nas2`, directory `/volume1/Shared/Cato`, served at `http://10.0.0.42:7080`.
-- **It's plain HTTP**, a legacy convenience, so it needs `CATO_ALLOW_INSECURE=1` in its `.env` to start. On plain HTTP, browsers turn off the service worker, offline use, push, passkeys and the share target. A real domain or HTTPS proxy turns them on.
-- **Data:** the container `cato` bind-mounts `data/` → `/app/data` (the database, covers, avatars and `backups/`).
-- **Tools on nas2:** `/usr/local/bin/docker`, `/usr/local/bin/docker-compose` and `/usr/bin/sqlite3` are available without sudo.
+- **The shared Hetzner host `yob`** (`ssh yob`; Year of Bingo and Nabu run there too), at `https://cato.localbytellc.com` through the Cloudflare Tunnel. Rootless podman as `deploy` in `/opt/cato`, on 127.0.0.1:8083, started at boot by `cato.service`. **Releases deploy from CI:** a `v*` tag on `main` (`make deploy`). Setup, settings and secrets: `docs/production-runbook.md` → Tagged release configuration.
+  - The host's `.env` is written by every deploy from GitHub variables and secrets. Change settings there, never on the host, and don't read the host's `.env` or compose files.
+- **The legacy NAS** (`nas2`, `/volume1/Shared/Cato`, `http://10.0.0.42:7080`) ran Cato until the move: plain HTTP with `CATO_ALLOW_INSECURE=1`, which turns off the service worker, offline use, push, passkeys and the share target. The container `cato` bind-mounts `data/` → `/app/data`. Tools on nas2: `/usr/local/bin/docker`, `/usr/local/bin/docker-compose` and `/usr/bin/sqlite3`, without sudo.
 - **Don't read or change files on nas2** unless asked.
 
 ## Deploy paths
 
 ```bash
-make deploy-nas    # build the Linux binary (go.mod's toolchain), copy binary/Dockerfile/compose/static, recreate the container
+make deploy-nas    # legacy NAS only: build the Linux binary (go.mod's toolchain), copy binary/Dockerfile/compose/static, recreate the container
 make deploy-logs   # tail the container logs
 DRY_RUN=1 make deploy  # preview the next release tag (no push)
 make deploy        # tagged release: pushes an annotated v* tag → CI builds, scans, signs, verifies (cosign) and deploys

@@ -22,7 +22,9 @@ test.describe('HTTPS everywhere', () => {
         webauthn: typeof window.PublicKeyCredential === 'function',
       };
     });
-    expect(env).toMatchObject({ protocol: 'https:', secure: true, sw: true, subtle: true, uuid: true, webauthn: true });
+    // Playwright's Linux WebKit is built without WebAuthn (CI); macOS WebKit has it.
+    const webauthn = !(browserName === 'webkit' && process.platform === 'linux');
+    expect(env).toMatchObject({ protocol: 'https:', secure: true, sw: true, subtle: true, uuid: true, webauthn });
     if (browserName === 'chromium') {
       // A non-loopback name: loopback secure-context exemptions don't apply.
       expect(env.hostname).toBe('cato.test');

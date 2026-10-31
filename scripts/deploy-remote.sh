@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Called only by the tag deployment job. Does not provision the host or its secrets.
+# Called only by the tag deployment job. Does not provision the host: the
+# directory, data ownership, cato.service and the tunnel route are one-time
+# operator steps (docs/agents/deployment.md).
 set -euo pipefail
 : "${DEPLOY_HOST:?}" "${DEPLOY_USER:?}" "${DEPLOY_PATH:?}"
 : "${RELEASE_TAG:?}" "${RELEASE_COMMIT:?}"
 : "${SSH_PRIVATE_KEY:?}" "${SSH_KNOWN_HOSTS:?}" "${IMAGE_DIGEST:?}"
+: "${CATO_BASE_URL:?}"
 IMAGE_REPOSITORY=${IMAGE_REPOSITORY:-quay.io/nabu/cato}
 DEPLOY_PORT=${DEPLOY_PORT:-22}
 # These values enter SSH configuration / the remote shell; reject shell metacharacters.
@@ -21,6 +24,7 @@ reject() { echo "error: $1 failed validation" >&2; exit 1; }
 [[ "$IMAGE_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]] || reject IMAGE_DIGEST
 [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || reject RELEASE_TAG
 [[ "$RELEASE_COMMIT" =~ ^[a-f0-9]{40}$ ]] || reject RELEASE_COMMIT
+[[ "$CATO_BASE_URL" =~ ^https://[A-Za-z0-9.-]+$ ]] || reject CATO_BASE_URL
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 umask 077
 ssh_dir=$(mktemp -d)
@@ -41,11 +45,28 @@ Host cato-deploy
   ConnectTimeout 30
 CONFIG
 if [[ ${DEPLOY_CLOUDFLARE_ACCESS:-false} == true ]]; then
-  : "${TUNNEL_SERVICE_TOKEN_ID:?}" "${TUNNEL_SERVICE_TOKEN_SECRET:?}"
+  # A service token is needed only when an Access policy guards the SSH host.
   command -v cloudflared >/dev/null
   printf '  ProxyCommand cloudflared access ssh --hostname %%h\n' >> "$ssh_dir/config"
 fi
-# Only validated non-secret arguments cross the shell boundary. Host .env is never rewritten.
+
+# The host's .env is rendered here from the job's environment (GitHub secrets
+# and variables) and streamed over SSH as data: secrets never enter a command
+# line or the remote script. Single quotes keep values literal for
+# podman-compose's dotenv parser, so a value may not contain one.
+ENV_KEYS=(CATO_BASE_URL CATO_TRUSTED_PROXIES CATO_SIGNUP CATO_LOG_FORMAT CATO_METRICS_TOKEN
+  CATO_WIKIDATA_LINKS CATO_PUSH_CONTACT GOOGLE_KEY GOOGLE_SECRET TWITCH_OAUTH_ID TWITCH_OAUTH_SECRET
+  STEAM_WEB_API_KEY ITAD_API_KEY UPCITEMDB_KEY
+  CATO_SMTP_HOST CATO_SMTP_PORT CATO_SMTP_USER CATO_SMTP_PASSWORD CATO_SMTP_FROM)
+for key in "${ENV_KEYS[@]}"; do
+  value=${!key-}
+  [[ -n "$value" ]] || continue
+  [[ "$value" != *$'\n'* && "$value" != *$'\r'* && "$value" != *"'"* ]] || reject "$key"
+  printf "%s='%s'\n" "$key" "$value"
+done > "$ssh_dir/app.env"
+ssh -F "$ssh_dir/config" cato-deploy "umask 077 && cat > '$DEPLOY_PATH/.env.next'" < "$ssh_dir/app.env"
+
+# Only validated non-secret arguments cross the shell boundary.
 compose_base64=$(base64 < "$repo_root/compose.server.yaml" | tr -d '\n')
 database_base64=$(base64 < "$repo_root/scripts/database.py" | tr -d '\n')
 ssh -F "$ssh_dir/config" cato-deploy \
@@ -58,12 +79,12 @@ compose_base64=$3
 database_base64=$4
 release_tag=$5
 release_commit=$6
-for executable in docker python3 curl flock base64; do command -v "$executable" >/dev/null; done
-docker compose version >/dev/null
+health=http://127.0.0.1:8083/healthz
+for executable in podman podman-compose python3 curl flock base64; do command -v "$executable" >/dev/null; done
 # Serialize both workflow and manual invocations on this host.
 exec 9>.deploy.lock
 flock -n 9 || { echo 'Another deployment is running.' >&2; exit 1; }
-[[ -f .env && -d data && -d data/covers ]]
+[[ -f .env.next && -d data && -d data/covers ]]
 stage=$(mktemp -d .deploy.XXXXXX)
 trap 'rm -rf "$stage"' EXIT
 # Persist attempted identity before restart: even a failed health check can follow a migration.
@@ -102,38 +123,53 @@ if operation != "check":
 PY_STATE
 state() { python3 "$stage/release-state.py" "$1" "$release_tag" "$release_commit" "$image"; }
 state check
-# Provision data ownership as UID/GID 10001 on the host before the first deployment.
+# Rootless podman: the container's UID 10001 maps to a subordinate host UID,
+# so data/ is provisioned once with `podman unshare chown -R 10001:10001 data`.
 # Pull while the old process is still serving; private registries need host-managed login.
-docker pull "$image"
-docker run --rm --network none --mount "type=bind,src=$PWD/data,dst=/app/data" \
-  --entrypoint sh "$image" -ec '
+podman pull "$image"
+podman run --rm --network none -v "$PWD/data:/app/data:Z" --entrypoint sh "$image" -ec '
     test -w /app/data && test -w /app/data/covers
     for file in /app/data/cato.db /app/data/cato.db-wal /app/data/cato.db-shm; do
       test ! -e "$file" || test -w "$file"
     done
   '
-printf '%s' "$compose_base64" | base64 -d > "$stage/compose.yaml"
+# The digest goes into the compose file itself, so a plain `podman-compose up -d`
+# (cato.service at boot) runs this release.
+printf '%s' "$compose_base64" | base64 -d | IMAGE="$image" python3 -c '
+import os, sys
+text = sys.stdin.read()
+line = "image: ${CATO_IMAGE:?Set CATO_IMAGE to a repository@sha256 digest}"
+assert text.count(line) == 1, "compose.server.yaml image line changed"
+sys.stdout.write(text.replace(line, "image: " + os.environ["IMAGE"]))
+' > "$stage/compose.yaml"
 printf 'CATO_IMAGE=%s\n' "$image" > "$stage/release.env"
-docker compose --project-directory "$PWD" --env-file "$stage/release.env" -f "$stage/compose.yaml" config --quiet
 mkdir -p backups
 backup_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
 if [[ -f data/cato.db ]]; then
-  curl --fail --silent --show-error --max-time 15 http://127.0.0.1:7080/healthz >/dev/null || \
+  curl --fail --silent --show-error --max-time 15 "$health" >/dev/null || \
     echo 'Existing service is unhealthy; continuing with verified backup and recovery rollout.' >&2
   # Reuse the verified online backup: WAL-safe, FK checks, standalone journal and fsync.
+  # In podman's user namespace, where the container's files (UID 10001) are ours.
   printf '%s' "$database_base64" | base64 -d > "$stage/database.py"
-  backup=$(python3 "$stage/database.py" backup --db data/cato.db --backup-dir backups)
+  backup=$(podman unshare python3 "$stage/database.py" backup --db data/cato.db --backup-dir backups)
   echo "Verified pre-deployment backup: $PWD/$backup"
 fi
-# Retain the old manifest/digest for an operator; migrations may preclude automatic rollback.
+# Retain the old manifest, digest and settings for an operator; migrations may
+# preclude automatic rollback.
 [[ ! -f compose.yaml ]] || cp compose.yaml "backups/compose-$backup_id.yaml"
 [[ ! -f release.env ]] || cp release.env "backups/release-$backup_id.env"
+[[ ! -f .env ]] || cp .env "backups/env-$backup_id"
 state attempted
 mv "$stage/compose.yaml" compose.yaml
 mv "$stage/release.env" release.env
-# No 'down', no volume deletion, and no mutation of host-managed application credentials.
-docker compose --env-file release.env -f compose.yaml up -d --wait --wait-timeout 120
-curl --fail --silent --show-error --max-time 15 http://127.0.0.1:7080/healthz >/dev/null
+mv .env.next .env
+# No 'down', no volume deletion.
+podman-compose -f compose.yaml up -d --force-recreate
+for _ in $(seq 1 60); do
+  curl --fail --silent --max-time 5 "$health" >/dev/null && break
+  sleep 2
+done
+curl --fail --silent --show-error --max-time 15 "$health" >/dev/null
 state succeeded
 printf 'Healthy deployment: %s\n' "$image"
 REMOTE

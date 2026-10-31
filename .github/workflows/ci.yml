@@ -198,4 +198,24 @@ jobs:
           SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
           TUNNEL_SERVICE_TOKEN_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           TUNNEL_SERVICE_TOKEN_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          # The host's .env, rendered by deploy-remote.sh (unset ones are left out).
+          CATO_BASE_URL: ${{ vars.CATO_BASE_URL }}
+          CATO_TRUSTED_PROXIES: ${{ vars.CATO_TRUSTED_PROXIES }}
+          CATO_SIGNUP: ${{ vars.CATO_SIGNUP }}
+          CATO_LOG_FORMAT: ${{ vars.CATO_LOG_FORMAT }}
+          CATO_WIKIDATA_LINKS: ${{ vars.CATO_WIKIDATA_LINKS }}
+          CATO_PUSH_CONTACT: ${{ vars.CATO_PUSH_CONTACT }}
+          CATO_SMTP_HOST: ${{ vars.CATO_SMTP_HOST }}
+          CATO_SMTP_PORT: ${{ vars.CATO_SMTP_PORT }}
+          CATO_SMTP_USER: ${{ vars.CATO_SMTP_USER }}
+          CATO_SMTP_FROM: ${{ vars.CATO_SMTP_FROM }}
+          CATO_SMTP_PASSWORD: ${{ secrets.CATO_SMTP_PASSWORD }}
+          CATO_METRICS_TOKEN: ${{ secrets.CATO_METRICS_TOKEN }}
+          GOOGLE_KEY: ${{ secrets.GOOGLE_KEY }}
+          GOOGLE_SECRET: ${{ secrets.GOOGLE_SECRET }}
+          TWITCH_OAUTH_ID: ${{ secrets.TWITCH_OAUTH_ID }}
+          TWITCH_OAUTH_SECRET: ${{ secrets.TWITCH_OAUTH_SECRET }}
+          STEAM_WEB_API_KEY: ${{ secrets.STEAM_WEB_API_KEY }}
+          ITAD_API_KEY: ${{ secrets.ITAD_API_KEY }}
+          UPCITEMDB_KEY: ${{ secrets.UPCITEMDB_KEY }}
         run: bash scripts/deploy-remote.sh

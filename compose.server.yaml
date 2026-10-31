@@ -1,4 +1,6 @@
-# Host .env holds application settings; release.env holds only the immutable image.
+# Host .env holds application settings (written by the deploy from GitHub
+# secrets); the deploy writes compose.yaml with the image digest in place of
+# CATO_IMAGE, so the host's cato.service can run plain `podman-compose up -d`.
 name: cato
 services:
   cato:
@@ -10,9 +12,11 @@ services:
       CATO_COVER_DIR: /app/data/covers
       CATO_STATIC_DIR: /app/web/static
     ports:
-      - '127.0.0.1:7080:7080'
+      # Loopback only: the Cloudflare Tunnel reaches it at 127.0.0.1:8083.
+      - '127.0.0.1:8083:7080'
     volumes:
-      - ./data:/app/data
+      # :Z relabels the directory for SELinux (Fedora host).
+      - ./data:/app/data:Z
     restart: unless-stopped
     stop_grace_period: 30s
     logging:

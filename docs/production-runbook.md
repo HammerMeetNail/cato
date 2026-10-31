@@ -34,15 +34,16 @@ the exact commit being released.
 
 ## Configuration and deployment
 
-Copy `.env.example` to `.env` on the deployment host; keep it private. **Cato is
+On the production host the tagged release writes `.env` from GitHub settings
+(below); elsewhere, copy `.env.example` to `.env` and keep it private. **Cato is
 HTTPS-only** and refuses to start otherwise. Choose one:
 
 - **Reverse proxy (recommended for a real domain).** Caddy, the Synology reverse
   proxy or similar terminates TLS with a Let's Encrypt certificate and forwards to
   Cato's plain listener. Set `CATO_BASE_URL=https://<domain>` and
   `CATO_TRUSTED_PROXIES=<proxy address or CIDR>`; restrict direct access to port
-  7080 (`compose.server.yaml` binds it to loopback). The deploy health checks keep
-  using `http://127.0.0.1:7080/healthz` in this mode.
+  7080 (`compose.server.yaml` binds 8083 on the host to loopback). The deploy
+  health checks use `http://127.0.0.1:8083/healthz` in this mode.
 - **Native TLS.** Set `CATO_TLS_CERT_FILE`/`CATO_TLS_KEY_FILE` to files inside the
   container (for example under `/app/data/tls`). Renewed files are reloaded within
   a minute. Optional `CATO_HTTP_REDIRECT_ADDR` answers plain HTTP with a 308. The
@@ -102,51 +103,60 @@ production data replacement must follow the restore procedure below.
 
 ### Tagged release configuration
 
-Create the Quay repository and configure these GitHub settings before a future
-release. This task prepares the files; setting up hosting and pushing a release
-tag are separate operator actions. Configure required reviewers on the GitHub
-`production` environment to gate the deployment job.
+Production runs on the shared Hetzner host (`yob`, also Year of Bingo and Nabu)
+at `https://cato.localbytellc.com`. A `v*` tag on `main` runs the release gate,
+builds and scans the image, signs it with Cosign, pushes it to Quay and deploys
+it; the deploy job runs `cosign verify` (certificate identity: this repository's
+`ci.yml` at the release tag, issuer `token.actions.githubusercontent.com`) before
+it touches the host. Configure required reviewers on the GitHub `production`
+environment if deploys should wait for approval.
 
-| Setting | Kind | Purpose |
+| Setting | Kind | Value / purpose |
 | --- | --- | --- |
-| `IMAGE_REPOSITORY` | Repository variable | Default `quay.io/nabu/cato`; choose Cato's actual Quay repository |
-| `QUAY_USERNAME`, `QUAY_PASSWORD` | Repository secrets | Robot credentials scoped to that image repository |
-| `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PATH` | Production environment variables | SSH target and pre-provisioned directory (for example `/opt/cato`) |
-| `DEPLOY_PORT` | Production environment variable | SSH port, default 22 |
-| `SSH_PRIVATE_KEY`, `SSH_KNOWN_HOSTS` | Production environment secrets | Deployment identity and independently verified host public key |
-| `DEPLOY_CLOUDFLARE_ACCESS` | Production environment variable | `true` enables the Cloudflare Access SSH proxy like Nabu |
-| `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` | Production environment secrets | Service-token credentials when Cloudflare is enabled |
+| `IMAGE_REPOSITORY` | Repository variable | `quay.io/nabu/cato` (the default) |
+| `QUAY_USERNAME`, `QUAY_PASSWORD` | Repository secrets | Robot credentials with write access to that repository |
+| `DEPLOY_HOST` | `production` variable | `ssh.yearofbingo.com` (SSH through the Cloudflare Tunnel) |
+| `DEPLOY_USER`, `DEPLOY_PATH` | `production` variables | `deploy`, `/opt/cato` |
+| `DEPLOY_CLOUDFLARE_ACCESS` | `production` variable | `true`: SSH through `cloudflared access ssh` |
+| `SSH_PRIVATE_KEY` | `production` secret | The `deploy` user's key (the one Year of Bingo and Nabu use) |
+| `SSH_KNOWN_HOSTS` | `production` secret | `ssh.yearofbingo.com` followed by the host's `ssh-ed25519` public key |
+| `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` | `production` secrets | Only if an Access policy guards the SSH hostname |
+| `CATO_BASE_URL` | `production` variable | `https://cato.localbytellc.com` (required) |
+| `CATO_TRUSTED_PROXIES` | `production` variable | `127.0.0.1,5.161.57.131`: rootless podman (pasta) shows cloudflared's connections as the host's address |
+| `CATO_SIGNUP`, `CATO_LOG_FORMAT`, `CATO_WIKIDATA_LINKS`, `CATO_PUSH_CONTACT`, `CATO_SMTP_HOST`, `CATO_SMTP_PORT`, `CATO_SMTP_USER`, `CATO_SMTP_FROM` | `production` variables | Optional settings (`.env.example`) |
+| `TWITCH_OAUTH_ID`, `TWITCH_OAUTH_SECRET` | `production` secrets | IGDB (search beyond the local catalog) |
+| `GOOGLE_KEY`, `GOOGLE_SECRET`, `STEAM_WEB_API_KEY`, `ITAD_API_KEY`, `UPCITEMDB_KEY`, `CATO_SMTP_PASSWORD`, `CATO_METRICS_TOKEN` | `production` secrets | Optional integrations; unset ones are left out |
 | `GITLEAKS_LICENSE` | Optional repository secret | If required by Gitleaks for the repository owner |
 
-`Containerfile` builds amd64/arm64 release images from source. Trivy scans both
-architectures at the returned digest; Cosign signs that digest using GitHub OIDC
-before release notes and deployment, and the deploy job runs `cosign verify`
-(certificate identity: this repository's `ci.yml` at the release tag, issuer
-`token.actions.githubusercontent.com`) before it touches the host. To check an
-image by hand:
+**The host's `.env` comes from these settings.** `scripts/deploy-remote.sh`
+writes it on the runner from the job's environment (single-quoted values, so a
+value can't contain `'` or a newline) and streams it over SSH as data; the
+previous one is kept in `backups/env-<id>`. Change a setting in GitHub, not on
+the host: the next deploy replaces the file.
 
-```bash
-cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity "https://github.com/<owner>/<repo>/.github/workflows/ci.yml@refs/tags/vX.Y.Z" \
-  quay.io/<repository>@sha256:<digest>
-``` Main/PR image builds do not log into Quay or
-publish. The old NAS `Dockerfile` remains a separate binary-packaging path.
+**The host** runs rootless podman as `deploy` with `podman-compose`; Python
+3.10+, flock, curl and base64 are needed. One-time setup, already done on yob:
 
-Prepare the target with Docker Compose v2 supporting `up --wait`, Bash,
-Python 3.10+, flock, curl and base64. Create `.env` with application settings and
-`data/covers` writable by UID/GID **10001**. The deployer checks access but never
-changes ownership. Existing NAS data needs a planned ownership transition before
-using this different image. Quay images must be public or the host must already
-have a registry login. CI never rewrites the host's application `.env`.
+- `/opt/cato/{data/covers,backups}`, with `data` owned by the container's user:
+  `podman unshare chown -R 10001:10001 /opt/cato/data` (UID 10001 in the image
+  maps to a subordinate UID on the host). `compose.server.yaml` mounts it with
+  `:Z` for SELinux.
+- `/etc/systemd/system/cato.service` (`podman-compose up -d` in `/opt/cato` as
+  `deploy`, like `nabu.service`) starts it at boot. The deploy writes the digest
+  into `compose.yaml`, so the unit needs no variables.
+- The Cloudflare Tunnel (`~deploy/.cloudflared/config.yml`, tunnel
+  `yearofbingo`) routes `cato.localbytellc.com` to `http://127.0.0.1:8083`, and
+  the DNS record is a proxied CNAME to `<tunnel id>.cfargotunnel.com`.
+  `compose.server.yaml` binds 8083 to loopback only (Year of Bingo has 80, Nabu
+  8082).
+- Quay images must be public, or the host needs a `podman login`.
 
-`compose.server.yaml` binds port 7080 to host loopback. Configure its reverse
-proxy/tunnel, matching base URL and cookie policy. Deployment locks the target,
-verifies a SQLite snapshot, preserves the previous compose/image reference, and
-waits for health. `.release-state.json` records an attempted version before
+Deployment locks the target, verifies a SQLite snapshot, preserves the previous
+compose file, image reference and `.env`, and waits for `/healthz` on
+127.0.0.1:8083. `.release-state.json` records an attempted version before
 rollout, preventing a delayed older tag from downgrading a database even after a
-failed health check. Recovery/rollback is an explicit operator procedure.
-This workflow does not provision a server, DNS, tunnel, registry, off-host backup
-destination, or environment approvals.
+failed health check. Recovery/rollback is an explicit operator procedure. The
+old NAS `Dockerfile` remains a separate binary-packaging path.
 
 Before each deployment:
 

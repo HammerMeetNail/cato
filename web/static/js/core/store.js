@@ -121,6 +121,7 @@ export class Store extends EventTarget {
     this.waiters = new Map();
     this.synced = false;
     this.flushing = null;
+    this.flushAgain = false;
     this.retryDelay = 2000;
     this.retryTimer = null;
     this.seq = 0;
@@ -226,7 +227,11 @@ export class Store extends EventTarget {
   }
 
   flush() {
-    if (this.flushing) return this.flushing;
+    // A write persisted mid-flush (during its sync) gets another pass.
+    if (this.flushing) {
+      this.flushAgain = true;
+      return this.flushing;
+    }
     const run = async () => {
       try {
         while (this.outbox.length) {
@@ -275,6 +280,8 @@ export class Store extends EventTarget {
         await this.sync().catch(() => {});
       } finally {
         this.flushing = null;
+        if (this.flushAgain) queueMicrotask(() => this.flush());
+        this.flushAgain = false;
       }
     };
     this.flushing = this.lock ? this.lock('cato-outbox', run) : run();

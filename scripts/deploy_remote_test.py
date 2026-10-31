@@ -1,4 +1,4 @@
-"""Exercise the remote rollout locally: SSH, Docker and HTTP are always stubs."""
+"""Exercise the remote rollout locally: SSH, podman and HTTP are always stubs."""
 import json
 import os
 from pathlib import Path
@@ -11,7 +11,7 @@ import unittest
 SCRIPT = Path(__file__).with_name("deploy-remote.sh").resolve()
 REPOSITORY = SCRIPT.parent.parent
 
-# Symlinks select a stub by argv[0]; Docker inspects backups using the real SQLite CLI.
+# Symlinks select a stub by argv[0]; podman-compose inspects backups using the real SQLite CLI.
 STUB = r'''#!/usr/bin/env python3
 import json, os, pathlib, shlex, stat, subprocess, sys
 name = pathlib.Path(sys.argv[0]).name
@@ -26,28 +26,37 @@ if name == 'ssh':
     assert 'StrictHostKeyChecking yes' in config
     identity = next(line.split()[1] for line in config.splitlines() if line.strip().startswith('IdentityFile '))
     assert stat.S_IMODE(pathlib.Path(identity).stat().st_mode) == 0o600
+    server = str(pathlib.Path(os.environ['TEST_SERVER']).resolve())
+    if args[3].startswith('umask 077 && cat > '):
+        # The rendered settings arrive as data on stdin, never in the command.
+        assert args[3] == "umask 077 && cat > '" + os.environ['TEST_SERVER'] + "/.env.next'"
+        sys.exit(subprocess.run(['sh', '-c', args[3]], input=sys.stdin.read(), text=True).returncode)
     remote = shlex.split(args[3])
     assert remote[:3] == ['bash', '-s', '--']
-    assert pathlib.Path(remote[3]).resolve() == pathlib.Path(os.environ['TEST_SERVER']).resolve()
+    assert str(pathlib.Path(remote[3]).resolve()) == server
     # Execute only the captured shell program against our temporary server directory.
     sys.exit(subprocess.run(remote, input=sys.stdin.read(), text=True).returncode)
-elif name == 'docker':
+elif name == 'podman':
+    record()
+    assert args[0] in ('pull', 'run', 'unshare')
+    if args[0] == 'unshare':
+        sys.exit(subprocess.run(args[1:]).returncode)
+    sys.exit(0)
+elif name == 'podman-compose':
     snapshots = list(pathlib.Path('backups').glob('cato-*.db'))
     values = []
-    if 'up' in args:
-        for snapshot in snapshots:
-            values.append(subprocess.check_output([os.environ['TEST_SQLITE'], str(snapshot),
-                          'PRAGMA integrity_check; PRAGMA foreign_key_check; PRAGMA journal_mode; SELECT value FROM marker;'], text=True))
-    record(backups=[str(p) for p in snapshots], verified_values=values)
-    assert args[0] in ('compose', 'pull', 'run')
-    if 'up' in args:
-        assert '--wait' in args
-        assert json.loads(pathlib.Path('.release-state.json').read_text())['status'] == 'attempted'
-        sys.exit(int(os.environ.get('TEST_UP_EXIT', '0')))
+    for snapshot in snapshots:
+        values.append(subprocess.check_output([os.environ['TEST_SQLITE'], str(snapshot),
+                      'PRAGMA integrity_check; PRAGMA foreign_key_check; PRAGMA journal_mode; SELECT value FROM marker;'], text=True))
+    record(backups=[str(p) for p in snapshots], verified_values=values, env=pathlib.Path('.env').read_text())
+    assert args == ['-f', 'compose.yaml', 'up', '-d', '--force-recreate']
+    assert json.loads(pathlib.Path('.release-state.json').read_text())['status'] == 'attempted'
+    sys.exit(int(os.environ.get('TEST_UP_EXIT', '0')))
+elif name == 'sleep':
     sys.exit(0)
 elif name == 'curl':
     record()
-    assert args[-1] == 'http://127.0.0.1:7080/healthz'
+    assert args[-1] == 'http://127.0.0.1:8083/healthz'
     previous = [json.loads(line) for line in pathlib.Path(os.environ['TEST_EVENTS']).read_text().splitlines()]
     calls = sum(e['command'] == 'curl' for e in previous)
     sys.exit(int(os.environ.get('TEST_HEALTH_EXIT' if calls == 1 else 'TEST_FINAL_HEALTH_EXIT', '0')))
@@ -69,7 +78,7 @@ class RemoteDeployTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.server = self.root / "server"
         (self.server / "data/covers").mkdir(parents=True)
-        self.original_env = "GOOGLE_SECRET=host-managed-test-value\n"
+        self.original_env = "GOOGLE_SECRET='previous-value'\n"
         (self.server / ".env").write_text(self.original_env)
         (self.server / "compose.yaml").write_text("old compose\n")
         (self.server / "release.env").write_text("old digest\n")
@@ -79,15 +88,18 @@ class RemoteDeployTests(unittest.TestCase):
         stub = self.bin / "stub"
         stub.write_text(STUB)
         stub.chmod(0o755)
-        for command in ("ssh", "docker", "curl", "flock"):
+        for command in ("ssh", "podman", "podman-compose", "curl", "flock", "sleep"):
             (self.bin / command).symlink_to(stub)
         self.key = "dummy-private-key-no-command-should-contain-this"
+        self.secret = "google-secret-$HOME-no-command-should-contain-this"
         self.env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}",
                         DEPLOY_HOST="host.invalid", DEPLOY_USER="deploy",
                         DEPLOY_PATH=str(self.server), DEPLOY_PORT="22",
                         IMAGE_REPOSITORY="quay.io/nabu/cato", IMAGE_DIGEST="sha256:" + "a" * 64,
                         SSH_PRIVATE_KEY=self.key, SSH_KNOWN_HOSTS="host.invalid dummy-key",
                         DEPLOY_CLOUDFLARE_ACCESS="false", RELEASE_TAG="v0.2.0", RELEASE_COMMIT="b" * 40, TEST_EVENTS=str(self.events),
+                        CATO_BASE_URL="https://cato.example.test", CATO_TRUSTED_PROXIES="127.0.0.1/8",
+                        GOOGLE_SECRET=self.secret, STEAM_WEB_API_KEY="",
                         TEST_SERVER=str(self.server), TEST_SQLITE=self.sqlite)
 
     def deploy(self, **overrides):
@@ -96,6 +108,8 @@ class RemoteDeployTests(unittest.TestCase):
                                 text=True, capture_output=True, timeout=20)
         events = self.events.read_text() if self.events.exists() else ""
         self.assertNotIn(self.key, result.stdout + result.stderr + events)
+        self.assertNotIn(self.secret, result.stdout + result.stderr + "".join(
+            json.dumps(json.loads(line)["args"]) for line in events.splitlines()))
         return result, [json.loads(line) for line in events.splitlines()]
 
     def database(self):
@@ -114,22 +128,29 @@ class RemoteDeployTests(unittest.TestCase):
         self.assertEqual((self.server / "release.env").read_text(), "old digest\n")
         self.assertEqual((self.server / ".env").read_text(), self.original_env)
 
-    def test_backup_verified_before_restart_and_host_files_preserved(self):
+    def test_backup_verified_before_restart_and_settings_installed(self):
         self.database()
         self.assertTrue((self.server / "data/cato.db-wal").exists())
         result, events = self.deploy()
         self.assertEqual(result.returncode, 0, result.stderr)
-        up = next(i for i, e in enumerate(events) if e['command'] == 'docker' and 'up' in e['args'])
+        up = next(i for i, e in enumerate(events) if e['command'] == 'podman-compose')
         self.assertEqual(events[up]['verified_values'], ['ok\ndelete\ncommitted WAL row\n'])
         self.assertEqual(len(events[up]['backups']), 1)
         backups = list((self.server / "backups").glob("cato-*.db"))
         self.assertEqual(len(backups), 1)
         with sqlite3.connect(backups[0]) as conn:
             self.assertEqual(conn.execute("SELECT value FROM marker").fetchall(), [('committed WAL row',)])
-        self.assertEqual((self.server / ".env").read_text(), self.original_env)
+        rendered = ("CATO_BASE_URL='https://cato.example.test'\nCATO_TRUSTED_PROXIES='127.0.0.1/8'\n"
+                    f"GOOGLE_SECRET='{self.secret}'\n")
+        self.assertEqual(events[up]['env'], rendered)
+        self.assertEqual((self.server / ".env").read_text(), rendered)
+        self.assertEqual(next((self.server / "backups").glob("env-*")).read_text(), self.original_env)
         self.assertEqual(next((self.server / "backups").glob("compose-*.yaml")).read_text(), "old compose\n")
         self.assertEqual(next((self.server / "backups").glob("release-*.env")).read_text(), "old digest\n")
-        self.assertEqual((self.server / "compose.yaml").read_text(), (REPOSITORY / "compose.server.yaml").read_text())
+        image = f"{self.env['IMAGE_REPOSITORY']}@{self.env['IMAGE_DIGEST']}"
+        compose = (self.server / "compose.yaml").read_text()
+        self.assertIn(f"    image: {image}\n", compose)
+        self.assertNotIn("${CATO_IMAGE", compose)
         self.assertEqual((self.server / "release.env").read_text(),
                          f"CATO_IMAGE={self.env['IMAGE_REPOSITORY']}@{self.env['IMAGE_DIGEST']}\n")
         self.assertFalse([p for p in self.server.glob(".deploy.*") if p.is_dir()])
@@ -139,14 +160,14 @@ class RemoteDeployTests(unittest.TestCase):
         (self.server / "data/cato.db").write_bytes(b"not a SQLite database")
         result, events = self.deploy()
         self.assertNotEqual(result.returncode, 0)
-        self.assertFalse(any(e['command'] == 'docker' and 'up' in e['args'] for e in events))
+        self.assertFalse(any(e['command'] == 'podman-compose' for e in events))
         self.assert_original_manifests()
 
     def test_unhealthy_existing_service_can_be_repaired(self):
         self.database()
         result, events = self.deploy(TEST_HEALTH_EXIT="22")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(any(e['command'] == 'docker' and 'up' in e['args'] for e in events))
+        self.assertTrue(any(e['command'] == 'podman-compose' for e in events))
 
     def test_foreign_key_failure_aborts_before_restart(self):
         conn = self.database()
@@ -155,7 +176,7 @@ class RemoteDeployTests(unittest.TestCase):
         conn.commit()
         result, events = self.deploy()
         self.assertNotEqual(result.returncode, 0)
-        self.assertFalse(any(e['command'] == 'docker' and 'up' in e['args'] for e in events))
+        self.assertFalse(any(e['command'] == 'podman-compose' for e in events))
         self.assert_original_manifests()
         self.assertFalse((self.server / ".release-state.json").exists())
 
@@ -168,7 +189,7 @@ class RemoteDeployTests(unittest.TestCase):
             with self.subTest(overrides=overrides):
                 result, events = self.deploy(**overrides)
                 self.assertNotEqual(result.returncode, 0)
-                self.assertFalse(any(e['command'] == 'docker' and e['args'][0] == 'pull' for e in events))
+                self.assertFalse(any(e['command'] == 'podman' and e['args'][0] == 'pull' for e in events))
                 self.assertEqual((self.server / ".release-state.json").read_text(), state)
                 self.assertEqual((self.server / "release.env").read_text(), manifest)
 
@@ -185,6 +206,19 @@ class RemoteDeployTests(unittest.TestCase):
         result, _ = self.deploy()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads((self.server / ".release-state.json").read_text())['status'], 'succeeded')
+
+    def test_settings_that_would_break_the_env_file_rejected_before_ssh(self):
+        for value in ("it's", "line\nINJECTED=1", "carriage\r"):
+            with self.subTest(value=value):
+                result, events = self.deploy(GOOGLE_SECRET=value)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(events, [])
+        for value in ("http://cato.example.test", "https://cato.example.test/path", ""):
+            with self.subTest(base_url=value):
+                result, events = self.deploy(CATO_BASE_URL=value)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(events, [])
+        self.assert_original_manifests()
 
     def test_shell_metacharacters_rejected_before_ssh(self):
         for key in ("DEPLOY_PATH", "DEPLOY_HOST", "IMAGE_REPOSITORY", "IMAGE_DIGEST", "RELEASE_TAG", "RELEASE_COMMIT"):

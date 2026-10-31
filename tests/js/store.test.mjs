@@ -21,6 +21,7 @@ function fakeServer() {
       s.calls.push({ method, path, body: opts.body });
       if (s.offline) throw new ApiError(0, 'network', 'offline');
       if (method === 'GET' && path.startsWith('/api/v1/library/index')) {
+        if (s.hold) await s.hold;
         const since = Number(new URL('http://x' + path).searchParams.get('since'));
         if (opts.etag === `rev-${s.rev}`) return { status: 304, data: null, etag: opts.etag };
         return {
@@ -116,6 +117,28 @@ test('optimistic writes, confirmation and rejection', async () => {
   await assert.rejects(store.send({ method: 'PATCH', path: '/api/v1/library/2', body: { rating: 500 }, effect: { type: 'patch', id: 2, set: { rating: 500 } } }), /Rating/);
   assert.equal(store.get(2).rating, 0, 'a rejected write reverts');
   assert.deepEqual(rejected, ['invalid_rating']);
+});
+
+// After sending, the outbox syncs; a write saved during that sync used to
+// find the flush busy and wait for some later write to carry it (the last
+// of several quick rating key presses never reached the server).
+test('a write saved while the outbox syncs is still sent', async () => {
+  const server = fakeServer();
+  const store = new Store({ api: server, kv: memoryKV() });
+  await store.init('u1');
+  await store.sync();
+  let release;
+  server.hold = new Promise(r => { release = r; });
+  await store.send({ method: 'PATCH', path: '/api/v1/library/2', body: { rating: 60 }, effect: { type: 'patch', id: 2, set: { rating: 60 } } });
+  // The first write is sent; the flush now waits on its sync.
+  const second = store.send({ method: 'PATCH', path: '/api/v1/library/2', body: { rating: 70 }, effect: { type: 'patch', id: 2, set: { rating: 70 } } });
+  await new Promise(r => setTimeout(r, 0));
+  server.hold = null;
+  release();
+  await Promise.race([second, new Promise((_, reject) => setTimeout(() => reject(new Error('the second write was never sent')), 500))]);
+  await store.flushing;
+  assert.deepEqual(server.calls.filter(c => c.method === 'PATCH').map(c => c.body.rating), [60, 70]);
+  assert.equal(store.pending, 0);
 });
 
 test('offline writes queue, survive a reload and replay in order', async () => {
