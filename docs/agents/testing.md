@@ -20,7 +20,7 @@ Write the regression test first; use real SQLite for Go and Playwright for the U
 
 It needs:
 
-- Go (go.mod pins `toolchain go1.26.9`);
+- Go (go.mod pins `toolchain go1.26.10`);
 - Node 24+, Python 3.10+ and sqlite3;
 - Playwright Chromium, WebKit and Firefox.
 

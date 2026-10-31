@@ -12,7 +12,7 @@ use that account's original sign-in method when an email collision is reported.
 
 ## Build and release gate
 
-Use Go 1.26.9 (selected by `go.mod`), Node 24+, Python 3.10+, and sqlite3.
+Use Go 1.26.10 (selected by `go.mod`), Node 24+, Python 3.10+, and sqlite3.
 `make release-check` runs build, vet, Go tests and race tests, JavaScript
 regressions, backup/release-script tests, dependency scans, and Playwright. On a fresh Linux
 host, first install browser system dependencies:
@@ -113,7 +113,7 @@ environment if deploys should wait for approval.
 
 | Setting | Kind | Value / purpose |
 | --- | --- | --- |
-| `IMAGE_REPOSITORY` | Repository variable | `quay.io/nabu/cato` (the default) |
+| `IMAGE_REPOSITORY` | Repository variable | `quay.io/localbyte/cato` (the default) |
 | `QUAY_USERNAME`, `QUAY_PASSWORD` | Repository secrets | Robot credentials with write access to that repository |
 | `DEPLOY_HOST` | `production` variable | `ssh.yearofbingo.com` (SSH through the Cloudflare Tunnel) |
 | `DEPLOY_USER`, `DEPLOY_PATH` | `production` variables | `deploy`, `/opt/cato` |

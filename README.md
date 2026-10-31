@@ -168,6 +168,6 @@ make stop    # stop locally
 make release-check # build, vet, race, frontend, backup, dependency and browser checks
 ```
 
-Go 1.26.9 is selected by `go.mod`. Release checks also require Node 24+, Python
+Go 1.26.10 is selected by `go.mod`. Release checks also require Node 24+, Python
 3.10+, sqlite3, and Playwright's Chromium/WebKit system dependencies (see the runbook).
 The [browser coverage map](e2e/README.md) lists tested journeys and device limits.

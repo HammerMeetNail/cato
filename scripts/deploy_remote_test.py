@@ -95,7 +95,7 @@ class RemoteDeployTests(unittest.TestCase):
         self.env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}",
                         DEPLOY_HOST="host.invalid", DEPLOY_USER="deploy",
                         DEPLOY_PATH=str(self.server), DEPLOY_PORT="22",
-                        IMAGE_REPOSITORY="quay.io/nabu/cato", IMAGE_DIGEST="sha256:" + "a" * 64,
+                        IMAGE_REPOSITORY="quay.io/localbyte/cato", IMAGE_DIGEST="sha256:" + "a" * 64,
                         SSH_PRIVATE_KEY=self.key, SSH_KNOWN_HOSTS="host.invalid dummy-key",
                         DEPLOY_CLOUDFLARE_ACCESS="false", RELEASE_TAG="v0.2.0", RELEASE_COMMIT="b" * 40, TEST_EVENTS=str(self.events),
                         CATO_BASE_URL="https://cato.example.test", CATO_TRUSTED_PROXIES="127.0.0.1/8",

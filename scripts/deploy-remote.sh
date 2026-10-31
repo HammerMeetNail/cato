@@ -7,7 +7,7 @@ set -euo pipefail
 : "${RELEASE_TAG:?}" "${RELEASE_COMMIT:?}"
 : "${SSH_PRIVATE_KEY:?}" "${SSH_KNOWN_HOSTS:?}" "${IMAGE_DIGEST:?}"
 : "${CATO_BASE_URL:?}"
-IMAGE_REPOSITORY=${IMAGE_REPOSITORY:-quay.io/nabu/cato}
+IMAGE_REPOSITORY=${IMAGE_REPOSITORY:-quay.io/localbyte/cato}
 DEPLOY_PORT=${DEPLOY_PORT:-22}
 # These values enter SSH configuration / the remote shell; reject shell metacharacters.
 # Each check must fail explicitly: bash 3.2 (macOS /bin/bash) does NOT abort on a

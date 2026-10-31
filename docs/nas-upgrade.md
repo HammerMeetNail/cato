@@ -11,10 +11,10 @@ deploy-build:
 	GOTOOLCHAIN=$(GO_TOOLCHAIN) CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o cato ./cmd/cato
 ```
 
-(`GO_TOOLCHAIN` is already defined in the Makefile and reads `go1.26.9` from go.mod.) Check that it works:
+(`GO_TOOLCHAIN` is already defined in the Makefile and reads `go1.26.10` from go.mod.) Check that it works:
 
 ```sh
-make deploy-build && go version cato        # must say go1.26.9
+make deploy-build && go version cato        # must say go1.26.10
 git commit -am "build: NAS binary uses the go.mod toolchain"
 ```
 
@@ -54,7 +54,7 @@ sqlite3 prod-copy.db "
 **c. Run the new build against it.** Leave this running in its own terminal and time it:
 
 ```sh
-cd ~/git/cato && GOTOOLCHAIN=go1.26.9 go build -o ~/cato-rehearsal/cato ./cmd/cato
+cd ~/git/cato && GOTOOLCHAIN=go1.26.10 go build -o ~/cato-rehearsal/cato ./cmd/cato
 cd ~/cato-rehearsal
 time env CATO_DB_PATH=$PWD/prod-copy.db CATO_COVER_DIR=$PWD/covers \
   CATO_STATIC_DIR=$HOME/git/cato/web/static CATO_DEV_TLS=1 CATO_DEV_TLS_DIR=$PWD/tls \

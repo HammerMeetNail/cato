@@ -15,7 +15,7 @@ make release-check  # everything above + builds, backup/deploy script tests, sec
 
 Requirements:
 
-- Go: go.mod pins `toolchain go1.26.9`, and `make security` scans with it.
+- Go: go.mod pins `toolchain go1.26.10`, and `make security` scans with it.
 - Node 24+, Python 3.10+, sqlite3.
 - Playwright Chromium, WebKit and Firefox.
 
