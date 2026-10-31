@@ -6,6 +6,11 @@ import { account, put, gotoApp, G } from './helpers';
 // the setting turned off do nothing. Real touch events through CDP, so
 // Chromium only (the phone project).
 
+// The headless shell, not full Chromium (playwright.config.ts): on Linux,
+// full Chromium follows these CDP touches with a back of its own, so one
+// swipe went back two screens (swipe.js calls back() once).
+test.use({ channel: 'chromium-headless-shell' });
+
 async function swipe(cdp: CDPSession, x0: number, y: number, x1: number) {
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x0, y }] });
   const steps = 8;
