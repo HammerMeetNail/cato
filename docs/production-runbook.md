@@ -130,7 +130,7 @@ environment if deploys should wait for approval.
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Repository secrets | An R2 API token limited to the backup bucket |
 | `RESEND_API_KEY` | Repository secret | Failure emails from the backup timers |
 | `R2_BUCKET` | `production` variable | Backup bucket, default `cato-backups`; its lifecycle rule sets retention |
-| `EMAIL_FROM_ADDRESS`, `BACKUP_NOTIFY_EMAILS` | `production` variables | Sender (a Resend-verified domain) and comma-separated recipients of failure emails |
+| `EMAIL_FROM_ADDRESS`, `BACKUP_NOTIFY_EMAILS` | Repository secrets | Sender (a Resend-verified domain) and comma-separated recipients of failure emails |
 | `GITLEAKS_LICENSE` | Optional repository secret | If required by Gitleaks for the repository owner |
 
 **The host's `.env` comes from these settings.** `scripts/deploy-remote.sh`
