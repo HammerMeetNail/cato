@@ -49,7 +49,12 @@ elif name == 'podman-compose':
     for snapshot in snapshots:
         values.append(subprocess.check_output([os.environ['TEST_SQLITE'], str(snapshot),
                       'PRAGMA integrity_check; PRAGMA foreign_key_check; PRAGMA journal_mode; SELECT value FROM marker;'], text=True))
-    record(backups=[str(p) for p in snapshots], verified_values=values, env=pathlib.Path('.env').read_text())
+    try:
+        os.fstat(9)
+        lock_inherited = True
+    except OSError:
+        lock_inherited = False
+    record(backups=[str(p) for p in snapshots], verified_values=values, env=pathlib.Path('.env').read_text(), lock_inherited=lock_inherited)
     assert args == ['-f', 'compose.yaml', 'up', '-d', '--force-recreate']
     assert json.loads(pathlib.Path('.release-state.json').read_text())['status'] == 'attempted'
     sys.exit(int(os.environ.get('TEST_UP_EXIT', '0')))
@@ -165,6 +170,14 @@ class RemoteDeployTests(unittest.TestCase):
                          f"CATO_IMAGE={self.env['IMAGE_REPOSITORY']}@{self.env['IMAGE_DIGEST']}\n")
         self.assertFalse([p for p in self.server.glob(".deploy.*") if p.is_dir()])
         self.assertEqual(json.loads((self.server / ".release-state.json").read_text())["status"], "succeeded")
+
+    def test_started_container_does_not_inherit_the_deploy_lock(self):
+        # conmon and rootlessport outlive the deploy: holding fd 9 they kept the
+        # lock for as long as the container ran, so the next deploy always failed.
+        result, events = self.deploy()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        compose = next(e for e in events if e['command'] == 'podman-compose')
+        self.assertFalse(compose['lock_inherited'])
 
     def test_corrupt_database_aborts_before_restart_or_manifest_change(self):
         (self.server / "data/cato.db").write_bytes(b"not a SQLite database")

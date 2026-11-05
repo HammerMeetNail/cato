@@ -180,8 +180,9 @@ mv backup.env.next backup.env
 mkdir -p scripts
 printf '%s' "$scripts_base64" | base64 -d | tar -C scripts -xf -
 chmod 0700 scripts/backup.sh scripts/verify-backup.sh
-# No 'down', no volume deletion.
-podman-compose -f compose.yaml up -d --force-recreate
+# No 'down', no volume deletion. 9>&-: conmon and rootlessport outlive this
+# script, and holding the lock's descriptor they'd block every later deploy.
+podman-compose -f compose.yaml up -d --force-recreate 9>&-
 for _ in $(seq 1 60); do
   curl --fail --silent --max-time 5 "$health" >/dev/null && break
   sleep 2
