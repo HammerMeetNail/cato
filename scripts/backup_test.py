@@ -28,6 +28,8 @@ if name == 'rclone':
     assert os.environ['RCLONE_CONFIG_R2_ENDPOINT'] == 'https://acct.r2.cloudflarestorage.com'
     if args[0] == 'copyto':
         src, dst = args[1], args[2]
+        with open(os.environ['TEST_LOCAL_PATHS'], 'a') as log:
+            log.write((dst if src.startswith('r2:') else src) + '\n')
         if src.startswith('r2:'):
             shutil.copyfile(remote(src), dst)
         else:
@@ -52,14 +54,15 @@ class BackupTests(unittest.TestCase):
     def setUp(self):
         for tool in ("gpg", "gzip"):
             self.assertIsNotNone(shutil.which(tool), f"{tool} is required")
-        self.temp = tempfile.TemporaryDirectory(prefix="cato-backup-tests-")
+        # Under /tmp: gpg-agent's socket path has to fit, and macOS's temp directory is long.
+        self.temp = tempfile.TemporaryDirectory(prefix="cato-backup-", dir="/tmp")
         self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name)
         self.host = root / "host"
         (self.host / "scripts").mkdir(parents=True)
         (self.host / "data").mkdir()
         (self.host / "backups").mkdir()
-        for script in ("backup.sh", "verify-backup.sh", "notify-email.sh", "database.py"):
+        for script in ("backup.sh", "verify-backup.sh", "notify-email.sh", "database.py", "prune.py"):
             shutil.copy(SCRIPTS / script, self.host / "scripts" / script)
         (self.host / "backup.env").write_text(
             f"BACKUP_ENCRYPTION_KEY='{self.key}'\nR2_ACCOUNT_ID='acct'\nR2_ACCESS_KEY_ID='id'\n"
@@ -68,6 +71,7 @@ class BackupTests(unittest.TestCase):
         self.bucket = root / "bucket"
         self.bucket.mkdir()
         self.mail = root / "mail.jsonl"
+        self.local_paths = root / "local-paths"
         bin_dir = root / "bin"
         bin_dir.mkdir()
         stub = bin_dir / "stub"
@@ -79,7 +83,7 @@ class BackupTests(unittest.TestCase):
             (bin_dir / "flock").write_text("#!/bin/sh\nexit 0\n")
             (bin_dir / "flock").chmod(0o755)
         self.env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", CATO_DIR=str(self.host),
-                        TEST_BUCKET=str(self.bucket), TEST_MAIL=str(self.mail))
+                        TEST_BUCKET=str(self.bucket), TEST_MAIL=str(self.mail), TEST_LOCAL_PATHS=str(self.local_paths))
         conn = sqlite3.connect(self.host / "data/cato.db")
         conn.execute("PRAGMA journal_mode=WAL")
         for table in ("users", "sessions", "games"):
@@ -139,6 +143,34 @@ class BackupTests(unittest.TestCase):
         [mail] = self.mails()
         self.assertEqual(mail["body"]["subject"], "Cato backup failed")
         self.assertIn("snapshot", mail["body"]["text"])
+
+    def scratch_dirs(self):
+        return [p.name for p in (self.host / "backups").glob(".tmp-*")]
+
+    def test_scratch_space_is_on_disk_not_in_tmp(self):
+        # /tmp is RAM on the production host and smaller than a growing database needs.
+        self.assertEqual(self.run_script("backup.sh").returncode, 0)
+        self.assertEqual(self.run_script("verify-backup.sh").returncode, 0)
+        paths = self.local_paths.read_text().splitlines()
+        self.assertEqual(len(paths), 2)
+        for path in paths:
+            self.assertTrue(Path(path).resolve().is_relative_to((self.host / "backups").resolve()), path)
+        self.assertEqual(self.scratch_dirs(), [])
+
+    def test_a_killed_run_leaves_nothing_behind_after_the_next(self):
+        # On disk a leftover survives a reboot, so the next run has to clear it.
+        for name, script in ((".tmp-backup", "backup.sh"), (".tmp-verify", "verify-backup.sh")):
+            stale = self.host / "backups" / name
+            stale.mkdir()
+            (stale / "cato-stale.db").write_text("left by a killed run")
+            self.assertEqual(self.run_script(script).returncode, 0)
+            self.assertFalse(stale.exists(), name)
+
+    def test_a_failed_run_removes_its_scratch_space(self):
+        (self.host / "data/cato.db").unlink()
+        self.assertNotEqual(self.run_script("backup.sh").returncode, 0)
+        self.assertNotEqual(self.run_script("verify-backup.sh").returncode, 0)
+        self.assertEqual(self.scratch_dirs(), [])
 
     def test_old_pre_deploy_snapshots_are_pruned(self):
         for i in range(5):

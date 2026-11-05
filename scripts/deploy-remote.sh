@@ -80,7 +80,7 @@ ssh -F "$ssh_dir/config" cato-deploy "umask 077 && cat > '$DEPLOY_PATH/backup.en
 compose_base64=$(base64 < "$repo_root/compose.server.yaml" | tr -d '\n')
 database_base64=$(base64 < "$repo_root/scripts/database.py" | tr -d '\n')
 # The backup timers' scripts (scripts/ on the host).
-scripts_base64=$(tar -C "$repo_root/scripts" -cf - backup.sh verify-backup.sh notify-email.sh database.py | base64 | tr -d '\n')
+scripts_base64=$(tar -C "$repo_root/scripts" -cf - backup.sh verify-backup.sh notify-email.sh database.py prune.py | base64 | tr -d '\n')
 ssh -F "$ssh_dir/config" cato-deploy \
   "bash -s -- '$DEPLOY_PATH' '$IMAGE_REPOSITORY@$IMAGE_DIGEST' '$compose_base64' '$database_base64' '$RELEASE_TAG' '$RELEASE_COMMIT' '$scripts_base64'" <<'REMOTE'
 set -euo pipefail
@@ -180,6 +180,9 @@ mv backup.env.next backup.env
 mkdir -p scripts
 printf '%s' "$scripts_base64" | base64 -d | tar -C scripts -xf -
 chmod 0700 scripts/backup.sh scripts/verify-backup.sh
+# Before the rollout: retried failures mustn't fill the disk. This run's snapshot
+# and copies are the newest, so they stay.
+python3 scripts/prune.py files backups || echo 'Cleaning up old copies failed; continuing.' >&2
 # No 'down', no volume deletion. 9>&-: conmon and rootlessport outlive this
 # script, and holding the lock's descriptor they'd block every later deploy.
 podman-compose -f compose.yaml up -d --force-recreate 9>&-
@@ -189,5 +192,6 @@ for _ in $(seq 1 60); do
 done
 curl --fail --silent --show-error --max-time 15 "$health" >/dev/null
 state succeeded
+python3 scripts/prune.py images backups "$image" || echo 'Cleaning up old images failed; continuing.' >&2
 printf 'Healthy deployment: %s\n' "$image"
 REMOTE

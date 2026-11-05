@@ -160,7 +160,9 @@ Deployment locks the target, verifies a SQLite snapshot, preserves the previous
 compose file, image reference and `.env`, and waits for `/healthz` on
 127.0.0.1:8083. `.release-state.json` records an attempted version before
 rollout, preventing a delayed older tag from downgrading a database even after a
-failed health check. Recovery/rollback is an explicit operator procedure. The
+failed health check. Each deploy keeps the newest three database snapshots and
+config copies in `backups/`, and this repository's running image plus the two
+before it (`scripts/prune.py`). Recovery/rollback is an explicit operator procedure. The
 old NAS `Dockerfile` remains a separate binary-packaging path.
 
 Before each deployment:
@@ -189,7 +191,8 @@ integrity, successful downloads, or third-party service availability.
 `cato-backup.timer`) takes a verified snapshot of `data/cato.db` with
 `scripts/database.py`, compresses it with gzip, encrypts it with gpg (AES-256,
 `BACKUP_ENCRYPTION_KEY`) and uploads it to R2 as `cato_<UTC time>.db.gz.gpg`; it
-also keeps only the newest three pre-deploy snapshots in `backups/`.
+also keeps only the newest three pre-deploy snapshots and config copies in
+`backups/`. Both scripts work in `backups/.tmp-*`, not `/tmp`, which is RAM on yob.
 `scripts/verify-backup.sh` (the `cato-verify-backup.timer`, an hour later)
 downloads the newest one and checks it is under 26 hours old, decrypts, passes
 integrity and foreign key checks, and holds accounts and library items. Either

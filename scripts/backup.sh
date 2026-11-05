@@ -21,7 +21,9 @@ remote="r2:${R2_BUCKET:-cato-backups}"
 mkdir -p backups
 exec 9>backups/.backup.lock
 flock -n 9 || exit 0
-scratch=$(mktemp -d)
+# On disk: /tmp is RAM on the host, and smaller than a growing database needs.
+# A fixed name, under the lock, so the next run clears what a killed one left.
+scratch=$PWD/backups/.tmp-backup
 step=prepare
 cleanup() {
   local result=$?
@@ -33,6 +35,8 @@ cleanup() {
   exit "$result"
 }
 trap cleanup EXIT
+rm -rf -- "$scratch"
+mkdir -m 700 "$scratch"
 
 step=snapshot
 # In podman's user namespace, where the container's files (UID 10001) are ours.
@@ -45,11 +49,6 @@ gzip -9 < "$snapshot" | gpg --no-options --homedir "$scratch/gnupg" --batch --no
 step=upload
 rclone copyto "$scratch/$name" "$remote/$name" --contimeout=10s --timeout=60s --retries=3
 step=prune
-# Pre-deploy snapshots on this disk: the newest three stay.
-python3 -c '
-import pathlib
-old = sorted(pathlib.Path("backups").glob("cato-*.db"), key=lambda p: p.stat().st_mtime, reverse=True)[3:]
-for p in old:
-    p.unlink()
-'
+# Pre-deploy snapshots and config copies on this disk: the newest three stay.
+python3 scripts/prune.py files backups
 echo "Backed up: $remote/$name"

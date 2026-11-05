@@ -39,9 +39,20 @@ if name == 'ssh':
     sys.exit(subprocess.run(remote, input=sys.stdin.read(), text=True).returncode)
 elif name == 'podman':
     record()
-    assert args[0] in ('pull', 'run', 'unshare')
+    assert args[0] in ('pull', 'run', 'unshare', 'image', 'images', 'rmi')
     if args[0] == 'unshare':
         sys.exit(subprocess.run(args[1:]).returncode)
+    host_images = json.loads(os.environ.get('TEST_IMAGES', '{"rows": [], "refs": {}}'))
+    if args[0] == 'image':
+        assert args[:3] == ['image', 'inspect', '--format']
+        if args[-1] not in host_images['refs']:
+            sys.exit(125)
+        print('sha256:' + host_images['refs'][args[-1]].ljust(64, '0'))
+    elif args[0] == 'images':
+        for row in host_images['rows']:
+            print(row[0], row[1])
+    elif args[0] == 'rmi':
+        sys.exit(int(os.environ.get('TEST_RMI_EXIT', '0')))
     sys.exit(0)
 elif name == 'podman-compose':
     snapshots = list(pathlib.Path('backups').glob('cato-*.db'))
@@ -158,7 +169,7 @@ class RemoteDeployTests(unittest.TestCase):
         self.assertEqual((self.server / "backup.env").read_text(),
                          f"BACKUP_ENCRYPTION_KEY='{self.backup_key}'\nR2_ACCOUNT_ID='acct'\nR2_BUCKET='cato-backups'\n")
         self.assertNotIn(self.backup_key, rendered)
-        for script in ("backup.sh", "verify-backup.sh", "notify-email.sh", "database.py"):
+        for script in ("backup.sh", "verify-backup.sh", "notify-email.sh", "database.py", "prune.py"):
             self.assertEqual((self.server / "scripts" / script).read_bytes(), (REPOSITORY / "scripts" / script).read_bytes())
         self.assertEqual(next((self.server / "backups").glob("compose-*.yaml")).read_text(), "old compose\n")
         self.assertEqual(next((self.server / "backups").glob("release-*.env")).read_text(), "old digest\n")
@@ -178,6 +189,87 @@ class RemoteDeployTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         compose = next(e for e in events if e['command'] == 'podman-compose')
         self.assertFalse(compose['lock_inherited'])
+
+    def seed_old_copies(self):
+        backups = self.server / "backups"
+        backups.mkdir()
+        (backups / "empty-before-import").mkdir()
+        for i in range(5):
+            with sqlite3.connect(backups / f"cato-old{i}.db") as conn:
+                conn.execute("CREATE TABLE marker (value TEXT)")
+            conn.close()
+            for name in (f"compose-old{i}.yaml", f"release-old{i}.env", f"env-old{i}"):
+                (backups / name).write_text("old\n")
+            for name in (f"cato-old{i}.db", f"compose-old{i}.yaml", f"release-old{i}.env", f"env-old{i}"):
+                os.utime(backups / name, (1000 + i, 1000 + i))
+        return backups
+
+    def test_deploy_keeps_the_newest_three_snapshots_and_config_copies(self):
+        self.database()
+        backups = self.seed_old_copies()
+        result, _ = self.deploy()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for pattern, old in (("cato-*.db", ["cato-old3.db", "cato-old4.db"]),
+                             ("compose-*.yaml", ["compose-old3.yaml", "compose-old4.yaml"]),
+                             ("release-*.env", ["release-old3.env", "release-old4.env"]),
+                             ("env-*", ["env-old3", "env-old4"])):
+            names = sorted(p.name for p in backups.glob(pattern))
+            self.assertEqual(len(names), 3, names)
+            self.assertTrue(set(old) <= set(names), names)
+        self.assertTrue((backups / "empty-before-import").is_dir())
+
+    def test_a_failed_rollout_still_prunes_and_keeps_its_snapshot(self):
+        # Retried failures mustn't fill the disk, and the new snapshot is the rollback.
+        self.database()
+        backups = self.seed_old_copies()
+        result, _ = self.deploy(TEST_FINAL_HEALTH_EXIT="1", TEST_HEALTH_EXIT="1")
+        self.assertNotEqual(result.returncode, 0)
+        names = sorted(p.name for p in backups.glob("cato-*.db"))
+        self.assertEqual(len(names), 3, names)
+        self.assertEqual(len([n for n in names if "old" not in n]), 1, names)
+
+    def images_on_host(self, previous, before_previous, removable, **refs):
+        repo = self.env["IMAGE_REPOSITORY"]
+        current = f"{repo}@{self.env['IMAGE_DIGEST']}"
+        backups = self.server / "backups"
+        backups.mkdir(exist_ok=True)
+        # The older deployment first: mtimes order the copies. (The newest copy is
+        # the deploy's own, of release.env, so that file holds the previous image.)
+        (self.server / "release.env").write_text(f"CATO_IMAGE={repo}@sha256:{previous}\n")
+        (backups / "release-older.env").write_text(f"CATO_IMAGE={repo}@sha256:{before_previous}\n")
+        os.utime(backups / "release-older.env", (1000, 1000))
+        return json.dumps({
+            # Newest build date first, as podman lists them: a cached build keeps an
+            # old date, so the image before last sorts below one that's removable.
+            "rows": [[repo, "cccccccccccc"], [repo, removable], [repo, "bbbbbbbbbbbb"], [repo, "aaaaaaaaaaaa"],
+                     ["quay.io/nabu/nabu", "dddddddddddd"], ["quay.io/localbyte/cato-other", "eeeeeeeeeeee"]],
+            "refs": {current: "cccccccccccc", f"{repo}@sha256:{previous}": "bbbbbbbbbbbb",
+                     f"{repo}@sha256:{before_previous}": "aaaaaaaaaaaa", **refs}})
+
+    def removed(self, events):
+        return [e["args"] for e in events if e["command"] == "podman" and e["args"][0] == "rmi"]
+
+    def test_deploy_removes_only_this_repositorys_images_outside_its_history(self):
+        images = self.images_on_host("prev", "older", "ffffffffffff")
+        result, events = self.deploy(TEST_IMAGES=images)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # Never --force: podman refuses an image a container is using.
+        self.assertEqual(self.removed(events), [["rmi", "ffffffffffff"]])
+
+    def test_images_are_left_alone_when_the_history_cant_be_read(self):
+        images = json.loads(self.images_on_host("prev", "older", "ffffffffffff"))
+        del images["refs"][f"{self.env['IMAGE_REPOSITORY']}@sha256:older"]
+        result, events = self.deploy(TEST_IMAGES=json.dumps(images))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.removed(events), [])
+        self.assertIn("left alone", result.stderr)
+
+    def test_a_failed_cleanup_does_not_fail_a_healthy_deploy(self):
+        images = self.images_on_host("prev", "older", "ffffffffffff")
+        result, events = self.deploy(TEST_IMAGES=images, TEST_RMI_EXIT="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.removed(events), [["rmi", "ffffffffffff"]])
+        self.assertEqual(json.loads((self.server / ".release-state.json").read_text())["status"], "succeeded")
 
     def test_corrupt_database_aborts_before_restart_or_manifest_change(self):
         (self.server / "data/cato.db").write_bytes(b"not a SQLite database")

@@ -2,7 +2,8 @@
 # Daily check that the newest off-host backup restores (cato-verify-backup.timer):
 # it must be under 26 hours old, decrypt and decompress, pass SQLite's integrity
 # and foreign key checks, and still hold accounts and library items. Anything
-# else emails BACKUP_NOTIFY_EMAILS. Nothing on this host is touched.
+# else emails BACKUP_NOTIFY_EMAILS. It works in its own scratch directory, and
+# nothing else on this host is touched.
 set -euo pipefail
 umask 077
 cd "${CATO_DIR:-$(dirname "$0")/..}"
@@ -17,7 +18,12 @@ export RCLONE_CONFIG_R2_TYPE=s3 RCLONE_CONFIG_R2_PROVIDER=Cloudflare RCLONE_CONF
   RCLONE_CONFIG_R2_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" RCLONE_CONFIG_R2_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
   RCLONE_CONFIG_R2_ENDPOINT="https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com"
 remote="r2:${R2_BUCKET:-cato-backups}"
-scratch=$(mktemp -d)
+mkdir -p backups
+exec 9>backups/.verify.lock
+flock -n 9 || exit 0
+# On disk: /tmp is RAM on the host, and smaller than a growing database needs.
+# A fixed name, under the lock, so the next run clears what a killed one left.
+scratch=$PWD/backups/.tmp-verify
 step=list
 cleanup() {
   local result=$?
@@ -29,6 +35,8 @@ cleanup() {
   exit "$result"
 }
 trap cleanup EXIT
+rm -rf -- "$scratch"
+mkdir -m 700 "$scratch"
 
 # Names sort by their UTC timestamp.
 newest=$(rclone lsf "$remote" --include 'cato_*.db.gz.gpg' --contimeout=10s --timeout=60s | sort | tail -n 1)
