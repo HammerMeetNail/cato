@@ -409,3 +409,20 @@ test('signing in as someone else never shows the previous library', async ({ pag
   await expect(page.getByText('Nothing playing right now')).toBeVisible();
   expect(await page.evaluate(() => (window as any).__sawPrevious)).toBe(false);
 });
+
+// Two-finger swipes on a trackpad: the browser's own back/forward starts as
+// sideways overscroll, so <main> has to let it through. Touch screens keep it
+// contained: features/swipe.js navigates there, and both would go back twice.
+test('a trackpad swipe over the page reaches the browser; touch stays with swipe.js', async ({ page }) => {
+  await account(page);
+  await gotoApp(page, '#you');
+  const x = (selector: string) => page.locator(selector).first().evaluate(el => getComputedStyle(el).overscrollBehaviorX);
+  const mouse = await page.evaluate(() => matchMedia('(hover: hover) and (pointer: fine)').matches);
+  expect(await x('#main')).toBe(mouse ? 'auto' : 'contain');
+  expect(await page.locator('#main').evaluate(el => getComputedStyle(el).overscrollBehaviorY)).toBe('contain');
+
+  // A shelf keeps its own sideways scroll; on touch, <main> already contains it.
+  await gotoApp(page, '#discover');
+  await expect(page.locator('.shelf-row').first()).toBeVisible();
+  expect(await x('.shelf-row')).toBe(mouse ? 'contain' : 'auto');
+});

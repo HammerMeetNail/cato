@@ -101,6 +101,7 @@ The frontend is vanilla ES modules with **no build step**. Templates are lit-htm
   - open sheets and menus.
 
   `prefs.swipe_nav` turns it off. Use touch events, not pointer events: browsers cancel pointer streams when they start scrolling.
+- **Trackpad swipes** are the browser's own back/forward, which starts as sideways overscroll. With `(hover: hover) and (pointer: fine)`, `.main` leaves `overscroll-behavior-x` at `auto` and horizontal scrollers set `contain`, so a swipe over a shelf only scrolls the shelf; add new scrollers to that rule in `base.css`. Everywhere else `.main` stays `contain`, and `swipe.js` stands aside on that same media query: the two must never both navigate, or one swipe goes back twice.
 - **Copying** goes through `ui/clipboard.js` `copyText`. On plain HTTP (the NAS) there's no Clipboard API, so it copies from a selected field.
 
 ## Browser differences we've hit

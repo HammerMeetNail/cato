@@ -67,3 +67,23 @@ test('swipe right goes back, swipe left goes forward; edges and scrollers are le
 
   await expect.poll(() => outcomes).toEqual(['back', 'forward', 'ignored: screen edge', expect.stringMatching(/^ignored: scroller div\.shelf-row/), 'ignored: turned off']);
 });
+
+// A touchscreen on a computer with a mouse: <main> lets sideways swipes through
+// to the browser there (base.css), so navigating as well would go back twice.
+// Playwright's touch emulation makes the pointer coarse, so the query is stubbed.
+test('a touchscreen with a mouse leaves the swipe to the browser', async ({ page }) => {
+  await page.addInitScript(() => {
+    const real = window.matchMedia.bind(window);
+    window.matchMedia = q => (q === '(hover: hover) and (pointer: fine)' ? ({ matches: true } as MediaQueryList) : real(q));
+  });
+  await account(page, 'swipe-hybrid');
+  await gotoApp(page, '#home');
+  const cdp = await page.context().newCDPSession(page);
+  const reported = page.waitForRequest(r => r.url().endsWith('/api/v1/diagnostics/swipe'));
+  await open(page, 'library');
+  await open(page, 'you');
+  const { width } = page.viewportSize()!;
+  await swipe(cdp, 60, 420, width - 60);
+  expect((await reported).postDataJSON().outcome).toBe('ignored: browser gesture');
+  await expect(page).toHaveURL(/#you$/);
+});

@@ -171,6 +171,27 @@ button {
   scroll-padding-top: var(--sp-4);
 }
 
+/* With a trackpad or mouse, a sideways swipe over the page is the browser's
+   back/forward, which starts as overscroll: let it through <main>, as the
+   sidebar does. Horizontal scrollers keep theirs, so scrolling a shelf to its
+   start can't leave the page. Touch screens stay contained: features/swipe.js
+   navigates there, and the browser's gesture on top would go back twice. */
+@media (hover: hover) and (pointer: fine) {
+  .main {
+    overscroll-behavior-x: auto;
+  }
+
+  .shelf-row,
+  .heatmap,
+  .friend-row,
+  .table-scroll,
+  .chips-scroll,
+  .segmented,
+  .tabs {
+    overscroll-behavior-x: contain;
+  }
+}
+
 .page {
   padding: var(--sp-4) var(--sp-4) var(--sp-12);
   max-width: var(--content-max);

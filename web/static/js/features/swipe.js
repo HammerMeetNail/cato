@@ -45,6 +45,9 @@ function unbind() {
 // ignored says why a swipe starting here doesn't navigate ('' if it may).
 function ignored(target, x) {
   if (app.prefs.swipe_nav === false) return 'turned off';
+  // A touchscreen on a computer with a mouse: <main> leaves sideways swipes
+  // to the browser there (base.css), and navigating too would go back twice.
+  if (matchMedia('(hover: hover) and (pointer: fine)').matches) return 'browser gesture';
   if (x < EDGE || x > innerWidth - EDGE) return 'screen edge';
   if (anySheetOpen() || document.querySelector('.menu')) return 'sheet or menu open';
   if (target.closest?.('input, textarea, select, [contenteditable="true"], [role="slider"], video')) return 'field';
